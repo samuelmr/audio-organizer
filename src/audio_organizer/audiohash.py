@@ -1,41 +1,75 @@
 """A hash of the audio data alone, so that retagging a file does not change its identity.
 
-MP3 (and other ID3-tagged streams): the ID3v2 header, trailing ID3v1 and APEv2 tags
-are skipped. MP4/M4A: only the contents of the 'mdat' atoms are hashed. Other formats
-are hashed whole for now.
+The audio data ("payload") is found by skipping tags. MP3 (and other ID3-tagged
+streams): the ID3v2 header, trailing ID3v1 and APEv2 tags. MP4/M4A: everything but the
+contents of the 'mdat' atoms. Other formats: nothing is skipped for now.
+
+To keep scans of large libraries on network shares fast, the hash covers the payload's
+length and three samples of it (start, middle, end) rather than all of it: about 200 KB
+per track instead of several MB. Two files get the same hash only if their audio has the
+same length and the same bytes in all three samples, which in practice means the same
+audio; a copy damaged only between the samples would go unnoticed.
 """
 
 import hashlib
 import os
 import struct
+from contextlib import nullcontext
 from pathlib import Path
+from typing import BinaryIO
 
-CHUNK = 1 << 20
+SAMPLE = 64 * 1024
 
 
-def audio_hash(path: str | Path) -> str:
-    with open(path, "rb") as f:
-        head = f.read(12)
+def audio_hash(source: str | Path | BinaryIO) -> str:
+    """Hash of a file given by path, or of an open, seekable binary file object."""
+    context = open(source, "rb") if isinstance(source, str | Path) else nullcontext(source)
+    with context as f:
         f.seek(0)
+        head = f.read(12)
         if len(head) >= 8 and head[4:8] == b"ftyp":
             ranges = _mp4_ranges(f)
         else:
             ranges = [_id3_stream_range(f)]
-        digest = hashlib.blake2b(digest_size=16)
-        for start, end in ranges:
-            f.seek(start)
-            remaining = end - start
-            while remaining > 0:
-                chunk = f.read(min(CHUNK, remaining))
-                if not chunk:
-                    break
-                digest.update(chunk)
-                remaining -= len(chunk)
+        total = sum(end - start for start, end in ranges)
+        digest = hashlib.blake2b(total.to_bytes(8, "big"), digest_size=16)
+        for offset, length in _samples(total):
+            digest.update(_read_payload(f, ranges, offset, length))
     return digest.hexdigest()
 
 
+def _samples(total: int) -> list[tuple[int, int]]:
+    """(offset, length) of the payload samples to hash: all of a short payload."""
+    if total <= 3 * SAMPLE:
+        return [(0, total)]
+    return [(0, SAMPLE), (total // 2 - SAMPLE // 2, SAMPLE), (total - SAMPLE, SAMPLE)]
+
+
+def _read_payload(f: BinaryIO, ranges: list[tuple[int, int]], offset: int, length: int) -> bytes:
+    """Read from the payload, which may consist of several ranges of the file."""
+    parts = []
+    for start, end in ranges:
+        if length <= 0:
+            break
+        if offset >= end - start:
+            offset -= end - start
+            continue
+        f.seek(start + offset)
+        part = f.read(min(length, end - start - offset))
+        parts.append(part)
+        length -= len(part)
+        offset = 0
+    return b"".join(parts)
+
+
+def _size(f: BinaryIO) -> int:
+    size = f.seek(0, os.SEEK_END)
+    f.seek(0)
+    return size
+
+
 def _id3_stream_range(f) -> tuple[int, int]:
-    size = os.fstat(f.fileno()).st_size
+    size = _size(f)
     start = 0
     # ID3v2 tags at the start; some files carry several
     while True:
@@ -64,7 +98,7 @@ def _id3_stream_range(f) -> tuple[int, int]:
 
 
 def _mp4_ranges(f) -> list[tuple[int, int]]:
-    size = os.fstat(f.fileno()).st_size
+    size = _size(f)
     ranges = []
     pos = 0
     while pos + 8 <= size:

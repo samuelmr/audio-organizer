@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from . import pathparse, tags
 from .audiohash import audio_hash
+from .blockfile import BlockFile
 from .models import AudioFile, Library, TagSnapshot, utcnow
 from .provenance import set_values
 
@@ -72,18 +73,20 @@ def walk(root: str | Path) -> Iterator[tuple[str, os.stat_result]]:
 
 def _read(root: str, relpath: str, st: os.stat_result, hash_audio: bool) -> _Result:
     result = _Result(relpath, st.st_size, st.st_mtime_ns)
-    full = os.path.join(root, relpath)
     try:
-        result.info = tags.read(full)
-        if result.info.format is None:
-            result.error = "not recognized as audio"
-    except Exception as e:  # mutagen raises many kinds of errors on damaged files
-        result.error = f"{type(e).__name__}: {e}"
-    if hash_audio:
-        try:
-            result.audio_hash = audio_hash(full)
-        except OSError as e:
-            result.error = result.error or f"{type(e).__name__}: {e}"
+        # One open file, read in large cached blocks, serves both the tag reader and
+        # the hasher: few round trips, which is what matters on a network share.
+        with BlockFile(os.path.join(root, relpath)) as f:
+            try:
+                result.info = tags.read(f)
+                if result.info.format is None:
+                    result.error = "not recognized as audio"
+            except Exception as e:  # mutagen raises many kinds of errors on damaged files
+                result.error = f"{type(e).__name__}: {e}"
+            if hash_audio:
+                result.audio_hash = audio_hash(f)
+    except OSError as e:
+        result.error = result.error or f"{type(e).__name__}: {e}"
     return result
 
 

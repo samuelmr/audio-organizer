@@ -8,6 +8,7 @@ read as fields of their own.
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import BinaryIO
 
 import mutagen
 from mutagen.id3 import COMM, ID3, TCMP, TCON, TDRC, TPOS, TRCK, Frames
@@ -62,7 +63,8 @@ class AudioInfo:
     fields: dict[str, str] = field(default_factory=dict)
 
 
-def read(path: str | Path) -> AudioInfo:
+def read(path: str | Path | BinaryIO) -> AudioInfo:
+    """Read a file given by path, or an open, seekable binary file object."""
     audio = mutagen.File(path)
     if audio is None:
         return AudioInfo()

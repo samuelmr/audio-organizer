@@ -145,6 +145,9 @@ Design principles:
   (`provenance.py`); manual edits always win.
 - **Files are identified by their audio**, a hash of the audio data without tags, so
   retagging and moving keep a file's identity, and identical copies are easy to find.
+  The hash covers the audio's length and three samples of it (`audiohash.py`), and
+  each file is read once, in large blocks shared by the tag reader and the hasher
+  (`blockfile.py`): network round trips and bytes read, not CPU, limit scanning.
 - **No file changes without review**: every retag or move goes through a changeset that
   records how to undo it.
 - **Scale**: scans and syncs are incremental, and anything per-file runs in batches or
@@ -160,7 +163,8 @@ Design principles:
 | `tags.py` | Reading and writing tags (ID3, MP4, Vorbis comments) |
 | `pathparse.py` | Metadata evidence from folder and file names |
 | `provenance.py` | Resolving field values from their sources |
-| `audiohash.py` | Audio-only content hash |
+| `audiohash.py` | Audio-only content hash (sampled) |
+| `blockfile.py` | Block-cached reading of a file, for few network round trips |
 | `changes.py` | Changesets: propose, approve, apply, undo |
 | `tracks.py` | Streaming tracks with resolved metadata, in batches |
 | `playlists.py` | Playlist rules, generation in one pass, import and export |
