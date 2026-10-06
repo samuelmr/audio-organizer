@@ -1,8 +1,8 @@
 # Guidelines for Claude
 
 audio-organizer (`aorg`) maintains a music collection: catalog, metadata with
-provenance, reviewable changesets, S3 sync; playlists, a web UI, intake of new music
-and CD ripping are planned. README.md describes usage and the module layout.
+provenance, reviewable changesets, playlists and S3 sync. README.md describes usage and
+the module layout.
 
 ## Branches and worktrees
 
@@ -24,23 +24,18 @@ Several chats may work on this repository at the same time. To keep them apart:
 - Never push unless the user asks.
 - Each worktree has its own `.venv`; `uv run` creates it on first use.
 
-## Plans and reference material
+## Personal instructions
 
-`PLAN.md` (status, roadmap, decisions, open questions, notes on the example library)
-and `reference-material/` (the earlier PHP and shell tools this project replaces) are
-kept outside the repository, in `../audio-organizer-notes/` next to the main checkout
-(`~/github/audio-organizer-notes/`), so that every chat and worktree reads and edits
-the same copy. Keep PLAN.md up to date when status or plans change. Don't mention the
-reference material in committed files.
+Contributors can keep their own instructions (their music library, plans, credentials
+to stay away from) in `CLAUDE.local.md` in the repository root. It is gitignored, and
+`.worktreeinclude` copies it into new worktrees. It may import a file kept elsewhere,
+e.g. `@~/notes/audio-organizer.md`.
 
-## The user's data and services
+## Real music and services
 
-- The example library `/Volumes/Multimedia/Music` (a NAS) is **read-only** for us: never
-  move, retag or delete anything there. Try changes on copies in the scratchpad.
-- Reading the whole library over the network takes about an hour; avoid it unless
-  needed, and run it in the background.
-- Don't use the default catalog (`~/.local/share/audio-organizer/catalog.db`) for
-  experiments; set `AORG_DB` to a scratch path.
+- Never change a real music library while developing: try changes on copies in a
+  scratch folder, and point `AORG_DB` at a scratch catalog instead of the default one
+  (`~/.local/share/audio-organizer/catalog.db`).
 - Never sync to a real bucket or other external service without asking. For end-to-end
   checks run a local fake S3: `uvx --from 'moto[server]' moto_server -p 5055`.
 
