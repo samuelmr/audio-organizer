@@ -9,8 +9,9 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import changes as ch
+from . import sync as sy
 from .db import make_sessionmaker
-from .models import AudioFile, Change, Changeset, Library
+from .models import AudioFile, Change, Changeset, Library, SyncTarget
 from .provenance import resolve
 from .scanner import ScanStats, scan
 from .tags import FIELDS
@@ -18,8 +19,10 @@ from .tags import FIELDS
 app = typer.Typer(no_args_is_help=True, help="Maintain a music collection.")
 library_app = typer.Typer(no_args_is_help=True, help="Manage libraries (collection roots).")
 changes_app = typer.Typer(no_args_is_help=True, help="Review, apply and undo changesets.")
+target_app = typer.Typer(no_args_is_help=True, help="Manage object storage sync targets.")
 app.add_typer(library_app, name="library")
 app.add_typer(changes_app, name="changes")
+app.add_typer(target_app, name="target")
 
 
 @app.callback()
@@ -332,3 +335,118 @@ def changes_undo(
     """Revert the applied changes of a changeset."""
     with _session(ctx) as session:
         _report(ch.undo(session, _changeset(session, changeset_id), dry_run=dry_run))
+
+
+# ---- object storage sync ---------------------------------------------------------------
+
+
+def _target(session: Session, name: str) -> SyncTarget:
+    target = session.scalar(select(SyncTarget).where(SyncTarget.name == name))
+    if target is None:
+        raise typer.BadParameter(f"No sync target named {name!r}")
+    return target
+
+
+@target_app.command("add")
+def target_add(
+    ctx: typer.Context,
+    name: str,
+    bucket: Annotated[str, typer.Option(help="Bucket name")],
+    library: Annotated[str | None, typer.Option(help="Library to sync")] = None,
+    prefix: Annotated[str, typer.Option(help="Key prefix inside the bucket")] = "",
+    endpoint_url: Annotated[
+        str | None, typer.Option(help="S3-compatible endpoint (not needed for AWS)")
+    ] = None,
+    region: Annotated[str | None, typer.Option()] = None,
+    profile: Annotated[str | None, typer.Option(help="AWS credentials profile")] = None,
+) -> None:
+    """Add a bucket to sync a library to. Credentials come from the AWS environment
+    variables, ~/.aws or --profile; they are not stored in the catalog."""
+    with _session(ctx) as session:
+        lib = _library(session, library)
+        session.add(SyncTarget(
+            name=name, library=lib, bucket=bucket, prefix=prefix.strip("/"),
+            endpoint_url=endpoint_url, region=region, profile=profile,
+        ))  # fmt: skip
+        session.commit()
+    typer.echo(f"Added target {name}: {lib.name} -> s3://{bucket}/{prefix.strip('/')}")
+
+
+@target_app.command("list")
+def target_list(ctx: typer.Context) -> None:
+    with _session(ctx) as session:
+        for target in session.scalars(select(SyncTarget).order_by(SyncTarget.name)):
+            endpoint = f" at {target.endpoint_url}" if target.endpoint_url else ""
+            typer.echo(
+                f"{target.name}\t{target.library.name} -> "
+                f"s3://{target.bucket}/{target.prefix}{endpoint}"
+            )
+
+
+@target_app.command("reconcile")
+def target_reconcile(ctx: typer.Context, name: str) -> None:
+    """Compare the catalog with the bucket's contents. Adopts objects uploaded by other
+    means (e.g. upload.sh) so they are not uploaded again; nothing is changed remotely."""
+    with _session(ctx) as session:
+        target = _target(session, name)
+        result = sy.reconcile(session, target, sy.store_for(target))
+    typer.echo(
+        f"Adopted {result.adopted} existing objects, forgot {result.forgotten} that are gone, "
+        f"{len(result.unknown)} objects match nothing in the library"
+    )
+    for key in result.unknown[:20]:
+        typer.echo(f"  {key}")
+    if len(result.unknown) > 20:
+        typer.echo(f"  ... and {len(result.unknown) - 20} more")
+
+
+@app.command("sync")
+def sync_command(
+    ctx: typer.Context,
+    name: Annotated[str, typer.Argument(help="Sync target")],
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Only show the plan")] = False,
+    delete: Annotated[
+        bool, typer.Option("--delete", help="Delete remote objects not in the library")
+    ] = False,
+    workers: Annotated[int, typer.Option(help="Parallel transfers")] = 4,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="List every action")] = False,
+) -> None:
+    """Upload new and changed tracks and covers; update metadata and moves server-side."""
+    with _session(ctx) as session:
+        target = _target(session, name)
+        plan = sy.plan(session, target, delete_stale=delete)
+        counts = ", ".join(f"{n} {kind}" for kind, n in sorted(plan.counts().items()))
+        typer.echo(
+            f"{target.name}: {counts or 'nothing to do'} ({plan.unchanged} up to date, "
+            f"{plan.upload_bytes / 1e6:.0f} MB to upload)"
+        )
+        if plan.stale:
+            typer.echo(
+                f"{len(plan.stale)} remote objects are not in the library (--delete removes)"
+            )
+        if dry_run or verbose:
+            shown = plan.actions if verbose else plan.actions[:30]
+            for action in shown:
+                typer.echo(f"  {action.describe()}")
+            if len(shown) < len(plan.actions):
+                typer.echo(f"  ... and {len(plan.actions) - len(shown)} more (-v lists all)")
+        if dry_run or not plan.actions:
+            return
+        total, done = len(plan.actions), 0
+
+        def progress(action: sy.Action, error: str | None) -> None:
+            nonlocal done
+            done += 1
+            if error or verbose:
+                typer.echo(
+                    f"  [{done}/{total}] {action.describe()}" + (f": {error}" if error else "")
+                )
+            elif done % 100 == 0:
+                typer.echo(f"  [{done}/{total}]", err=True)
+
+        result = sy.execute(session, target, sy.store_for(target), plan.actions,
+                            workers=workers, progress=progress)  # fmt: skip
+    done_counts = ", ".join(f"{n} {kind}" for kind, n in sorted(result.done.items()))
+    typer.echo(f"Done: {done_counts or 'nothing'}; {len(result.errors)} errors")
+    if result.errors:
+        raise typer.Exit(1)

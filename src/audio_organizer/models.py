@@ -143,3 +143,44 @@ class Change(Base):
 
     changeset: Mapped[Changeset] = relationship(back_populates="changes")
     file: Mapped[AudioFile] = relationship()
+
+
+class SyncTarget(Base):
+    """An object storage bucket (and key prefix) that a library is synced to.
+    Credentials are not stored: they come from the usual AWS sources (environment,
+    ~/.aws, or the named profile)."""
+
+    __tablename__ = "sync_target"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    library_id: Mapped[int] = mapped_column(ForeignKey("library.id"))
+    bucket: Mapped[str] = mapped_column(String(255))
+    prefix: Mapped[str] = mapped_column(Text, default="")
+    endpoint_url: Mapped[str | None] = mapped_column(Text)
+    region: Mapped[str | None] = mapped_column(String(50))
+    profile: Mapped[str | None] = mapped_column(String(100))
+
+    library: Mapped[Library] = relationship()
+
+
+class RemoteObject(Base):
+    """What this tool knows to be stored under a key of a sync target: which local
+    file (or cover image) version it came from, and with which metadata."""
+
+    __tablename__ = "remote_object"
+    __table_args__ = (UniqueConstraint("target_id", "key"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    target_id: Mapped[int] = mapped_column(
+        ForeignKey("sync_target.id", ondelete="CASCADE"), index=True
+    )
+    key: Mapped[str] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(String(20))  # audio | image
+    file_id: Mapped[int | None] = mapped_column(
+        ForeignKey("audio_file.id", ondelete="SET NULL"), index=True
+    )
+    size: Mapped[int] = mapped_column(BigInteger)
+    mtime_ns: Mapped[int | None] = mapped_column(BigInteger)  # of the local source
+    meta_digest: Mapped[str | None] = mapped_column(String(40))  # None: metadata unknown
+    synced_at: Mapped[datetime] = mapped_column(default=utcnow)

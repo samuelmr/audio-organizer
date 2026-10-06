@@ -5,9 +5,9 @@ playlists and sync tracks and playlists to S3-compatible object storage. Built t
 used every time music is added (from files or CDs), on libraries of hundreds of
 thousands of tracks, with the user reviewing every change before it touches a file.
 
-Status: foundation in place: catalog, incremental scanner, metadata provenance,
-reviewable and undoable changesets, CLI. Next: S3 sync and playlists, web UI, intake
-of new music (inbox, gnudb, duplicate and album-neighbour matching), CD ripping.
+Status: catalog, incremental scanner, metadata provenance, reviewable and undoable
+changesets, S3 sync, CLI. Next: playlists, web UI, intake of new music (inbox, gnudb,
+duplicate and album-neighbour matching), CD ripping.
 
 ## Setup
 
@@ -34,7 +34,21 @@ unless `--db` or `AORG_DB` points elsewhere (a path or an SQLAlchemy URL).
     aorg changes approve 1            # or: aorg changes approve 1 3 4  (single changes)
     aorg changes apply 1 --dry-run
     aorg changes apply 1
-    aorg changes undo 1
+    aorg changes undo 1               # also reverts the manual edit in the catalog
+
+Syncing to S3 or any S3-compatible storage (credentials from the AWS environment
+variables, `~/.aws` or `--profile`; they are not stored):
+
+    aorg target add backup --bucket music --endpoint-url https://s3.example.com
+    aorg target reconcile backup      # adopt objects uploaded earlier, e.g. by upload.sh
+    aorg sync backup --dry-run
+    aorg sync backup                  # --delete also removes objects no longer in the library
+
+Each track is stored at its library path with its resolved metadata as object metadata,
+compatible with the old `upload.sh` (artist, album, title, tracknumber, year, genre,
+length in ms, image = key of the album cover; percent-encoded), plus albumartist and
+discnumber. Only new and changed files are uploaded; metadata changes and local moves
+are done with server-side copies, without transferring the audio again.
 
 ## Design
 
@@ -65,6 +79,8 @@ unless `--db` or `AORG_DB` points elsewhere (a path or an SQLAlchemy URL).
 | `provenance.py` | Resolving field values from their sources |
 | `audiohash.py` | Audio-only content hash |
 | `changes.py` | Changesets: propose, approve, apply, undo |
+| `sync.py` | Planning and carrying out syncs to object storage |
+| `objectstore.py` | Object storage backends (S3-compatible) |
 | `cli.py` | `aorg` command |
 
 `reference-material/` holds the earlier PHP and shell scripts this project replaces.
