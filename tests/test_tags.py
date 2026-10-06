@@ -73,6 +73,32 @@ def test_write_m4a(copy_audio, tmp_path):
     assert fields["compilation"] == "1"
 
 
+@pytest.mark.parametrize(
+    ("value", "number"),
+    [("2", 2), ("02", 2), ("02.", 2), ("13-", 13), (" 7 ", 7), ("Satakuntalainen Osakunta", None),
+     ("A1", None), ("", None), (None, None)],
+)  # fmt: skip
+def test_parse_number(value, number):
+    assert tags.parse_number(value) == number
+
+
+@pytest.mark.parametrize(
+    ("value", "year"),
+    [("1996", 1996), ("1996-05-01", 1996), ("2017-03-03T08:00:00Z", 2017), ("96", None),
+     ("unknown", None), (None, None)],
+)  # fmt: skip
+def test_parse_year(value, year):
+    assert tags.parse_year(value) == year
+
+
+def test_odd_track_numbers_are_normalized(copy_audio, tmp_path):
+    path = copy_audio("mp3", tmp_path / "x.mp3")
+    tags.write(path, {"tracknumber": "02.", "tracktotal": None})
+    assert tags.read(path).fields["tracknumber"] == "2"
+    tags.write(path, {"tracknumber": "Satakuntalainen Osakunta"})
+    assert tags.read(path).fields["tracknumber"] == "Satakuntalainen Osakunta"  # kept as it is
+
+
 def test_unknown_field_rejected(copy_audio, tmp_path):
     path = copy_audio("mp3", tmp_path / "x.mp3")
     try:

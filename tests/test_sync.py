@@ -159,6 +159,15 @@ def test_metadata_fits_size_limit(setup):
     assert meta["artist"] == "x"
 
 
+def test_metadata_numbers_are_plain_integers():
+    fields = {"tracknumber": "02.", "tracktotal": "12", "discnumber": "1", "disctotal": "x",
+              "date": "2017-03-03T08:00:00Z"}  # fmt: skip
+    meta = sy.track_metadata(200.4, fields, None)
+    assert {k: meta.get(k) for k in ("tracknumber", "tracktotal", "discnumber", "disctotal",
+            "year", "length")} == {"tracknumber": "2", "tracktotal": "12", "discnumber": "1",
+            "disctotal": None, "year": "2017", "length": "200400"}  # fmt: skip
+
+
 def test_playlists_are_synced(setup, s3):
     session, root, target, store = setup
     session.add(Playlist(library=target.library, name="Texas: hits", rule="artist=texas",

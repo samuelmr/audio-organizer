@@ -77,6 +77,14 @@ form.inline { display: inline; }
 .fields .others span { display: block; font-size: 0.85rem; color: var(--muted); }
 .fields .others .differs { color: var(--warn); }
 
+.subtitle { color: var(--muted); margin-top: -0.5rem; }
+a.quiet { color: inherit; text-decoration: none; }
+a.quiet:hover { text-decoration: underline; }
+.muted { color: var(--muted); }
+tr.group th { padding-top: 1rem; font-size: 1rem; border-bottom: 1px solid var(--muted); }
+tr.group:hover { background: none; }
+tr.group .by { color: var(--muted); font-weight: normal; margin-left: 0.5rem; }
+
 .message { background: var(--highlight); border-left: 3px solid var(--accent); padding: 0.5rem 0.75rem; }
 .error, .failed { color: var(--bad); }
 .ok { color: var(--ok); }

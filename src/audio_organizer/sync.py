@@ -2,8 +2,9 @@
 
 Objects are stored under the target's prefix at the file's library path, with the
 track's resolved metadata (not its raw tags) as object metadata: artist, albumartist,
-album, title, tracknumber, discnumber, year, genre, length (ms) and image (the key of
-the album's cover image), percent-encoded.
+album, title, tracknumber, tracktotal, discnumber, disctotal, year, genre, length (ms)
+and image (the key of the album's cover image), percent-encoded; numbers as plain
+integers.
 
 Sync is planned first and only does what is needed, to save bandwidth:
 - unchanged files are skipped
@@ -34,6 +35,7 @@ from .objectstore import ObjectStore, S3Store
 from .playlist_formats import FORMATS as PLAYLIST_FORMATS
 from .playlist_formats import render
 from .playlists import PlaylistSet, library_playlists, safe_filename
+from .tags import parse_number, parse_year
 from .tracks import iter_tracks, present
 
 CONTENT_TYPES = {
@@ -109,14 +111,20 @@ def object_key(target: SyncTarget, relpath: str) -> str:
 def track_metadata(
     duration: float | None, fields: dict[str, str], cover_key: str | None
 ) -> dict[str, str]:
+    def number(value: int | None) -> str | None:
+        return str(value) if value else None
+
     values = {
         "artist": fields.get("artist"),
         "albumartist": fields.get("albumartist"),
         "album": fields.get("album"),
         "title": fields.get("title"),
-        "tracknumber": fields.get("tracknumber"),
-        "discnumber": fields.get("discnumber"),
-        "year": (fields.get("date") or "")[:4] or None,
+        # Numbers as plain integers ("2", not "02." or "2/12"); left out when not numbers
+        "tracknumber": number(parse_number(fields.get("tracknumber"))),
+        "tracktotal": number(parse_number(fields.get("tracktotal"))),
+        "discnumber": number(parse_number(fields.get("discnumber"))),
+        "disctotal": number(parse_number(fields.get("disctotal"))),
+        "year": number(parse_year(fields.get("date"))),
         "genre": fields.get("genre"),
         "length": str(round(duration * 1000)) if duration else None,
         "image": cover_key,

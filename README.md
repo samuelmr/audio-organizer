@@ -56,7 +56,10 @@ they disagree.
 
 The web UI shows the same catalog: browse, search and sort your tracks, list those whose
 sources disagree or that lack an album or title, see a track's values and where they
-come from, its identical copies and its original tags, and edit them. It is also where
+come from, its identical copies and its original tags, and edit them. Click an album,
+artist or folder to see just its tracks (an album's in disc and track order), or browse
+the albums list. Albums are grouped by their tags, so the tracks of an album scattered
+across folders show up together. It is also where
 changesets are easiest to review: approve changes one by one or all at once, try a dry
 run, apply and undo. Playlists can be viewed, created and edited, and a sync target's
 plan previewed.
@@ -133,9 +136,11 @@ HTML page.
 
 Tracks are stored at their path in the library (under the target's `--prefix`, if
 given), with these object metadata, percent-encoded: `artist`, `albumartist`, `album`,
-`title`, `tracknumber`, `discnumber`, `year`, `genre`, `length` (milliseconds) and
-`image` (the key of the album's cover image, which is uploaded too). The values are the
-catalog's, so your edits are synced even before they are written into the files.
+`title`, `tracknumber`, `tracktotal`, `discnumber`, `disctotal`, `year`, `genre`,
+`length` (milliseconds) and `image` (the key of the album's cover image, which is
+uploaded too). Numbers are plain integers: a track number tagged "02." or "2/12" is
+stored as `2`. The values are the catalog's, so your edits are synced even before they
+are written into the files.
 
 All playlists of the library are synced too, as `.m3u`, `.json` and `.html` files in
 `playlists/` (under the prefix), referring to the tracks by relative paths

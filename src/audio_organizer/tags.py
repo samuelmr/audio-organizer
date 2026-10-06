@@ -6,6 +6,7 @@ The mood/tempo/situation/preference comments written by MusicMatch Jukebox are
 read as fields of their own.
 """
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import BinaryIO
@@ -159,21 +160,40 @@ def _put(fields: dict[str, str], name: str, values) -> None:
         fields[name] = "; ".join(dict.fromkeys(cleaned))
 
 
+NUMBER_FIELDS = ("tracknumber", "tracktotal", "discnumber", "disctotal")
+_NUMBER = re.compile(r"\s*(\d+)\s*[.:)-]?\s*")
+_YEAR = re.compile(r"\s*(\d{4})(?:\D.*)?", re.DOTALL)
+
+
+def parse_number(value: str | None) -> int | None:
+    """A track or disc number or total as written in real tags: '2', '02', '02.' and
+    '13-' are numbers; anything else (text in the wrong field) is not."""
+    match = _NUMBER.fullmatch(value or "")
+    return int(match.group(1)) if match else None
+
+
+def parse_year(value: str | None) -> int | None:
+    """The year of a date: '1996', '1996-05-01', '2017-03-03T08:00:00Z'."""
+    match = _YEAR.fullmatch(value or "")
+    return int(match.group(1)) if match else None
+
+
 def _split_pair(fields: dict[str, str], number_key: str, total_key: str) -> None:
-    """'03/12' -> number '3', total '12'. Non-numeric values are kept as they are."""
+    """'03/12' -> number '3', total '12'; '02.' -> '2'. Values that are not numbers are
+    kept as they are."""
     value = fields.get(number_key)
-    if value is None:
-        return
-    number, _, total = value.partition("/")
-    number, total = number.strip(), total.strip()
-    if number.isdigit():
-        fields[number_key] = str(int(number))
-    if total.isdigit() and int(total) > 0 and total_key not in fields:
-        fields[total_key] = str(int(total))
-    if number.isdigit() and int(number) == 0:
-        del fields[number_key]  # iTunes writes 0 for "no track number"
-    if fields.get(total_key, "").isdigit():
-        fields[total_key] = str(int(fields[total_key]))
+    if value is not None:
+        number_text, _, total_text = value.partition("/")
+        number, total = parse_number(number_text), parse_number(total_text)
+        if number == 0:
+            del fields[number_key]  # iTunes writes 0 for "no track number"
+        elif number is not None:
+            fields[number_key] = str(number)
+        if total and total_key not in fields:
+            fields[total_key] = str(total)
+    total = parse_number(fields.get(total_key))
+    if total is not None:
+        fields[total_key] = str(total)
 
 
 def write(path: str | Path, changes: dict[str, str | None]) -> None:

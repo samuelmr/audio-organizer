@@ -3,10 +3,10 @@
 import os
 from pathlib import Path
 
-from sqlalchemy import Engine, create_engine, event
+from sqlalchemy import Engine, create_engine, event, inspect
 from sqlalchemy.orm import Session, sessionmaker
 
-from .models import Base
+from .models import Base, EffectiveMetadata
 from .provenance import backfill_effective
 
 
@@ -35,12 +35,32 @@ def make_engine(url: str | None = None) -> Engine:
             cursor.execute("PRAGMA journal_mode=WAL")
             cursor.close()
 
+    _drop_outdated_derived_tables(engine)
     Base.metadata.create_all(engine)
     return engine
+
+
+# Tables computed entirely from other data: when their columns change, they are dropped,
+# recreated and filled again instead of being migrated.
+DERIVED_TABLES = [EffectiveMetadata.__table__]
+
+
+def _drop_outdated_derived_tables(engine: Engine) -> None:
+    inspector = inspect(engine)
+    for table in DERIVED_TABLES:
+        if not inspector.has_table(table.name):
+            continue
+        existing = {
+            c["name"]: str(c["type"].compile(engine.dialect)).upper()
+            for c in inspector.get_columns(table.name)
+        }
+        wanted = {c.name: str(c.type.compile(engine.dialect)).upper() for c in table.columns}
+        if existing != wanted:
+            table.drop(engine)
 
 
 def make_sessionmaker(url: str | None = None) -> sessionmaker[Session]:
     factory = sessionmaker(make_engine(url), expire_on_commit=False)
     with factory() as session:
-        backfill_effective(session)  # catalogs made before the table existed
+        backfill_effective(session)  # older catalogs, or after the table was rebuilt
     return factory

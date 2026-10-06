@@ -54,7 +54,8 @@ e.g. `@~/notes/audio-organizer.md`.
 - Tests generate audio with ffmpeg (`copy_audio` in `tests/conftest.py`) and fake S3
   with moto. Add tests with new behaviour; path parser cases come from real file names.
 - New tables are created by `create_all`; before changing existing tables, set up
-  Alembic migrations.
+  Alembic migrations. Exception: derived tables (`DERIVED_TABLES` in `db.py`, computed
+  entirely from other data) are dropped and refilled when their columns change.
 - README.md is for users first (installation, configuration, usage), contributors
   second. Update it when commands change.
 - Commit messages: a short imperative summary, then a body explaining what and why.

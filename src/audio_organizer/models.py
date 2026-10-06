@@ -92,7 +92,11 @@ class FieldValue(Base):
 class EffectiveMetadata(Base):
     """The effective value of each tag field of a file, as provenance.resolve chooses it
     from the FieldValues, so that the catalog can be searched and sorted in SQL. Kept up
-    to date by provenance.set_value(s); never written directly."""
+    to date by provenance.set_value(s); never written directly.
+
+    Derived data: when its columns change, the table is rebuilt (db.py), so it needs no
+    migrations. Track and disc numbers and totals are numbers here (None when the value
+    is not one); year is the year of the date."""
 
     __tablename__ = "effective_metadata"
 
@@ -103,11 +107,12 @@ class EffectiveMetadata(Base):
     albumartist: Mapped[str | None] = mapped_column(Text)
     album: Mapped[str | None] = mapped_column(Text, index=True)
     title: Mapped[str | None] = mapped_column(Text, index=True)
-    tracknumber: Mapped[str | None] = mapped_column(Text)
-    tracktotal: Mapped[str | None] = mapped_column(Text)
-    discnumber: Mapped[str | None] = mapped_column(Text)
-    disctotal: Mapped[str | None] = mapped_column(Text)
+    tracknumber: Mapped[int | None]
+    tracktotal: Mapped[int | None]
+    discnumber: Mapped[int | None]
+    disctotal: Mapped[int | None]
     date: Mapped[str | None] = mapped_column(Text)
+    year: Mapped[int | None] = mapped_column(index=True)
     genre: Mapped[str | None] = mapped_column(Text)
     compilation: Mapped[str | None] = mapped_column(Text)
     mood: Mapped[str | None] = mapped_column(Text)

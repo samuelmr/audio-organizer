@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from .models import AudioFile, EffectiveMetadata, FieldValue
 from .pathparse import normalize_name
-from .tags import FIELDS
+from .tags import FIELDS, NUMBER_FIELDS, parse_number, parse_year
 
 # Higher wins. A manual edit always wins and is never overwritten by scans.
 SOURCE_PRIORITY = {"manual": 100, "gnudb": 60, "tag": 50, "neighbours": 40, "path": 30}
@@ -77,16 +77,29 @@ def refresh_effective(session: Session, file_ids: list[int]) -> None:
         resolved = {k: r for k, r in resolve(values).items() if k in FIELDS}
         # A field the user has decided (a manual value) is no longer disputed
         disputed = any(
-            r.source != "manual" and len({normalize_name(v) for v in r.candidates.values()}) > 1
-            for r in resolved.values()
+            r.source != "manual" and len({_comparable(name, v) for v in r.candidates.values()}) > 1
+            for name, r in resolved.items()
         )
-        session.merge(
-            EffectiveMetadata(
-                file_id=file_id,
-                disputed=disputed,
-                **{name: (resolved[name].value if name in resolved else None) for name in FIELDS},
-            )
-        )
+        effective: dict[str, object] = {
+            name: (resolved[name].value if name in resolved else None) for name in FIELDS
+        }
+        for name in NUMBER_FIELDS:
+            effective[name] = parse_number(effective[name])
+        effective["year"] = parse_year(effective["date"])
+        session.merge(EffectiveMetadata(file_id=file_id, disputed=disputed, **effective))
+
+
+def _comparable(field: str, value: str) -> object:
+    """What has to differ between two values of a field for them to disagree: the number
+    of track and disc numbers ('02.' and '2' agree), the year of dates, and otherwise the
+    name, ignoring case, accents, punctuation and a leading 'The'."""
+    if field in NUMBER_FIELDS:
+        number = parse_number(value)
+        return number if number is not None else normalize_name(value)
+    if field == "date":
+        year = parse_year(value)
+        return year if year is not None else normalize_name(value)
+    return normalize_name(value)
 
 
 def backfill_effective(session: Session, batch: int = 2000) -> int:

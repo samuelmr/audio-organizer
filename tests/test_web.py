@@ -150,6 +150,33 @@ def test_playlists(web):
     assert "No playlists yet" in response.text
 
 
+def test_albums_artists_and_folders(web, Session):
+    page = web.get("/libraries/music/albums").text
+    assert "2 albums" in page
+    [link] = re.findall(r'href="(/libraries/music\?album=Greatest[^"]*)"', page)
+    page = web.get(link.replace("&amp;", "&")).text
+    assert "<h1>Greatest Hits</h1>" in page and "1 tracks" in page
+
+    page = web.get("/libraries/music", params={"artist": "texas"}).text
+    assert "<h1>texas</h1>" in page and "2 tracks" in page
+
+    page = web.get("/libraries/music", params={"folder": "Texas"}).text
+    assert "1 tracks" in page  # Texas_Halo.mp3, not the one in Texas/Greatest Hits
+
+    page = web.get("/libraries/music", params={"sort": "album"}).text
+    assert page.count('<tr class="group">') == 3  # Funhouse, Greatest Hits, no album
+
+    file_id = _file_id(Session, "Texas/Greatest Hits/11 Halo.mp3")
+    page = web.get(f"/tracks/{file_id}").text
+    assert "Tracks of this album" in page and "folder=Texas%2FGreatest+Hits" in page
+
+
+def test_menu_links_to_the_library_on_every_page(web):
+    for path in ("/changes", "/sync", "/libraries/music"):
+        page = web.get(path).text
+        assert 'href="/libraries/music/playlists"' in page, path
+
+
 def test_sync_preview(web, Session):
     assert "No sync targets" in web.get("/sync").text
     with Session() as session:

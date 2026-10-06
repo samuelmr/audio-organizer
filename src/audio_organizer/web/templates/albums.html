@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Albums – audio-organizer{% endblock %}
+{% block content %}
+{% set base = '/libraries/' ~ library.name %}
+<h1>Albums</h1>
+<form class="search" method="get" action="{{ base }}/albums">
+ <input type="search" name="q" value="{{ q }}" placeholder="Album or artist" aria-label="Search albums">
+ <button>Search</button>
+</form>
+<p class="count">{{ total }} albums{% if pages > 1 %}, page {{ page }} of {{ pages }}{% endif %}.
+Albums are grouped by their album and album artist tags; files of one album scattered
+across folders are listed together.</p>
+<table>
+ <thead><tr><th>Album</th><th>Artist</th><th class="num">Tracks</th><th>Year</th></tr></thead>
+ <tbody>
+ {% for row in rows %}
+  <tr>
+   <td><a href="{{ url(base, album=row.album, albumartist=row.albumartist) }}">{{ row.album }}</a></td>
+   <td>{% if row.albumartist %}{{ row.albumartist }}{% elif row.artists > 1 %}<span class="muted">{{ row.artists }} artists</span>{% else %}{{ row.artist or "" }}{% endif %}</td>
+   <td class="num">{{ row.tracks }}</td>
+   <td>{{ row.year or "" }}</td>
+  </tr>
+ {% else %}
+  <tr><td colspan="4">No albums found.</td></tr>
+ {% endfor %}
+ </tbody>
+</table>
+{% if pages > 1 %}
+<nav class="pages" aria-label="Pages">
+ {% if page > 1 %}<a href="{{ url(base ~ '/albums', q=q, page=page - 1) }}">← Previous</a>{% endif %}
+ {% if page < pages %}<a href="{{ url(base ~ '/albums', q=q, page=page + 1) }}">Next →</a>{% endif %}
+</nav>
+{% endif %}
+{% endblock %}

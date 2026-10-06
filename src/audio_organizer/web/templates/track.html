@@ -3,7 +3,14 @@
 {% block title %}{{ resolved.title.value if "title" in resolved else file.path }} – audio-organizer{% endblock %}
 {% block content %}
 <h1>{{ resolved.title.value if "title" in resolved else file.path.rsplit("/", 1)[-1] }}</h1>
+{% set base = '/libraries/' ~ file.library.name %}
+{% set folder = file.path.rsplit("/", 1)[0] if "/" in file.path else "" %}
 <p class="path">{{ file.path }}</p>
+<p class="subtitle">
+ {% if "album" in resolved %}<a href="{{ url(base, album=resolved.album.value, albumartist=resolved.albumartist.value if 'albumartist' in resolved else none) }}">Tracks of this album</a> · {% endif %}
+ {% if "artist" in resolved %}<a href="{{ url(base, artist=resolved.artist.value) }}">Tracks by this artist</a> · {% endif %}
+ {% if folder %}<a href="{{ url(base, folder=folder) }}">Files in this folder</a>{% endif %}
+</p>
 <p class="details">
  {{ file.format or "unknown format" }}{% if file.duration %}, {{ file.duration | duration }}{% endif %}{% if file.bitrate %}, {{ file.bitrate // 1000 }} kbps{% endif %}
  {% if file.missing %}<strong>– missing from disk</strong>{% endif %}

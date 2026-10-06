@@ -16,7 +16,7 @@ from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func, or_, select
+from sqlalchemy import String, func, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from .. import changes as ch
@@ -37,12 +37,13 @@ from ..tracks import present
 
 HERE = Path(__file__).parent
 PAGE_SIZE = 50
+M = EffectiveMetadata
 SORTS = {
-    "artist": (EffectiveMetadata.artist, EffectiveMetadata.album, EffectiveMetadata.tracknumber),
-    "title": (EffectiveMetadata.title, EffectiveMetadata.artist),
-    "album": (EffectiveMetadata.album, EffectiveMetadata.discnumber, EffectiveMetadata.tracknumber),
-    "year": (EffectiveMetadata.date, EffectiveMetadata.artist),
-    "genre": (EffectiveMetadata.genre, EffectiveMetadata.artist),
+    "artist": (M.artist, M.album, M.discnumber, M.tracknumber),
+    "title": (M.title, M.artist),
+    "album": (M.album, M.albumartist, M.discnumber, M.tracknumber),
+    "year": (M.year, M.artist, M.album, M.discnumber, M.tracknumber),
+    "genre": (M.genre, M.artist),
     "path": (AudioFile.path,),
     "added": (AudioFile.first_seen,),
 }
@@ -69,6 +70,12 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
 
     def render(request: Request, template: str, status_code: int = 200, **context):
         context.setdefault("message", request.query_params.get("msg"))
+        if context.get("library") is None:
+            # Pages outside a library still link to its tracks and playlists in the menu
+            # when there is only one library
+            with session_factory() as session:
+                libraries = session.scalars(select(Library).limit(2)).all()
+            context["library"] = libraries[0] if len(libraries) == 1 else None
         return templates.TemplateResponse(request, template, context, status_code=status_code)
 
     @app.middleware("http")
@@ -100,41 +107,92 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         request: Request,
         name: str,
         q: str = "",
-        sort: str = "artist",
+        sort: str = "",
         show: str = "all",
+        album: str | None = None,
+        albumartist: str | None = None,
+        artist: str | None = None,
+        folder: str | None = None,
         page: int = 1,
         session: Session = SessionDep,
     ):
+        """The tracks of a library: searched, filtered to one album, artist or folder,
+        and sorted. Sorted by album, the tracks come in album order."""
         lib = _library(session, name)
-        query = (
-            select(AudioFile, EffectiveMetadata)
-            .join(EffectiveMetadata, EffectiveMetadata.file_id == AudioFile.id)
-            .where(present(lib.id))
-        )
-        if q.strip():
-            for word in q.split():
-                pattern = f"%{word}%"
-                query = query.where(
-                    or_(
-                        EffectiveMetadata.artist.ilike(pattern),
-                        EffectiveMetadata.album.ilike(pattern),
-                        EffectiveMetadata.title.ilike(pattern),
-                        AudioFile.path.ilike(pattern),
-                    )
+        query = select(AudioFile, M).join(M, M.file_id == AudioFile.id).where(present(lib.id))
+        for word in q.split():
+            pattern = f"%{word}%"
+            query = query.where(
+                or_(
+                    M.artist.ilike(pattern),
+                    M.album.ilike(pattern),
+                    M.title.ilike(pattern),
+                    AudioFile.path.ilike(pattern),
                 )
+            )
         if FILTERS.get(show) is not None:
             query = query.where(FILTERS[show])
+        for column, value in ((M.album, album), (M.albumartist, albumartist), (M.artist, artist)):
+            if value is not None:
+                query = query.where(func.lower(column) == value.lower())
+        if folder is not None:
+            prefix = folder.strip("/") + "/"
+            query = query.where(
+                AudioFile.path.startswith(prefix, autoescape=True),
+                ~AudioFile.path.like(_like_escape(prefix) + "%/%", escape="\\"),
+            )
+        sort = sort if sort in SORTS else ("album" if album or folder else "artist")
         total = session.scalar(select(func.count()).select_from(query.subquery()))
         pages = max(1, ceil(total / PAGE_SIZE))
         page = min(max(page, 1), pages)
-        columns = SORTS.get(sort, SORTS["artist"])
-        order = [c for col in columns for c in (col.is_(None), func.lower(col))]
         rows = session.execute(
-            query.order_by(*order, AudioFile.path).offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
+            query.order_by(*_order(SORTS[sort]), AudioFile.path)
+            .offset((page - 1) * PAGE_SIZE)
+            .limit(PAGE_SIZE)
+        ).all()
+        params = {"q": q, "show": show, "album": album, "albumartist": albumartist,
+                  "artist": artist, "folder": folder}  # fmt: skip
+        return render(
+            request, "library.html", library=lib, rows=rows, total=total, sort=sort,
+            page=page, pages=pages, sorts=list(SORTS), filters=list(FILTERS), params=params,
+            **params,
+        )  # fmt: skip
+
+    @app.get("/libraries/{name}/albums", response_class=HTMLResponse)
+    def albums(
+        request: Request, name: str, q: str = "", page: int = 1, session: Session = SessionDep
+    ):
+        """The library's albums by their (effective) album and album artist tags."""
+        lib = _library(session, name)
+        query = (
+            select(
+                func.min(M.album).label("album"),
+                func.min(M.albumartist).label("albumartist"),
+                func.count().label("tracks"),
+                func.count(func.distinct(M.artist)).label("artists"),
+                func.min(M.artist).label("artist"),
+                func.min(M.year).label("year"),
+            )
+            .join(AudioFile, M.file_id == AudioFile.id)
+            .where(present(lib.id), M.album.is_not(None))
+            .group_by(func.lower(M.album), func.lower(M.albumartist))
+        )
+        for word in q.split():
+            pattern = f"%{word}%"
+            query = query.where(
+                or_(M.album.ilike(pattern), M.albumartist.ilike(pattern), M.artist.ilike(pattern))
+            )
+        total = session.scalar(select(func.count()).select_from(query.subquery()))
+        pages = max(1, ceil(total / PAGE_SIZE))
+        page = min(max(page, 1), pages)
+        rows = session.execute(
+            query.order_by(func.lower(func.min(M.album)), func.lower(func.min(M.albumartist)))
+            .offset((page - 1) * PAGE_SIZE)
+            .limit(PAGE_SIZE)
         ).all()
         return render(
-            request, "library.html", library=lib, rows=rows, total=total, q=q, sort=sort,
-            show=show, page=page, pages=pages, sorts=list(SORTS), filters=list(FILTERS),
+            request, "albums.html", library=lib, rows=rows, total=total, q=q, page=page,
+            pages=pages,
         )  # fmt: skip
 
     @app.get("/tracks/{file_id}", response_class=HTMLResponse)
@@ -404,6 +462,19 @@ def _playlist(session: Session, playlist_id: int) -> Playlist:
     if playlist is None:
         raise HTTPException(404, f"No playlist {playlist_id}")
     return playlist
+
+
+def _order(columns) -> list:
+    """ORDER BY terms: missing values last, text case-insensitively, numbers as numbers."""
+    terms = []
+    for column in columns:
+        terms.append(column.is_(None))
+        terms.append(func.lower(column) if isinstance(column.type, String) else column)
+    return terms
+
+
+def _like_escape(text: str) -> str:
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _redirect(path: str, message: str | None = None) -> RedirectResponse:

@@ -1,8 +1,22 @@
 {% extends "base.html" %}
 {% block title %}{{ library.name }} – audio-organizer{% endblock %}
 {% block content %}
-<h1>{{ library.name }}</h1>
-<form class="search" method="get" action="/libraries/{{ library.name }}">
+{% set base = '/libraries/' ~ library.name %}
+{% if album is not none %}
+ <h1>{{ album }}</h1>
+ <p class="subtitle">Album{% if albumartist %} by <a href="{{ url(base, artist=albumartist) }}">{{ albumartist }}</a>{% endif %} · <a href="{{ base }}">All tracks</a></p>
+{% elif artist is not none %}
+ <h1>{{ artist }}</h1>
+ <p class="subtitle">Artist · <a href="{{ base }}">All tracks</a></p>
+{% elif folder is not none %}
+ <h1 class="path">{{ folder }}/</h1>
+ <p class="subtitle">Files in this folder · <a href="{{ base }}">All tracks</a></p>
+{% else %}
+ <h1>{{ library.name }}</h1>
+{% endif %}
+
+<form class="search" method="get" action="{{ base }}">
+ {% for key in ("album", "albumartist", "artist", "folder") %}{% if params[key] is not none %}<input type="hidden" name="{{ key }}" value="{{ params[key] }}">{% endif %}{% endfor %}
  <input type="search" name="q" value="{{ q }}" placeholder="Artist, album, title or path" aria-label="Search">
  <label>Show
   <select name="show">
@@ -23,16 +37,27 @@
 
 <table class="tracks">
  <thead>
-  <tr><th>Artist</th><th>Title</th><th>Album</th><th class="num">#</th><th>Year</th><th>Genre</th><th class="num">Time</th><th></th></tr>
+  <tr><th class="num">#</th><th>Title</th><th>Artist</th><th>Album</th><th>Year</th><th>Genre</th><th class="num">Time</th><th></th></tr>
  </thead>
  <tbody>
+ {% set group = namespace(key=none) %}
  {% for file, meta in rows %}
+  {% if sort == "album" and album is none %}
+   {% set key = ((meta.album or "") | lower, (meta.albumartist or "") | lower) %}
+   {% if key != group.key %}
+    {% set group.key = key %}
+    <tr class="group"><th colspan="8">
+     {% if meta.album %}<a href="{{ url(base, album=meta.album, albumartist=meta.albumartist) }}">{{ meta.album }}</a>{% else %}No album{% endif %}
+     {% if meta.albumartist %}<span class="by">{{ meta.albumartist }}</span>{% endif %}
+    </th></tr>
+   {% endif %}
+  {% endif %}
   <tr>
-   <td>{{ meta.artist or "" }}</td>
+   <td class="num">{% if meta.discnumber and meta.disctotal and meta.disctotal > 1 %}{{ meta.discnumber }}-{% endif %}{{ meta.tracknumber or "" }}</td>
    <td><a href="/tracks/{{ file.id }}">{{ meta.title or file.path.rsplit("/", 1)[-1] }}</a></td>
-   <td>{{ meta.album or "" }}</td>
-   <td class="num">{{ meta.tracknumber or "" }}</td>
-   <td>{{ (meta.date or "")[:4] }}</td>
+   <td>{% if meta.artist %}<a class="quiet" href="{{ url(base, artist=meta.artist) }}">{{ meta.artist }}</a>{% endif %}</td>
+   <td>{% if meta.album %}<a class="quiet" href="{{ url(base, album=meta.album, albumartist=meta.albumartist) }}">{{ meta.album }}</a>{% endif %}</td>
+   <td>{{ meta.year or "" }}</td>
    <td>{{ meta.genre or "" }}</td>
    <td class="num">{{ file.duration | duration }}</td>
    <td>{% if meta.disputed %}<span class="flag" title="Its sources disagree">≠</span>{% endif %}</td>
@@ -45,8 +70,8 @@
 
 {% if pages > 1 %}
 <nav class="pages" aria-label="Pages">
- {% if page > 1 %}<a href="{{ url('/libraries/' ~ library.name, q=q, sort=sort, show=show, page=page - 1) }}">← Previous</a>{% endif %}
- {% if page < pages %}<a href="{{ url('/libraries/' ~ library.name, q=q, sort=sort, show=show, page=page + 1) }}">Next →</a>{% endif %}
+ {% if page > 1 %}<a href="{{ url(base, sort=sort, page=page - 1, **params) }}">← Previous</a>{% endif %}
+ {% if page < pages %}<a href="{{ url(base, sort=sort, page=page + 1, **params) }}">Next →</a>{% endif %}
 </nav>
 {% endif %}
 {% endblock %}

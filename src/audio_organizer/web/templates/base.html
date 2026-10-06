@@ -10,9 +10,12 @@
 <header>
  <nav>
   <a class="brand" href="/">audio-organizer</a>
-  {% if library is defined and library %}
+  {% if library %}
    <a href="/libraries/{{ library.name }}">Tracks</a>
+   <a href="/libraries/{{ library.name }}/albums">Albums</a>
    <a href="/libraries/{{ library.name }}/playlists">Playlists</a>
+  {% else %}
+   <a href="/">Libraries</a>
   {% endif %}
   <a href="/changes">Changes</a>
   <a href="/sync">Sync</a>
