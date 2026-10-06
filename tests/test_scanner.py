@@ -98,3 +98,5 @@ def test_unreadable_file_is_recorded(Session, tmp_path):
         assert len(stats.errors) == 1
         assert _files(session)["x/broken.mp3"].error
         assert scan(session, library).unchanged == 1  # not retried until it changes
+        stats = scan(session, library, retry_errors=True)
+        assert (stats.unchanged, stats.changed, len(stats.errors)) == (0, 1, 1)

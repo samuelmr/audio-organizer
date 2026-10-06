@@ -130,6 +130,9 @@ def scan_command(
     library: Annotated[str | None, typer.Argument(help="Library name")] = None,
     hash_audio: Annotated[bool, typer.Option("--hash/--no-hash", help="Hash audio data")] = True,
     workers: Annotated[int, typer.Option(help="Parallel file readers")] = 8,
+    retry_errors: Annotated[
+        bool, typer.Option("--retry-errors", help="Read again files that could not be read")
+    ] = False,
 ) -> None:
     """Catalog new and changed files. Unchanged files are skipped."""
     started = time.monotonic()
@@ -146,7 +149,10 @@ def scan_command(
 
     with _session(ctx) as session:
         lib = _library(session, library)
-        stats = scan(session, lib, hash_audio=hash_audio, workers=workers, progress=progress)
+        stats = scan(
+            session, lib, hash_audio=hash_audio, workers=workers, retry_errors=retry_errors,
+            progress=progress,
+        )  # fmt: skip
     typer.echo(
         f"{stats.seen} files: {stats.new} new, {stats.changed} changed, {stats.moved} moved, "
         f"{stats.unchanged} unchanged, {stats.missing} missing, {len(stats.errors)} errors "

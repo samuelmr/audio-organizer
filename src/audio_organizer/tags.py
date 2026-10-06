@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import BinaryIO
 
 import mutagen
-from mutagen.id3 import COMM, ID3, TCMP, TCON, TDRC, TPOS, TRCK, Frames
+from mutagen.aac import AAC, AACError
+from mutagen.id3 import COMM, ID3, TCMP, TCON, TDRC, TPOS, TRCK, Frames, ID3NoHeaderError
 from mutagen.mp4 import MP4FreeForm, MP4Tags
 
 FIELDS = (
@@ -63,9 +64,37 @@ class AudioInfo:
     fields: dict[str, str] = field(default_factory=dict)
 
 
+def _load(source: str | Path | BinaryIO) -> tuple[mutagen.FileType | None, object]:
+    """mutagen's object for a file, and its tags.
+
+    Raw AAC streams (ADTS) with an ID3 tag in front lead mutagen's format detection to
+    MP3, which then fails, and mutagen's AAC reader ignores the tag; so .aac files are
+    read as AAC, with the ID3 tag loaded on its own."""
+    name = str(getattr(source, "name", source))
+    if name.lower().endswith(".aac"):
+        try:
+            audio = AAC(source)
+        except AACError:
+            pass  # e.g. an MP4 file named .aac
+        else:
+            _rewind(source)
+            try:
+                return audio, ID3(source)
+            except ID3NoHeaderError:
+                return audio, None
+        _rewind(source)
+    audio = mutagen.File(source)
+    return audio, audio.tags if audio is not None else None
+
+
+def _rewind(source) -> None:
+    if hasattr(source, "seek"):
+        source.seek(0)
+
+
 def read(path: str | Path | BinaryIO) -> AudioInfo:
     """Read a file given by path, or an open, seekable binary file object."""
-    audio = mutagen.File(path)
+    audio, tags = _load(path)
     if audio is None:
         return AudioInfo()
     info = AudioInfo(
@@ -74,7 +103,6 @@ def read(path: str | Path | BinaryIO) -> AudioInfo:
         bitrate=getattr(audio.info, "bitrate", None) or None,
         sample_rate=getattr(audio.info, "sample_rate", None) or None,
     )
-    tags = audio.tags
     if isinstance(tags, ID3):
         raw = _read_id3(tags)
     elif isinstance(tags, MP4Tags):
@@ -153,14 +181,19 @@ def write(path: str | Path, changes: dict[str, str | None]) -> None:
     unknown = set(changes) - set(FIELDS)
     if unknown:
         raise ValueError(f"Unknown fields: {', '.join(sorted(unknown))}")
-    audio = mutagen.File(path)
+    audio, tags = _load(path)
     if audio is None:
         raise UnsupportedFormat(f"Not a recognized audio file: {path}")
-    if audio.tags is None:
-        audio.add_tags()
     current = read(path).fields
     merged = {**current, **changes}
-    tags = audio.tags
+    if isinstance(audio, AAC):  # an ID3 tag in front of the stream; see _load
+        tags = tags if tags is not None else ID3()
+        _write_id3(tags, changes, merged)
+        tags.save(path, v2_version=4 if tags.version >= (2, 4, 0) else 3)
+        return
+    if tags is None:
+        audio.add_tags()
+        tags = audio.tags
     if isinstance(tags, ID3):
         _write_id3(tags, changes, merged)
         audio.save(v2_version=4 if tags.version >= (2, 4, 0) else 3)

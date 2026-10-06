@@ -96,8 +96,11 @@ def scan(
     *,
     hash_audio: bool = True,
     workers: int = 8,
+    retry_errors: bool = False,
     progress: Callable[[ScanStats, str], None] | None = None,
 ) -> ScanStats:
+    """Catalog new and changed files. Files that could not be read are only read again
+    when they change, or with retry_errors (e.g. after an upgrade that reads more formats)."""
     stats = ScanStats()
     known = {
         path: (file_id, size, mtime_ns, missing)
@@ -107,6 +110,15 @@ def scan(
             ).where(AudioFile.library_id == library.id)
         )
     }
+    failed = set()
+    if retry_errors:
+        failed = set(
+            session.scalars(
+                select(AudioFile.path).where(
+                    AudioFile.library_id == library.id, AudioFile.error.is_not(None)
+                )
+            )
+        )
     seen: set[str] = set()
     reappeared: list[int] = []
     new_files: list[AudioFile] = []
@@ -139,7 +151,8 @@ def scan(
             stats.seen += 1
             seen.add(relpath)
             entry = known.get(relpath)
-            if entry and entry[1] == st.st_size and entry[2] == st.st_mtime_ns:
+            unchanged = entry and entry[1] == st.st_size and entry[2] == st.st_mtime_ns
+            if unchanged and relpath not in failed:
                 stats.unchanged += 1
                 if entry[3]:
                     reappeared.append(entry[0])

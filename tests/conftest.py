@@ -3,6 +3,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from mutagen.id3 import ID3, TALB, TIT2, TPE1
 
 from audio_organizer.db import make_sessionmaker
 
@@ -36,7 +37,18 @@ def audio_templates(tmp_path_factory) -> dict[str, Path]:
         "mp3b": make_audio(base / "b.mp3", freq=660, artist="Texas", title="Insane"),
         "m4a": make_audio(base / "a.m4a", artist="P!nk", album="Funhouse", title="So What",
                           track="1"),
+        "aac": _id3_tagged(make_audio(base / "a.aac", freq=550), artist="Underworld",
+                           album="Trainspotting", title="Born Slippy"),
     }  # fmt: skip
+
+
+def _id3_tagged(path: Path, **fields: str) -> Path:
+    """Put an ID3 tag in front of a raw stream (as some rippers do with ADTS AAC)."""
+    id3 = ID3()
+    for frame, key in ((TPE1, "artist"), (TALB, "album"), (TIT2, "title")):
+        id3.add(frame(encoding=3, text=[fields[key]]))
+    id3.save(path, v2_version=4)
+    return path
 
 
 @pytest.fixture

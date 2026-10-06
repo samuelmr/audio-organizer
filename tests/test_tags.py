@@ -1,3 +1,5 @@
+import mutagen
+import pytest
 from mutagen.id3 import COMM, ID3
 
 from audio_organizer import tags
@@ -12,6 +14,21 @@ def test_read_mp3(copy_audio, tmp_path):
         "artist": "Texas", "album": "Greatest Hits", "title": "Halo", "tracknumber": "11",
         "tracktotal": "16", "date": "2000", "genre": "Pop",
     }  # fmt: skip
+
+
+def test_adts_aac_with_id3_tag(copy_audio, tmp_path):
+    path = copy_audio("aac", tmp_path / "x.AAC")
+    with pytest.raises(mutagen.MutagenError):
+        mutagen.File(path)  # the problem: detected as MP3, which fails
+    info = tags.read(path)
+    assert info.format == "aac"
+    assert info.duration
+    assert info.fields == {"artist": "Underworld", "album": "Trainspotting", "title": "Born Slippy"}
+    before = audio_hash(path)
+    tags.write(path, {"title": "Born Slippy .NUXX", "tracknumber": "8"})
+    assert tags.read(path).fields["title"] == "Born Slippy .NUXX"
+    assert tags.read(path).fields["tracknumber"] == "8"
+    assert audio_hash(path) == before
 
 
 def test_read_m4a(copy_audio, tmp_path):
