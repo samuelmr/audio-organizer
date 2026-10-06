@@ -184,3 +184,53 @@ class RemoteObject(Base):
     mtime_ns: Mapped[int | None] = mapped_column(BigInteger)  # of the local source
     meta_digest: Mapped[str | None] = mapped_column(String(40))  # None: metadata unknown
     synced_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class Playlist(Base):
+    """A smart playlist (a rule over the catalog) or a static, curated one.
+
+    A smart playlist with group_by generates one playlist per value of that field; its
+    name then contains the field as a placeholder, e.g. "Best Of {mood}"."""
+
+    __tablename__ = "playlist"
+    __table_args__ = (UniqueConstraint("library_id", "name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    library_id: Mapped[int] = mapped_column(ForeignKey("library.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    rule: Mapped[str | None] = mapped_column(Text)  # None for a static playlist
+    group_by: Mapped[str | None] = mapped_column(String(40))
+    sort: Mapped[str] = mapped_column(String(20))
+    max_tracks: Mapped[int | None]
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+    library: Mapped[Library] = relationship()
+    entries: Mapped[list["PlaylistEntry"]] = relationship(
+        back_populates="playlist",
+        cascade="all, delete-orphan",
+        order_by="PlaylistEntry.position",
+    )
+
+    @property
+    def is_smart(self) -> bool:
+        return self.rule is not None
+
+
+class PlaylistEntry(Base):
+    """A track of a static playlist. Entries refer to files by id, so they follow the
+    files when they are moved; an imported entry that matched no file keeps its path."""
+
+    __tablename__ = "playlist_entry"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    playlist_id: Mapped[int] = mapped_column(
+        ForeignKey("playlist.id", ondelete="CASCADE"), index=True
+    )
+    position: Mapped[int]
+    file_id: Mapped[int | None] = mapped_column(
+        ForeignKey("audio_file.id", ondelete="SET NULL"), index=True
+    )
+    path: Mapped[str] = mapped_column(Text)
+
+    playlist: Mapped[Playlist] = relationship(back_populates="entries")

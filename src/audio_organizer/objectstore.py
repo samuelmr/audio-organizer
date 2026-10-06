@@ -11,6 +11,8 @@ import boto3
 class ObjectStore(Protocol):
     def upload(self, key: str, path: Path, content_type: str, metadata: dict[str, str]) -> None: ...
 
+    def put(self, key: str, data: bytes, content_type: str) -> None: ...
+
     def copy(self, source: str, key: str, content_type: str, metadata: dict[str, str]) -> None:
         """Server-side copy; with source == key, replaces the object's metadata in place."""
 
@@ -43,6 +45,9 @@ class S3Store:
             key,
             ExtraArgs={"ContentType": content_type, "Metadata": metadata},
         )
+
+    def put(self, key: str, data: bytes, content_type: str) -> None:
+        self.client.put_object(Bucket=self.bucket, Key=key, Body=data, ContentType=content_type)
 
     def copy(self, source: str, key: str, content_type: str, metadata: dict[str, str]) -> None:
         self.client.copy_object(

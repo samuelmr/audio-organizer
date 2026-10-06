@@ -8,7 +8,7 @@ from moto import mock_aws
 from sqlalchemy import select
 
 from audio_organizer import sync as sy
-from audio_organizer.models import AudioFile, Library, RemoteObject, SyncTarget
+from audio_organizer.models import AudioFile, Library, Playlist, RemoteObject, SyncTarget
 from audio_organizer.provenance import set_value
 from audio_organizer.scanner import scan
 
@@ -154,6 +154,30 @@ def test_upload_refuses_file_changed_since_scan(setup, s3):
 def test_metadata_fits_size_limit(setup):
     session, root, target, store = setup
     file = session.scalar(select(AudioFile))
-    meta = sy.track_metadata(file, {"title": "ä" * 3000, "artist": "x"}, None)
+    meta = sy.track_metadata(file.duration, {"title": "ä" * 3000, "artist": "x"}, None)
     assert sum(len(k) + len(v) for k, v in meta.items()) <= sy.METADATA_LIMIT
     assert meta["artist"] == "x"
+
+
+def test_playlists_are_synced(setup, s3):
+    session, root, target, store = setup
+    session.add(Playlist(library=target.library, name="Texas: hits", rule="artist=texas",
+                         sort="album"))  # fmt: skip
+    session.commit()
+    plan = _sync(session, target, store)
+    playlist_keys = sorted(a.key for a in plan.actions if a.object_kind == "playlist")
+    assert playlist_keys == [
+        "lib/playlists/Texas- hits.html",
+        "lib/playlists/Texas- hits.json",
+        "lib/playlists/Texas- hits.m3u",
+    ]
+    m3u = s3.get_object(Bucket=BUCKET, Key="lib/playlists/Texas- hits.m3u")
+    assert m3u["ContentType"] == "audio/x-mpegurl"
+    assert m3u["Body"].read().decode().splitlines()[-1] == "../Texas/Greatest Hits/11 Halo.mp3"
+    assert sy.plan(session, target).actions == []
+
+    session.scalar(select(Playlist)).name = "Texas"
+    session.commit()
+    plan = sy.plan(session, target)
+    assert plan.counts() == {"upload": 3}
+    assert sorted(plan.stale) == playlist_keys

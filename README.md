@@ -1,7 +1,7 @@
 # audio-organizer
 
-Maintain a music collection: catalog it, fix its metadata and sync tracks to
-S3-compatible object storage. Made to be used whenever you add music, on libraries of
+Maintain a music collection: catalog it, fix its metadata, make playlists and sync
+tracks and playlists to S3-compatible object storage. Made to be used whenever you add music, on libraries of
 hundreds of thousands of tracks, with you reviewing every change before it touches a
 file.
 
@@ -66,6 +66,45 @@ your files until you approve and apply it:
 `aorg` never writes to a file that has changed since it was last scanned; rescan first.
 The tags each file had when it was first scanned are kept in the catalog.
 
+### Playlists
+
+*Smart* playlists are rules over the catalog and stay up to date as the library
+changes; *static* playlists are lists you curate or import.
+
+    aorg playlists create "90s Rock" --rule "genre=Rock year>=1990 year<2000"
+    aorg playlists create "Best Of {mood}" --group-by mood --rule 'preference="Very Good|Excellent"'
+    aorg playlists show "90s Rock"
+    aorg playlists list
+
+A rule is a list of conditions that must all hold. `=` equals, `!=` does not equal,
+`~` contains and `!~` does not contain, all case-insensitive, with alternatives
+separated by `|`; an empty value means a missing field (`album=`). `>`, `>=`, `<` and
+`<=` compare numbers. Fields are the tag fields (artist, albumartist, album, title,
+tracknumber, discnumber, date, genre, compilation, mood, tempo, situation, preference)
+plus year, path, format, duration (seconds) and bitrate (kbps).
+
+With `--group-by`, one playlist is made per value of a field, named after it: the
+example makes "Best Of Mellow", "Best Of Upbeat" and so on. Smart playlists hold one
+copy of each song (identical audio, or the same artist and title) and are shuffled by
+default; the shuffled order stays the same from run to run. `--sort` also takes
+`album`, `artist`, `title`, `added` (newest first) or `path`, and `--max` limits the
+length. `aorg playlists edit` changes any of these.
+
+Static playlists:
+
+    aorg playlists import ~/Playlists/*.m3u     # entries may be absolute or relative paths
+    aorg playlists create "Party"
+    aorg playlists add "Party" "Texas/Greatest Hits/11 Halo.mp3"
+    aorg playlists remove "Party" "Texas/Greatest Hits/11 Halo.mp3"
+
+Their tracks stay in them when files are moved or renamed. To write playlists into a
+folder, with tracks referred to by relative paths:
+
+    aorg playlists export ~/Music/Playlists --format m3u,json,html
+
+Besides `.m3u`, playlists can be written as schema.org `MusicPlaylist` JSON-LD and as an
+HTML page.
+
 ### Syncing to object storage
 
     aorg target reconcile backup      # once, if the bucket already holds your music
@@ -78,9 +117,14 @@ given), with these object metadata, percent-encoded: `artist`, `albumartist`, `a
 `image` (the key of the album's cover image, which is uploaded too). The values are the
 catalog's, so your edits are synced even before they are written into the files.
 
+All playlists of the library are synced too, as `.m3u`, `.json` and `.html` files in
+`playlists/` (under the prefix), referring to the tracks by relative paths
+(`../Artist/Album/01 Title.mp3`).
+
 Only new and changed files are uploaded. Metadata changes and moved files are handled
 with server-side copies, without uploading the audio again. Objects that are no longer
-in the library are kept unless you add `--delete`.
+in the library, such as the files of a deleted playlist, are kept unless you add
+`--delete`.
 
 `reconcile` matches what is already in the bucket against your library, so music
 uploaded by other tools is not uploaded again. It changes nothing in the bucket.
@@ -118,6 +162,9 @@ Design principles:
 | `provenance.py` | Resolving field values from their sources |
 | `audiohash.py` | Audio-only content hash |
 | `changes.py` | Changesets: propose, approve, apply, undo |
+| `tracks.py` | Streaming tracks with resolved metadata, in batches |
+| `playlists.py` | Playlist rules, generation in one pass, import and export |
+| `playlist_formats.py` | M3U, JSON-LD and HTML playlist files |
 | `sync.py` | Planning and carrying out syncs to object storage |
 | `objectstore.py` | Object storage backends (S3-compatible) |
 | `cli.py` | The `aorg` command |

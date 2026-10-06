@@ -10,12 +10,15 @@ Sync is planned first and only does what is needed, to save bandwidth:
 - a metadata change of an unchanged file is a server-side copy of the object onto itself
 - a file moved locally is copied to its new key server-side, and the old key removed
 - only new and changed files are uploaded
-Objects with no counterpart in the library are only deleted when asked to.
+Playlists are generated in the same pass and stored as .m3u, .json and .html under
+playlists/, referring to the tracks by relative paths; they are uploaded when their
+content changes. Objects with no counterpart in the library are only deleted when asked to.
 """
 
 import hashlib
 import json
 import os
+import posixpath
 import unicodedata
 from collections.abc import Callable, Iterable
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
@@ -26,9 +29,12 @@ from urllib.parse import quote
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from .models import AudioFile, FieldValue, RemoteObject, SyncTarget, utcnow
+from .models import AudioFile, RemoteObject, SyncTarget, utcnow
 from .objectstore import ObjectStore, S3Store
-from .provenance import resolve
+from .playlist_formats import FORMATS as PLAYLIST_FORMATS
+from .playlist_formats import render
+from .playlists import PlaylistSet, library_playlists, safe_filename
+from .tracks import iter_tracks, present
 
 CONTENT_TYPES = {
     ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".mp4": "audio/mp4", ".aac": "audio/aac",
@@ -39,15 +45,16 @@ CONTENT_TYPES = {
 COVER_NAMES = ("cover", "folder", "front")
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png")
 METADATA_LIMIT = 2000  # S3 allows 2 KB of user metadata per object
-BATCH = 2000
+PLAYLIST_FOLDER = "playlists"
 
 
 @dataclass
 class Action:
     kind: str  # upload | metadata | move | delete
     key: str
-    object_kind: str = "audio"  # audio | image
+    object_kind: str = "audio"  # audio | image | playlist
     path: Path | None = None  # local source, for uploads
+    data: bytes | None = None  # generated content (playlists), for uploads
     source_key: str | None = None  # for moves
     file_id: int | None = None
     size: int = 0
@@ -100,7 +107,7 @@ def object_key(target: SyncTarget, relpath: str) -> str:
 
 
 def track_metadata(
-    file: AudioFile, fields: dict[str, str], cover_key: str | None
+    duration: float | None, fields: dict[str, str], cover_key: str | None
 ) -> dict[str, str]:
     values = {
         "artist": fields.get("artist"),
@@ -111,7 +118,7 @@ def track_metadata(
         "discnumber": fields.get("discnumber"),
         "year": (fields.get("date") or "")[:4] or None,
         "genre": fields.get("genre"),
-        "length": str(round(file.duration * 1000)) if file.duration else None,
+        "length": str(round(duration * 1000)) if duration else None,
         "image": cover_key,
     }
     values = {k: v for k, v in values.items() if v}
@@ -145,12 +152,6 @@ def _digest(content_type: str, metadata: dict[str, str]) -> str:
     return hashlib.sha1(data).hexdigest()
 
 
-def _syncable(target: SyncTarget):
-    return (
-        (AudioFile.library_id == target.library_id) & ~AudioFile.missing & AudioFile.error.is_(None)
-    )
-
-
 def plan(session: Session, target: SyncTarget, *, delete_stale: bool = False) -> Plan:
     root = Path(target.library.root)
     result = Plan()
@@ -158,58 +159,50 @@ def plan(session: Session, target: SyncTarget, *, delete_stale: bool = False) ->
         select(RemoteObject).where(RemoteObject.target_id == target.id)
     )}  # fmt: skip
     remote_by_file = {obj.file_id: obj for obj in remote.values() if obj.file_id is not None}
-    paths = session.execute(select(AudioFile.id, AudioFile.path).where(_syncable(target))).all()
-    desired = {object_key(target, path) for _, path in paths}
+    desired = {
+        object_key(target, path)
+        for path in session.scalars(select(AudioFile.path).where(present(target.library_id)))
+    }
     covers: dict[str, Path | None] = {}
     moved_from: set[str] = set()
+    playlist_set = PlaylistSet(library_playlists(session, target.library))
 
-    for start in range(0, len(paths), BATCH):
-        ids = [file_id for file_id, _ in paths[start : start + BATCH]]
-        files = session.scalars(select(AudioFile).where(AudioFile.id.in_(ids))).all()
-        rows = session.execute(
-            select(FieldValue.file_id, FieldValue.field, FieldValue.source, FieldValue.value)
-            .where(FieldValue.file_id.in_(ids))
-        ).all()  # fmt: skip
-        values_by_file: dict[int, list] = {}
-        for row in rows:
-            values_by_file.setdefault(row.file_id, []).append(row)
-
-        for file in files:
-            folder = str(PurePosixPath(file.path).parent)
-            if folder not in covers:
-                covers[folder] = find_cover(root / folder)
-            cover = covers[folder]
-            cover_key = None
-            if cover is not None:
-                cover_key = object_key(target, (PurePosixPath(folder) / cover.name).as_posix())
-            fields = {k: r.value for k, r in resolve(values_by_file.get(file.id, [])).items()}
-            content_type = CONTENT_TYPES.get(PurePosixPath(file.path).suffix.lower(), "audio/mpeg")
-            metadata = track_metadata(file, fields, cover_key)
-            action = Action(
-                kind="upload", key=object_key(target, file.path), path=root / file.path,
-                file_id=file.id, size=file.size, mtime_ns=file.mtime_ns,
-                content_type=content_type, metadata=metadata,
-                meta_digest=_digest(content_type, metadata),
-            )  # fmt: skip
-            existing = remote.get(action.key)
-            previous = remote_by_file.get(file.id)
-            if existing and (existing.size, existing.mtime_ns) == (file.size, file.mtime_ns):
-                if existing.meta_digest == action.meta_digest:
-                    result.unchanged += 1
-                    continue
-                action.kind = "metadata"
-            elif (
-                existing is None
-                and previous is not None
-                and previous.key not in desired
-                and previous.key not in moved_from
-                and (previous.size, previous.mtime_ns) == (file.size, file.mtime_ns)
-            ):
-                action.kind, action.source_key = "move", previous.key
-                moved_from.add(previous.key)
-            else:
-                result.upload_bytes += file.size
-            result.actions.append(action)
+    for track in iter_tracks(session, target.library_id):
+        playlist_set.feed(track)
+        folder = str(PurePosixPath(track.path).parent)
+        if folder not in covers:
+            covers[folder] = find_cover(root / folder)
+        cover = covers[folder]
+        cover_key = None
+        if cover is not None:
+            cover_key = object_key(target, (PurePosixPath(folder) / cover.name).as_posix())
+        content_type = CONTENT_TYPES.get(PurePosixPath(track.path).suffix.lower(), "audio/mpeg")
+        metadata = track_metadata(track.duration, track.fields, cover_key)
+        action = Action(
+            kind="upload", key=object_key(target, track.path), path=root / track.path,
+            file_id=track.file_id, size=track.size, mtime_ns=track.mtime_ns,
+            content_type=content_type, metadata=metadata,
+            meta_digest=_digest(content_type, metadata),
+        )  # fmt: skip
+        existing = remote.get(action.key)
+        previous = remote_by_file.get(track.file_id)
+        if existing and (existing.size, existing.mtime_ns) == (track.size, track.mtime_ns):
+            if existing.meta_digest == action.meta_digest:
+                result.unchanged += 1
+                continue
+            action.kind = "metadata"
+        elif (
+            existing is None
+            and previous is not None
+            and previous.key not in desired
+            and previous.key not in moved_from
+            and (previous.size, previous.mtime_ns) == (track.size, track.mtime_ns)
+        ):
+            action.kind, action.source_key = "move", previous.key
+            moved_from.add(previous.key)
+        else:
+            result.upload_bytes += track.size
+        result.actions.append(action)
 
     for folder, cover in covers.items():
         if cover is None:
@@ -231,6 +224,27 @@ def plan(session: Session, target: SyncTarget, *, delete_stale: bool = False) ->
             meta_digest=_digest(content_type, {}),
         ))  # fmt: skip
         result.upload_bytes += st.st_size
+
+    playlist_dir = object_key(target, PLAYLIST_FOLDER)
+    for generated in playlist_set.results():
+        entries = [
+            (t, posixpath.relpath(object_key(target, t.path), playlist_dir))
+            for t in generated.tracks
+        ]
+        for fmt, content_type in PLAYLIST_FORMATS.items():
+            key = f"{playlist_dir}/{safe_filename(generated.name)}.{fmt}"
+            data = render(fmt, generated.name, entries).encode("utf-8")
+            digest = hashlib.sha1(content_type.encode() + b"\0" + data).hexdigest()
+            desired.add(key)
+            existing = remote.get(key)
+            if existing and existing.meta_digest == digest:
+                result.unchanged += 1
+                continue
+            result.actions.append(Action(
+                kind="upload", key=key, object_kind="playlist", data=data, size=len(data),
+                content_type=content_type, meta_digest=digest,
+            ))  # fmt: skip
+            result.upload_bytes += len(data)
 
     for key, obj in remote.items():
         if key in desired or key in moved_from:
@@ -257,7 +271,9 @@ def execute(
     since_commit = 0
 
     def run(action: Action) -> None:
-        if action.kind == "upload":
+        if action.kind == "upload" and action.data is not None:
+            store.put(action.key, action.data, action.content_type)
+        elif action.kind == "upload":
             st = action.path.stat()
             if (st.st_size, st.st_mtime_ns) != (action.size, action.mtime_ns):
                 raise RuntimeError("changed since it was scanned; rescan the library")
@@ -338,7 +354,7 @@ def reconcile(session: Session, target: SyncTarget, store: ObjectStore) -> Recon
         object_key(target, path): (file_id, size, mtime_ns)
         for file_id, path, size, mtime_ns in session.execute(
             select(AudioFile.id, AudioFile.path, AudioFile.size, AudioFile.mtime_ns)
-            .where(_syncable(target))
+            .where(present(target.library_id))
         )
     }  # fmt: skip
     for key, size in listed.items():

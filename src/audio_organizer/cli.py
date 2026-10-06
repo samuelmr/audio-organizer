@@ -9,9 +9,10 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import changes as ch
+from . import playlists as pl
 from . import sync as sy
 from .db import make_sessionmaker
-from .models import AudioFile, Change, Changeset, Library, SyncTarget
+from .models import AudioFile, Change, Changeset, Library, Playlist, SyncTarget
 from .provenance import resolve
 from .scanner import ScanStats, scan
 from .tags import FIELDS
@@ -30,7 +31,13 @@ target_app = typer.Typer(
 )
 app.add_typer(library_app, name="library")
 app.add_typer(changes_app, name="changes")
+playlists_app = typer.Typer(
+    no_args_is_help=True,
+    rich_markup_mode="markdown",
+    help="Smart and static playlists. See `aorg playlists create --help` for the rules.",
+)
 app.add_typer(target_app, name="target")
+app.add_typer(playlists_app, name="playlists")
 
 
 @app.callback()
@@ -458,3 +465,243 @@ def sync_command(
     typer.echo(f"Done: {done_counts or 'nothing'}; {len(result.errors)} errors")
     if result.errors:
         raise typer.Exit(1)
+
+
+# ---- playlists ---------------------------------------------------------------------------
+
+LibraryOption = Annotated[
+    str | None, typer.Option("--library", "-l", help="Library [default: the only one]")
+]
+
+
+def _playlist(session: Session, name: str, library: str | None) -> Playlist:
+    lib = _library(session, library)
+    playlist = session.scalar(
+        select(Playlist).where(Playlist.library_id == lib.id, Playlist.name == name)
+    )
+    if playlist is None:
+        raise typer.BadParameter(f"No playlist named {name!r} in {lib.name}")
+    return playlist
+
+
+def _check(playlist: Playlist) -> None:
+    try:
+        pl.validate(playlist)
+    except pl.RuleError as e:
+        raise typer.BadParameter(str(e)) from None
+
+
+def _describe_playlist(playlist: Playlist) -> str:
+    if not playlist.is_smart:
+        kind = f"static, {len(playlist.entries)} entries"
+    else:
+        kind = f"rule: {playlist.rule}"
+        if playlist.group_by:
+            kind += f"; one per {playlist.group_by}"
+    limit = f", max {playlist.max_tracks}" if playlist.max_tracks else ""
+    return f"{playlist.name}\t{kind}; sort: {playlist.sort}{limit}"
+
+
+@playlists_app.command("list")
+def playlists_list(ctx: typer.Context, library: LibraryOption = None) -> None:
+    with _session(ctx) as session:
+        for playlist in pl.library_playlists(session, _library(session, library)):
+            typer.echo(_describe_playlist(playlist))
+
+
+@playlists_app.command("create")
+def playlists_create(
+    ctx: typer.Context,
+    name: str,
+    rule: Annotated[str | None, typer.Option(help="Rule of a smart playlist")] = None,
+    group_by: Annotated[
+        str | None, typer.Option(help="One playlist per value of this field")
+    ] = None,
+    sort: Annotated[
+        str | None, typer.Option(help="shuffle, album, artist, title, added, path or manual")
+    ] = None,
+    max_tracks: Annotated[
+        int | None, typer.Option("--max", help="Keep at most this many tracks")
+    ] = None,
+    library: LibraryOption = None,
+) -> None:
+    """Create a playlist: a smart one with --rule, otherwise an empty static one.
+
+    A rule is a list of conditions that must all hold:
+
+    `genre=Rock|Pop  preference="Very Good|Excellent"  year>=1990  title!~live`
+
+    **=** equals, **!=** does not equal, **~** contains, **!~** does not contain (all
+    case-insensitive; alternatives separated by |; an empty value means a missing
+    field), and **>**, **>=**, **<**, **<=** for numbers. Fields are the tag fields plus
+    year, path, format, duration (seconds) and bitrate (kbps).
+
+    With --group-by, one playlist is made per value of the field, and the name must
+    contain the field in braces: `aorg playlists create "Best Of {mood}" --group-by mood
+    --rule 'preference="Very Good|Excellent"'`
+
+    Smart playlists hold one copy of each song (identical audio, or the same artist and
+    title) and are shuffled by default, in an order that stays the same between runs.
+    """
+    with _session(ctx) as session:
+        lib = _library(session, library)
+        playlist = Playlist(
+            library_id=lib.id, name=name, rule=rule, group_by=group_by,
+            sort=sort or ("shuffle" if rule else "manual"), max_tracks=max_tracks or None,
+        )  # fmt: skip
+        _check(playlist)
+        existing = session.scalar(
+            select(Playlist).where(Playlist.library_id == lib.id, Playlist.name == name)
+        )
+        if existing:
+            raise typer.BadParameter(f"There is already a playlist named {name!r}")
+        session.add(playlist)
+        session.commit()
+        typer.echo(f"Created {_describe_playlist(playlist)}")
+
+
+@playlists_app.command("edit")
+def playlists_edit(
+    ctx: typer.Context,
+    name: str,
+    rule: Annotated[str | None, typer.Option(help="New rule")] = None,
+    group_by: Annotated[str | None, typer.Option(help="Field to group by; '' for none")] = None,
+    sort: Annotated[str | None, typer.Option()] = None,
+    max_tracks: Annotated[int | None, typer.Option("--max", help="0 for no limit")] = None,
+    rename: Annotated[str | None, typer.Option(help="New name")] = None,
+    library: LibraryOption = None,
+) -> None:
+    """Change a playlist's rule, grouping, sorting, size or name."""
+    with _session(ctx) as session:
+        playlist = _playlist(session, name, library)
+        if rule is not None:
+            if not playlist.is_smart:
+                raise typer.BadParameter("A static playlist has no rule")
+            playlist.rule = rule
+        if group_by is not None:
+            playlist.group_by = group_by or None
+        if sort is not None:
+            playlist.sort = sort
+        if max_tracks is not None:
+            playlist.max_tracks = max_tracks or None
+        if rename is not None:
+            playlist.name = rename
+        _check(playlist)
+        session.commit()
+        typer.echo(f"Changed {_describe_playlist(playlist)}")
+
+
+@playlists_app.command("delete")
+def playlists_delete(ctx: typer.Context, name: str, library: LibraryOption = None) -> None:
+    with _session(ctx) as session:
+        session.delete(_playlist(session, name, library))
+        session.commit()
+    typer.echo(f"Deleted {name}")
+
+
+@playlists_app.command("show")
+def playlists_show(
+    ctx: typer.Context,
+    name: str,
+    tracks: Annotated[int, typer.Option("--tracks", "-n", help="Tracks to list per playlist")] = 20,
+    library: LibraryOption = None,
+) -> None:
+    """Generate a playlist (each of them, for a grouped one) and list its tracks."""
+    with _session(ctx) as session:
+        playlist = _playlist(session, name, library)
+        for generated in pl.generate(session, playlist.library, [playlist]):
+            unresolved = f", {generated.unresolved} not found" if generated.unresolved else ""
+            typer.echo(f"{generated.name}: {len(generated.tracks)} tracks{unresolved}")
+            for track in generated.tracks[:tracks]:
+                artist, title = track.get("artist") or "?", track.get("title") or "?"
+                album = f"  ({track.get('album')})" if track.get("album") else ""
+                typer.echo(f"  {artist} - {title}{album}")
+            if len(generated.tracks) > tracks:
+                typer.echo(f"  ... and {len(generated.tracks) - tracks} more")
+
+
+def _static(session: Session, name: str, library: str | None) -> Playlist:
+    playlist = _playlist(session, name, library)
+    if playlist.is_smart:
+        raise typer.BadParameter(f"{name} is a smart playlist; change its rule instead")
+    return playlist
+
+
+@playlists_app.command("add")
+def playlists_add(
+    ctx: typer.Context, name: str, paths: list[str], library: LibraryOption = None
+) -> None:
+    """Add tracks to the end of a static playlist."""
+    with _session(ctx) as session:
+        playlist = _static(session, name, library)
+        files = [_find_file(session, path) for path in paths]
+        pairs = [(e.path, e.file_id) for e in playlist.entries] + [(f.path, f.id) for f in files]
+        pl.set_entries(playlist, pairs)
+        session.commit()
+    typer.echo(f"Added {len(files)} tracks to {name}")
+
+
+@playlists_app.command("remove")
+def playlists_remove(
+    ctx: typer.Context, name: str, paths: list[str], library: LibraryOption = None
+) -> None:
+    """Remove tracks from a static playlist."""
+    with _session(ctx) as session:
+        playlist = _static(session, name, library)
+        ids = {_find_file(session, path).id for path in paths}
+        kept = [(e.path, e.file_id) for e in playlist.entries if e.file_id not in ids]
+        removed = len(playlist.entries) - len(kept)
+        pl.set_entries(playlist, kept)
+        session.commit()
+    typer.echo(f"Removed {removed} entries from {name}")
+
+
+@playlists_app.command("import")
+def playlists_import(
+    ctx: typer.Context,
+    files: list[Path],
+    name: Annotated[str | None, typer.Option(help="Playlist name [default: file name]")] = None,
+    library: LibraryOption = None,
+) -> None:
+    """Import .m3u files as static playlists. Entries may be absolute paths, or relative
+    to the library or to the .m3u file."""
+    if name and len(files) > 1:
+        raise typer.BadParameter("--name only works when importing one file")
+    with _session(ctx) as session:
+        lib = _library(session, library)
+        for file in files:
+            try:
+                playlist, unmatched = pl.import_m3u(session, lib, file, name)
+            except pl.RuleError as e:
+                typer.echo(f"! {file}: {e}")
+                continue
+            session.commit()
+            found = len(playlist.entries) - len(unmatched)
+            typer.echo(f"{playlist.name}: {found} of {len(playlist.entries)} tracks found")
+            for entry in unmatched[:5]:
+                typer.echo(f"  not found: {entry}")
+            if len(unmatched) > 5:
+                typer.echo(f"  ... and {len(unmatched) - 5} more")
+
+
+@playlists_app.command("export")
+def playlists_export(
+    ctx: typer.Context,
+    directory: Path,
+    names: Annotated[list[str] | None, typer.Argument(help="Playlists [default: all]")] = None,
+    formats: Annotated[
+        str, typer.Option("--format", help="Comma-separated: m3u, json, html")
+    ] = "m3u",
+    library: LibraryOption = None,
+) -> None:
+    """Write playlist files into a folder, referring to tracks by relative paths."""
+    fmts = [f.strip() for f in formats.split(",") if f.strip()]
+    unknown = set(fmts) - {"m3u", "json", "html"}
+    if unknown:
+        raise typer.BadParameter(f"Unknown formats: {', '.join(sorted(unknown))}")
+    with _session(ctx) as session:
+        lib = _library(session, library)
+        playlists = [_playlist(session, n, library) for n in names] if names else None
+        generated = pl.generate(session, lib, playlists)
+        written = pl.export(generated, Path(lib.root), directory, fmts)
+    typer.echo(f"Wrote {len(written)} files for {len(generated)} playlists to {directory}")
