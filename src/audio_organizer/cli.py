@@ -612,10 +612,22 @@ def playlists_show(
     tracks: Annotated[int, typer.Option("--tracks", "-n", help="Tracks to list per playlist")] = 20,
     library: LibraryOption = None,
 ) -> None:
-    """Generate a playlist (each of them, for a grouped one) and list its tracks."""
+    """Generate a playlist and list its tracks. The name may be a grouped playlist's
+    ("Best Of {mood}", showing all of its playlists) or one generated from it
+    ("Best Of Upbeat")."""
     with _session(ctx) as session:
-        playlist = _playlist(session, name, library)
-        for generated in pl.generate(session, playlist.library, [playlist]):
+        lib = _library(session, library)
+        playlist = session.scalar(
+            select(Playlist).where(Playlist.library_id == lib.id, Playlist.name == name)
+        )
+        if playlist is not None:
+            results = pl.generate(session, lib, [playlist])
+        else:
+            grouped = [p for p in pl.library_playlists(session, lib) if p.group_by]
+            results = [g for g in pl.generate(session, lib, grouped) if g.name == name]
+            if not results:
+                raise typer.BadParameter(f"No playlist named {name!r} in {lib.name}")
+        for generated in results:
             unresolved = f", {generated.unresolved} not found" if generated.unresolved else ""
             typer.echo(f"{generated.name}: {len(generated.tracks)} tracks{unresolved}")
             for track in generated.tracks[:tracks]:

@@ -278,36 +278,57 @@ def _number(value: str | None) -> float | None:
 # ---- static playlists ---------------------------------------------------------------
 
 
-def path_index(session: Session, library: Library) -> dict[str, int]:
-    """Library paths (NFC, case-folded) to file ids, for matching imported entries."""
-    return {
-        _fold(path): file_id
+PLAYLIST_SUFFIXES = (".m3u", ".m3u8")
+
+
+class PathIndex:
+    """The library's files by path, for matching playlist entries.
+
+    A path matches exactly (ignoring case and Unicode composition) or, failing that,
+    loosely: every folder and file name compared with normalize_name, which ignores a
+    leading "The", punctuation and accents ("The KLF/The White Room/…" finds
+    "KLF/The White Room/…"). A loose match is only accepted when one file fits."""
+
+    def __init__(self, session: Session, library: Library) -> None:
+        self.root = Path(library.root)
+        self.exact: dict[str, int] = {}
+        self.loose: dict[str, int | None] = {}  # None: several files fit
         for file_id, path in session.execute(
             select(AudioFile.id, AudioFile.path).where(present(library.id))
-        )
-    }
+        ):
+            self.exact[_fold(path)] = file_id
+            key = _loose_key(path)
+            self.loose[key] = None if key in self.loose else file_id
 
+    def find(self, entry: str, base: Path) -> int | None:
+        """The file an entry refers to: an absolute path inside the library, a path
+        relative to the library root, or one relative to the playlist's folder (base)."""
+        relpaths = [
+            r for r in (self._relative(c) for c in _candidates(entry, self.root, base)) if r
+        ]
+        for relpath in relpaths:
+            if (file_id := self.exact.get(_fold(relpath))) is not None:
+                return file_id
+        for relpath in relpaths:
+            if (file_id := self.loose.get(_loose_key(relpath))) is not None:
+                return file_id
+        return None
 
-def resolve_entry(entry: str, library: Library, base: Path, index: dict[str, int]) -> int | None:
-    """Find the file an m3u entry refers to: an absolute path inside the library, a path
-    relative to the library root, or one relative to the playlist's own folder."""
-    root = Path(library.root)
-    candidates = []
-    path = Path(entry)
-    if path.is_absolute():
-        candidates.append(path)
-    else:
-        candidates.append(root / entry)
-        candidates.append(base / entry)
-    for candidate in candidates:
+    def _relative(self, path: Path) -> str | None:
         try:
-            relpath = Path(os.path.normpath(candidate)).relative_to(root).as_posix()
+            return path.relative_to(self.root).as_posix()
         except ValueError:
-            continue
-        file_id = index.get(_fold(relpath))
-        if file_id is not None:
-            return file_id
-    return None
+            return None
+
+
+def _candidates(entry: str, root: Path, base: Path) -> list[Path]:
+    path = Path(entry)
+    paths = [path] if path.is_absolute() else [root / entry, base / entry]
+    return [Path(os.path.normpath(p)) for p in paths]
+
+
+def _loose_key(relpath: str) -> str:
+    return "/".join(normalize_name(part) for part in Path(relpath).parts)
 
 
 def read_m3u(path: Path) -> list[str]:
@@ -322,6 +343,26 @@ def read_m3u(path: Path) -> list[str]:
         if line and not line.startswith("#"):
             entries.append(line.removeprefix("file://"))
     return entries
+
+
+def read_entries(
+    m3u: Path, index: PathIndex, _seen: set[Path] | None = None
+) -> list[tuple[str, int | None]]:
+    """(entry, matching file id or None) for each entry of an .m3u file. Entries that are
+    playlists themselves (such as an album's playlist) are replaced by their entries."""
+    m3u = m3u.resolve()
+    seen = (_seen or set()) | {m3u}
+    pairs: list[tuple[str, int | None]] = []
+    for entry in read_m3u(m3u):
+        if entry.lower().endswith(PLAYLIST_SUFFIXES):
+            nested = next(
+                (p for p in _candidates(entry, index.root, m3u.parent) if p.is_file()), None
+            )
+            if nested is not None and nested.resolve() not in seen:
+                pairs.extend(read_entries(nested, index, seen))
+                continue
+        pairs.append((entry, index.find(entry, m3u.parent)))
+    return pairs
 
 
 def set_entries(playlist: Playlist, entries: list[tuple[str, int | None]]) -> None:
@@ -342,9 +383,7 @@ def import_m3u(
         select(Playlist).where(Playlist.library_id == library.id, Playlist.name == name)
     ):
         raise RuleError(f"There is already a playlist named {name!r}")
-    index = path_index(session, library)
-    base = m3u.parent.resolve()
-    pairs = [(entry, resolve_entry(entry, library, base, index)) for entry in read_m3u(m3u)]
+    pairs = read_entries(m3u, PathIndex(session, library))
     playlist = Playlist(library=library, name=name, sort="manual")
     set_entries(playlist, pairs)
     session.add(playlist)

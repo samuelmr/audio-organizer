@@ -181,6 +181,50 @@ def test_import_m3u_follows_moves(catalog, tmp_path):
         pl.import_m3u(session, library, m3u)
 
 
+def test_import_expands_nested_playlists(catalog):
+    session, library, root = catalog
+    (root / "Air/Moon Safari/Air - Moon Safari.m3u").write_text(
+        "01 La Femme d'Argent.mp3\n02 Sexy Boy.mp3\n../../Likes.m3u\n"  # with a cycle
+    )
+    likes = root / "Likes.m3u"
+    likes.write_text("Texas/Texas_Halo.mp3\nAir/Moon Safari/Air - Moon Safari.m3u\n")
+    playlist, unmatched = pl.import_m3u(session, library, likes)
+    assert [e.file_id is not None for e in playlist.entries] == [True, True, True, False]
+    assert unmatched == ["../../Likes.m3u"]
+
+
+def test_import_matches_paths_loosely(catalog, copy_audio):
+    session, library, root = catalog
+    index = pl.PathIndex(session, library)
+    base = root
+    found = index.find("The Air/Moon Safari/02 sexy BOY!.mp3", base)
+    assert found == index.exact["air/moon safari/02 sexy boy.mp3"]
+    assert index.find("Air/Moon Safari/03 Talisman.mp3", base) is None
+
+    copy_audio("mp3b", root / "Air/Moon Safari/02 Sexy Boy!.mp3")  # now two files fit
+    scan(session, library)
+    index = pl.PathIndex(session, library)
+    assert index.find("The Air/Moon Safari/02 Sexy Boy.mp3", base) is None
+    assert index.find("Air/Moon Safari/02 Sexy Boy.mp3", base) is not None  # exact still works
+
+
+def test_show_a_generated_playlist(catalog, tmp_path):
+    from typer.testing import CliRunner
+
+    from audio_organizer.cli import app
+
+    session, library, root = catalog
+    session.add(Playlist(library=library, name="Best Of {mood}", group_by="mood",
+                         rule="preference~good", sort="album"))  # fmt: skip
+    session.commit()
+    db = ["--db", str(tmp_path / "catalog.db")]
+    result = CliRunner().invoke(app, [*db, "playlists", "show", "Best Of Mellow"])
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines()[0] == "Best Of Mellow: 1 tracks"
+    result = CliRunner().invoke(app, [*db, "playlists", "show", "Best Of Nothing"])
+    assert result.exit_code != 0
+
+
 def test_export(catalog, tmp_path):
     session, library, root = catalog
     session.add(Playlist(library=library, name="Air/Moon", rule="album=moon safari",
