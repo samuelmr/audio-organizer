@@ -1,0 +1,254 @@
+"""Reading and writing tags as a flat dict of normalized fields.
+
+Field values are strings; multiple values are joined with "; ". Track and disc
+numbers are split into number and total and stripped of leading zeros.
+MusicMatch mood/tempo/situation/preference comments (used by the old playlist
+scripts) are read as fields of their own.
+"""
+
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import mutagen
+from mutagen.id3 import COMM, ID3, TCMP, TCON, TDRC, TPOS, TRCK, Frames
+from mutagen.mp4 import MP4FreeForm, MP4Tags
+
+FIELDS = (
+    "artist",
+    "albumartist",
+    "album",
+    "title",
+    "tracknumber",
+    "tracktotal",
+    "discnumber",
+    "disctotal",
+    "date",
+    "genre",
+    "compilation",
+    "mood",
+    "tempo",
+    "situation",
+    "preference",
+)
+
+ID3_TEXT = {"artist": "TPE1", "albumartist": "TPE2", "album": "TALB", "title": "TIT2"}
+MP4_TEXT = {
+    "artist": "\xa9ART",
+    "albumartist": "aART",
+    "album": "\xa9alb",
+    "title": "\xa9nam",
+    "date": "\xa9day",
+    "genre": "\xa9gen",
+}
+MUSICMATCH = {
+    "mood": "MusicMatch_Mood",
+    "tempo": "MusicMatch_Tempo",
+    "situation": "MusicMatch_Situation",
+    "preference": "MusicMatch_Preference",
+}
+MP4_FREEFORM = "----:com.apple.iTunes:"
+
+
+class UnsupportedFormat(Exception):
+    pass
+
+
+@dataclass
+class AudioInfo:
+    format: str | None = None
+    duration: float | None = None
+    bitrate: int | None = None
+    sample_rate: int | None = None
+    fields: dict[str, str] = field(default_factory=dict)
+
+
+def read(path: str | Path) -> AudioInfo:
+    audio = mutagen.File(path)
+    if audio is None:
+        return AudioInfo()
+    info = AudioInfo(
+        format=type(audio).__name__.lower(),
+        duration=getattr(audio.info, "length", None),
+        bitrate=getattr(audio.info, "bitrate", None) or None,
+        sample_rate=getattr(audio.info, "sample_rate", None) or None,
+    )
+    tags = audio.tags
+    if isinstance(tags, ID3):
+        raw = _read_id3(tags)
+    elif isinstance(tags, MP4Tags):
+        raw = _read_mp4(tags)
+    elif tags is not None and hasattr(tags, "as_dict"):  # Vorbis comments (Ogg, FLAC, Opus)
+        raw = {k.lower(): v for k, v in tags.as_dict().items()}
+        raw = {name: raw.get(name, []) for name in FIELDS}
+    else:
+        raw = {}
+    for name, values in raw.items():
+        _put(info.fields, name, values)
+    _split_pair(info.fields, "tracknumber", "tracktotal")
+    _split_pair(info.fields, "discnumber", "disctotal")
+    return info
+
+
+def _read_id3(tags: ID3) -> dict[str, list]:
+    raw: dict[str, list] = {name: _frame_text(tags, fid) for name, fid in ID3_TEXT.items()}
+    raw["tracknumber"] = _frame_text(tags, "TRCK")
+    raw["discnumber"] = _frame_text(tags, "TPOS")
+    raw["date"] = _frame_text(tags, "TDRC")
+    raw["genre"] = [g for frame in tags.getall("TCON") for g in frame.genres]
+    raw["compilation"] = _frame_text(tags, "TCMP")
+    for frame in tags.getall("COMM"):
+        for name, desc in MUSICMATCH.items():
+            if frame.desc == desc:
+                raw[name] = list(frame.text)
+    return raw
+
+
+def _frame_text(tags: ID3, frame_id: str) -> list:
+    return [str(t) for frame in tags.getall(frame_id) for t in frame.text]
+
+
+def _read_mp4(tags: MP4Tags) -> dict[str, list]:
+    raw: dict[str, list] = {name: tags.get(atom, []) for name, atom in MP4_TEXT.items()}
+    for name, atom in (("tracknumber", "trkn"), ("discnumber", "disk")):
+        pairs = tags.get(atom) or []
+        if pairs:
+            number, total = pairs[0]
+            raw[name] = [f"{number}/{total}" if total else str(number)]
+    if tags.get("cpil"):
+        raw["compilation"] = ["1"]
+    for name, desc in MUSICMATCH.items():
+        raw[name] = [bytes(v).decode("utf-8", "replace") for v in tags.get(MP4_FREEFORM + desc, [])]
+    return raw
+
+
+def _put(fields: dict[str, str], name: str, values) -> None:
+    if isinstance(values, str):
+        values = [values]
+    cleaned = [str(v).strip() for v in values if str(v).strip()]
+    if cleaned:
+        fields[name] = "; ".join(dict.fromkeys(cleaned))
+
+
+def _split_pair(fields: dict[str, str], number_key: str, total_key: str) -> None:
+    """'03/12' -> number '3', total '12'. Non-numeric values are kept as they are."""
+    value = fields.get(number_key)
+    if value is None:
+        return
+    number, _, total = value.partition("/")
+    number, total = number.strip(), total.strip()
+    if number.isdigit():
+        fields[number_key] = str(int(number))
+    if total.isdigit() and int(total) > 0 and total_key not in fields:
+        fields[total_key] = str(int(total))
+    if number.isdigit() and int(number) == 0:
+        del fields[number_key]  # iTunes writes 0 for "no track number"
+    if fields.get(total_key, "").isdigit():
+        fields[total_key] = str(int(fields[total_key]))
+
+
+def write(path: str | Path, changes: dict[str, str | None]) -> None:
+    """Set the given fields (None removes the field), leaving all other tags as they are."""
+    unknown = set(changes) - set(FIELDS)
+    if unknown:
+        raise ValueError(f"Unknown fields: {', '.join(sorted(unknown))}")
+    audio = mutagen.File(path)
+    if audio is None:
+        raise UnsupportedFormat(f"Not a recognized audio file: {path}")
+    if audio.tags is None:
+        audio.add_tags()
+    current = read(path).fields
+    merged = {**current, **changes}
+    tags = audio.tags
+    if isinstance(tags, ID3):
+        _write_id3(tags, changes, merged)
+        audio.save(v2_version=4 if tags.version >= (2, 4, 0) else 3)
+    elif isinstance(tags, MP4Tags):
+        _write_mp4(tags, changes, merged)
+        audio.save()
+    elif hasattr(tags, "as_dict"):
+        for name, value in changes.items():
+            if value is None:
+                tags.pop(name, None)
+            else:
+                tags[name] = [value]
+        audio.save()
+    else:
+        raise UnsupportedFormat(f"Writing tags is not supported for {type(audio).__name__}")
+
+
+def _write_id3(tags: ID3, changes: dict[str, str | None], merged: dict[str, str | None]) -> None:
+    for name, value in changes.items():
+        if name in ID3_TEXT:
+            frame_id = ID3_TEXT[name]
+            tags.delall(frame_id)
+            if value is not None:
+                tags.add(Frames[frame_id](encoding=3, text=[value]))
+        elif name == "date":
+            tags.delall("TDRC")
+            tags.delall("TYER")
+            if value is not None:
+                tags.add(TDRC(encoding=3, text=[value]))
+        elif name == "genre":
+            tags.delall("TCON")
+            if value is not None:
+                tags.add(TCON(encoding=3, text=[value]))
+        elif name == "compilation":
+            tags.delall("TCMP")
+            if value is not None:
+                tags.add(TCMP(encoding=3, text=[value]))
+        elif name in MUSICMATCH:
+            desc = MUSICMATCH[name]
+            for frame in tags.getall("COMM"):
+                if frame.desc == desc:
+                    del tags[frame.HashKey]
+            if value is not None:
+                tags.add(COMM(encoding=3, lang="eng", desc=desc, text=[value]))
+    for number_key, total_key, frame_cls in (
+        ("tracknumber", "tracktotal", TRCK),
+        ("discnumber", "disctotal", TPOS),
+    ):
+        if number_key in changes or total_key in changes:
+            tags.delall(frame_cls.__name__)
+            pair = _join_pair(merged.get(number_key), merged.get(total_key))
+            if pair:
+                tags.add(frame_cls(encoding=3, text=[pair]))
+
+
+def _write_mp4(
+    tags: MP4Tags, changes: dict[str, str | None], merged: dict[str, str | None]
+) -> None:
+    for name, value in changes.items():
+        if name in MP4_TEXT:
+            atom = MP4_TEXT[name]
+            if value is None:
+                tags.pop(atom, None)
+            else:
+                tags[atom] = [value]
+        elif name == "compilation":
+            if value in (None, "", "0"):
+                tags.pop("cpil", None)
+            else:
+                tags["cpil"] = True
+        elif name in MUSICMATCH:
+            atom = MP4_FREEFORM + MUSICMATCH[name]
+            if value is None:
+                tags.pop(atom, None)
+            else:
+                tags[atom] = [MP4FreeForm(value.encode("utf-8"))]
+    for number_key, total_key, atom in (
+        ("tracknumber", "tracktotal", "trkn"),
+        ("discnumber", "disctotal", "disk"),
+    ):
+        if number_key in changes or total_key in changes:
+            number = merged.get(number_key)
+            if number is None or not number.isdigit():
+                tags.pop(atom, None)
+            else:
+                total = merged.get(total_key)
+                tags[atom] = [(int(number), int(total) if total and total.isdigit() else 0)]
+
+
+def _join_pair(number: str | None, total: str | None) -> str | None:
+    if not number:
+        return None
+    return f"{number}/{total}" if total else number
