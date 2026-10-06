@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from . import changes as ch
 from .db import make_sessionmaker
 from .models import AudioFile, Change, Changeset, Library
-from .provenance import resolve, set_value
+from .provenance import resolve
 from .scanner import ScanStats, scan
 from .tags import FIELDS
 
@@ -204,17 +204,16 @@ def edit(
 ) -> None:
     """Edit metadata manually. The edit is stored in the catalog and proposed as a
     changeset that writes it into the file's tags."""
+    values: dict[str, str | None] = {name: None for name in unset}
+    for item in set_:
+        name, sep, value = item.partition("=")
+        if not sep or name not in FIELDS:
+            raise typer.BadParameter(f"--set takes field=value; fields: {', '.join(FIELDS)}")
+        values[name] = value.strip()
     with _session(ctx) as session:
         file = _find_file(session, path)
-        for item in set_:
-            name, sep, value = item.partition("=")
-            if not sep or name not in FIELDS:
-                raise typer.BadParameter(f"--set takes field=value; fields: {', '.join(FIELDS)}")
-            set_value(session, file, "manual", name, value.strip())
-        for name in unset:
-            set_value(session, file, "manual", name, None)
         changeset = ch.new_changeset(session, f"Manual edit of {file.path}")
-        change = ch.propose_tag_sync(changeset, file)
+        change = ch.propose_manual_edit(session, changeset, file, values)
         if change is None:
             session.expunge(changeset)
             session.commit()

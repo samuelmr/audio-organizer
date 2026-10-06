@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from . import pathparse, tags
 from .models import AudioFile, Change, Changeset, utcnow
-from .provenance import resolve, set_values
+from .provenance import resolve, set_value, set_values
 
 
 class ChangeError(Exception):
@@ -61,6 +61,24 @@ def propose_tag_sync(changeset: Changeset, file: AudioFile) -> Change | None:
         if name in resolved and resolved[name].value != current.get(name):
             fields[name] = resolved[name].value
     return propose_retag(changeset, file, fields) if fields else None
+
+
+def propose_manual_edit(
+    session: Session, changeset: Changeset, file: AudioFile, values: dict[str, str | None]
+) -> Change | None:
+    """Store manual values for a file (None removes one) and propose writing the result
+    into its tags. The change remembers the earlier manual values, so undoing it also
+    reverts the edit in the catalog."""
+    unknown = set(values) - set(tags.FIELDS)
+    if unknown:
+        raise ChangeError(f"Not tag fields: {', '.join(sorted(unknown))}")
+    earlier = {fv.field: fv.value for fv in file.values if fv.source == "manual"}
+    for name, value in values.items():
+        set_value(session, file, "manual", name, value)
+    change = propose_tag_sync(changeset, file)
+    if change is not None:
+        change.payload = {**change.payload, "manual_before": {n: earlier.get(n) for n in values}}
+    return change
 
 
 def set_status(changes: list[Change], status: str) -> int:
@@ -128,6 +146,8 @@ def undo(session: Session, changeset: Changeset, *, dry_run: bool = False) -> li
             _check_unchanged(change.file)
             if change.kind == "retag":
                 _retag(session, change.file, change.undo["fields"])
+                for name, value in change.payload.get("manual_before", {}).items():
+                    set_value(session, change.file, "manual", name, value)
             else:
                 _move(session, change.file, change.undo["from"])
             change.status = "undone"

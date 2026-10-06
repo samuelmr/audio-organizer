@@ -26,11 +26,14 @@ def catalog(Session, copy_audio, tmp_path):
 
 def test_manual_edit_retag_apply_and_undo(catalog):
     session, root, file = catalog
-    set_value(session, file, "manual", "album", "The Greatest Hits")
+    set_value(session, file, "manual", "genre", "Rock")  # an earlier edit, not yet in the tags
     changeset = ch.new_changeset(session, "edit")
-    change = ch.propose_tag_sync(changeset, file)
+    change = ch.propose_manual_edit(session, changeset, file, {"album": "The Greatest Hits"})
     session.commit()
-    assert change.payload == {"fields": {"album": "The Greatest Hits"}}
+    assert change.payload == {
+        "fields": {"album": "The Greatest Hits", "genre": "Rock"},
+        "manual_before": {"album": None},
+    }
 
     assert ch.apply(session, changeset) == []  # nothing approved yet
     ch.set_status([change], "approved")
@@ -50,6 +53,9 @@ def test_manual_edit_retag_apply_and_undo(catalog):
     assert outcome.ok, outcome.message
     assert tags.read(root / file.path).fields["album"] == "Greatest Hits"
     assert change.status == "undone"
+    resolved = resolve(file.values)
+    assert resolved["album"].value == "Greatest Hits"  # the manual edit is gone
+    assert resolved["genre"].value == "Rock"  # the earlier edit is kept
 
 
 def test_move_apply_and_undo(catalog):
