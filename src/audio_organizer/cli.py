@@ -16,10 +16,18 @@ from .provenance import resolve
 from .scanner import ScanStats, scan
 from .tags import FIELDS
 
-app = typer.Typer(no_args_is_help=True, help="Maintain a music collection.")
-library_app = typer.Typer(no_args_is_help=True, help="Manage libraries (collection roots).")
-changes_app = typer.Typer(no_args_is_help=True, help="Review, apply and undo changesets.")
-target_app = typer.Typer(no_args_is_help=True, help="Manage object storage sync targets.")
+app = typer.Typer(
+    no_args_is_help=True, rich_markup_mode="markdown", help="Maintain a music collection."
+)
+library_app = typer.Typer(
+    no_args_is_help=True, rich_markup_mode="markdown", help="Manage libraries (collection roots)."
+)
+changes_app = typer.Typer(
+    no_args_is_help=True, rich_markup_mode="markdown", help="Review, apply and undo changesets."
+)
+target_app = typer.Typer(
+    no_args_is_help=True, rich_markup_mode="markdown", help="Manage object storage sync targets."
+)
 app.add_typer(library_app, name="library")
 app.add_typer(changes_app, name="changes")
 app.add_typer(target_app, name="target")
@@ -386,7 +394,7 @@ def target_list(ctx: typer.Context) -> None:
 @target_app.command("reconcile")
 def target_reconcile(ctx: typer.Context, name: str) -> None:
     """Compare the catalog with the bucket's contents. Adopts objects uploaded by other
-    means (e.g. upload.sh) so they are not uploaded again; nothing is changed remotely."""
+    means so they are not uploaded again; nothing is changed remotely."""
     with _session(ctx) as session:
         target = _target(session, name)
         result = sy.reconcile(session, target, sy.store_for(target))

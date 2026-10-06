@@ -1,9 +1,9 @@
 """Syncing a library's audio files and cover images to object storage.
 
 Objects are stored under the target's prefix at the file's library path, with the
-track's resolved metadata (not its raw tags) as object metadata, compatible with the
-earlier upload.sh: artist, album, title, tracknumber, year, genre, length (ms) and
-image (the key of the album's cover image), percent-encoded.
+track's resolved metadata (not its raw tags) as object metadata: artist, albumartist,
+album, title, tracknumber, discnumber, year, genre, length (ms) and image (the key of
+the album's cover image), percent-encoded.
 
 Sync is planned first and only does what is needed, to save bandwidth:
 - unchanged files are skipped
@@ -319,7 +319,7 @@ class ReconcileResult:
 def reconcile(session: Session, target: SyncTarget, store: ObjectStore) -> ReconcileResult:
     """Compare the catalog's record of the target with what the bucket actually holds.
 
-    Objects uploaded by other means (such as the old upload.sh) whose key and size match
+    Objects uploaded by other means (such as other tools) whose key and size match
     a local file are adopted, so they are not uploaded again; their metadata is marked
     unknown, so the next sync rewrites it with a server-side copy. Records of objects that
     are gone from the bucket are dropped, so the next sync uploads them again."""

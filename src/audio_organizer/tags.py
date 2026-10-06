@@ -2,8 +2,8 @@
 
 Field values are strings; multiple values are joined with "; ". Track and disc
 numbers are split into number and total and stripped of leading zeros.
-MusicMatch mood/tempo/situation/preference comments (used by the old playlist
-scripts) are read as fields of their own.
+The mood/tempo/situation/preference comments written by MusicMatch Jukebox are
+read as fields of their own.
 """
 
 from dataclasses import dataclass, field

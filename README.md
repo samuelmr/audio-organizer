@@ -1,86 +1,123 @@
 # audio-organizer
 
-Maintain a music collection: catalog it, fix its metadata, find duplicates, generate
-playlists and sync tracks and playlists to S3-compatible object storage. Built to be
-used every time music is added (from files or CDs), on libraries of hundreds of
-thousands of tracks, with the user reviewing every change before it touches a file.
+Maintain a music collection: catalog it, fix its metadata and sync tracks to
+S3-compatible object storage. Made to be used whenever you add music, on libraries of
+hundreds of thousands of tracks, with you reviewing every change before it touches a
+file.
 
-Status: catalog, incremental scanner, metadata provenance, reviewable and undoable
-changesets, S3 sync, CLI. Next: playlists, web UI, intake of new music (inbox, gnudb,
-duplicate and album-neighbour matching), CD ripping.
+## Installation
 
-## Setup
+Requires [uv](https://docs.astral.sh/uv/) (it installs Python 3.13 if needed). From a
+checkout of this repository:
 
-Requires Python 3.13+ and [uv](https://docs.astral.sh/uv/). Tests generate audio with
-`ffmpeg`.
+    uv tool install .
 
-    uv sync
-    uv run aorg --help
-    uv run pytest
+This puts the `aorg` command on your path. Run `aorg --help`, or `aorg <command> --help`,
+for all commands and options.
 
-The catalog is a SQLite database at `~/.local/share/audio-organizer/catalog.db`
-unless `--db` or `AORG_DB` points elsewhere (a path or an SQLAlchemy URL).
+## Configuration
+
+**Catalog.** What `aorg` knows about your music is kept in a SQLite database at
+`~/.local/share/audio-organizer/catalog.db`. To use another file, set `AORG_DB` or pass
+`--db` before the command (`aorg --db ~/music.db scan`). Both also accept an SQLAlchemy
+database URL.
+
+**Libraries.** Register each music folder once under a name:
+
+    aorg library add music /Volumes/Multimedia/Music
+
+**Object storage.** Add a sync target for a bucket. The endpoint is needed for
+S3-compatible services other than AWS. Credentials are not stored by `aorg`: they come
+from the `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` environment variables,
+`~/.aws/credentials`, or a named profile (`--profile`).
+
+    aorg target add backup --bucket music --endpoint-url https://s3.example.com
+    aorg target list
 
 ## Usage
 
-    aorg library add music /Volumes/Multimedia/Music
-    aorg scan                         # first run reads everything; later runs only what changed
+### Scanning
+
+    aorg scan                         # name the library if you have several
     aorg stats
     aorg show "Texas/Greatest Hits/11 Halo.mp3"
+
+The first scan reads every file; later scans only read new and changed ones, so run
+`aorg scan` whenever you have added or changed music. Files moved or renamed outside
+`aorg` are recognized by their audio and keep their history.
+
+`aorg show` lists each field with where its value comes from: the file's tags (`tag`),
+its folder and file name (`path`) or your edit (`manual`), and the other candidates when
+they disagree.
+
+### Editing metadata
+
+Edits are stored in the catalog and proposed as a *changeset*. Nothing is written to
+your files until you approve and apply it:
 
     aorg edit "Texas/Texas_Halo.mp3" --set album="Greatest Hits" --set tracknumber=11
     aorg changes list
     aorg changes show 1
-    aorg changes approve 1            # or: aorg changes approve 1 3 4  (single changes)
+    aorg changes approve 1            # all changes in changeset 1, or: approve 1 3 4
     aorg changes apply 1 --dry-run
     aorg changes apply 1
-    aorg changes undo 1               # also reverts the manual edit in the catalog
+    aorg changes undo 1               # restores the tags and reverts your edit
 
-Syncing to S3 or any S3-compatible storage (credentials from the AWS environment
-variables, `~/.aws` or `--profile`; they are not stored):
+`aorg` never writes to a file that has changed since it was last scanned; rescan first.
+The tags each file had when it was first scanned are kept in the catalog.
 
-    aorg target add backup --bucket music --endpoint-url https://s3.example.com
-    aorg target reconcile backup      # adopt objects uploaded earlier, e.g. by upload.sh
+### Syncing to object storage
+
+    aorg target reconcile backup      # once, if the bucket already holds your music
     aorg sync backup --dry-run
-    aorg sync backup                  # --delete also removes objects no longer in the library
+    aorg sync backup
 
-Each track is stored at its library path with its resolved metadata as object metadata,
-compatible with the old `upload.sh` (artist, album, title, tracknumber, year, genre,
-length in ms, image = key of the album cover; percent-encoded), plus albumartist and
-discnumber. Only new and changed files are uploaded; metadata changes and local moves
-are done with server-side copies, without transferring the audio again.
+Tracks are stored at their path in the library (under the target's `--prefix`, if
+given), with these object metadata, percent-encoded: `artist`, `albumartist`, `album`,
+`title`, `tracknumber`, `discnumber`, `year`, `genre`, `length` (milliseconds) and
+`image` (the key of the album's cover image, which is uploaded too). The values are the
+catalog's, so your edits are synced even before they are written into the files.
 
-## Design
+Only new and changed files are uploaded. Metadata changes and moved files are handled
+with server-side copies, without uploading the audio again. Objects that are no longer
+in the library are kept unless you add `--delete`.
 
-- **Tags are evidence, not truth.** Each metadata field can have candidate values from
-  several sources: the file's tags, its path, a manual edit, gnudb, neighbouring files.
-  All are kept (`FieldValue`), and the effective value is resolved by source priority;
-  a manual edit always wins. `aorg show` lists the value and the disagreeing candidates.
-- **Files are identified by their audio**, a hash of the audio data without tags
-  (`audiohash.py`). Retagging keeps the identity; a file moved outside the tool is
-  recognized as moved on the next scan and keeps its history; byte-identical copies
-  are found for free.
-- **Original tags are kept**: a snapshot of each file's tags is stored when it is first seen.
-- **Nothing is changed without review.** Retags and moves are proposed in changesets,
-  approved one by one or all at once, applied, and can be undone. A file that changed on
-  disk after it was scanned is never written to.
-- **Incremental scanning.** Unchanged files (same size and modification time) are not
-  read again; new and changed files are read in parallel, which matters on network shares.
-- **Ready for a hosted service.** The core (`audio_organizer.*`) has no CLI or local-disk
-  assumptions beyond the library root; the CLI and a future web UI are thin layers on it,
-  and the catalog runs on any SQLAlchemy database.
+`reconcile` matches what is already in the bucket against your library, so music
+uploaded by other tools is not uploaded again. It changes nothing in the bucket.
+
+## Contributing
+
+Development needs uv and, for the tests, `ffmpeg` (they generate short audio files):
+
+    uv sync
+    uv run aorg --help
+    uv run pytest
+    uv run ruff format && uv run ruff check
+
+Design principles:
+
+- **Tags are evidence, not truth.** Every candidate value of a field is stored with its
+  source (`FieldValue`), and the effective value is resolved by source priority
+  (`provenance.py`); manual edits always win.
+- **Files are identified by their audio**, a hash of the audio data without tags, so
+  retagging and moving keep a file's identity, and identical copies are easy to find.
+- **No file changes without review**: every retag or move goes through a changeset that
+  records how to undo it.
+- **Scale**: scans and syncs are incremental, and anything per-file runs in batches or
+  in parallel.
+- **Core first**: the CLI is a thin layer over the `audio_organizer` package, so that
+  other front ends (a web UI, a hosted service) can share it.
 
 | Module | Purpose |
 | --- | --- |
 | `models.py` | Catalog schema |
+| `db.py` | Database setup |
 | `scanner.py` | Incremental scanning, move detection |
-| `tags.py` | Reading and writing tags (ID3, MP4, Vorbis comments), incl. MusicMatch mood/tempo |
+| `tags.py` | Reading and writing tags (ID3, MP4, Vorbis comments) |
 | `pathparse.py` | Metadata evidence from folder and file names |
 | `provenance.py` | Resolving field values from their sources |
 | `audiohash.py` | Audio-only content hash |
 | `changes.py` | Changesets: propose, approve, apply, undo |
 | `sync.py` | Planning and carrying out syncs to object storage |
 | `objectstore.py` | Object storage backends (S3-compatible) |
-| `cli.py` | `aorg` command |
-
-`reference-material/` holds the earlier PHP and shell scripts this project replaces.
+| `cli.py` | The `aorg` command |
