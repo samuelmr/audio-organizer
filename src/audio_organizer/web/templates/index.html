@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Libraries</h1>
+{% if libraries %}
+<table>
+ <thead><tr><th>Name</th><th>Folder</th><th class="num">Tracks</th></tr></thead>
+ <tbody>
+ {% for lib, count in libraries %}
+  <tr>
+   <td><a href="/libraries/{{ lib.name }}">{{ lib.name }}</a></td>
+   <td class="path">{{ lib.root }}</td>
+   <td class="num">{{ count }}</td>
+  </tr>
+ {% endfor %}
+ </tbody>
+</table>
+{% else %}
+<p>No libraries yet. Add one with <code>aorg library add NAME FOLDER</code> and scan it with
+<code>aorg scan</code>.</p>
+{% endif %}
+{% endblock %}

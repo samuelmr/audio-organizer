@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Changeset {{ changeset.id }} – audio-organizer{% endblock %}
+{% block content %}
+<h1>Changeset {{ changeset.id }}</h1>
+<p>{{ changeset.description }}</p>
+
+{% if outcomes is not none %}
+<section class="outcomes">
+ <h2>{{ outcome_title }}</h2>
+ {% if outcomes %}
+ <ul>{% for o in outcomes %}<li class="{{ 'ok' if o.ok else 'failed' }}">{{ o.message }}</li>{% endfor %}</ul>
+ {% else %}<p>Nothing to do: approve changes first.</p>{% endif %}
+</section>
+{% endif %}
+
+<form method="post" action="/changes/{{ changeset.id }}/status">
+<table>
+ <thead><tr><th><span class="visually-hidden">Select</span></th><th>Status</th><th>Change</th></tr></thead>
+ <tbody>
+ {% for change in changeset.changes %}
+  <tr>
+   <td>{% if change.status in ("proposed", "approved", "rejected") %}<input type="checkbox" name="change_ids" value="{{ change.id }}" aria-label="Select change {{ change.id }}">{% endif %}</td>
+   <td><span class="status {{ change.status }}">{{ change.status }}</span></td>
+   <td>{{ describe(change) }}{% if change.error %}<br><span class="failed">{{ change.error }}</span>{% endif %}</td>
+  </tr>
+ {% endfor %}
+ </tbody>
+</table>
+<p class="actions">
+ <button name="action" value="approve">Approve selected</button>
+ <button name="action" value="reject">Reject selected</button>
+ <button name="action" value="reset">Back to proposed</button>
+ <button name="action" value="approve-all">Approve all</button>
+</p>
+</form>
+
+<div class="actions">
+ <form method="post" action="/changes/{{ changeset.id }}/apply" class="inline">
+  <input type="hidden" name="dry_run" value="true">
+  <button>Dry run</button>
+ </form>
+ <form method="post" action="/changes/{{ changeset.id }}/apply" class="inline">
+  <button class="primary">Apply approved changes</button>
+ </form>
+ <form method="post" action="/changes/{{ changeset.id }}/undo" class="inline">
+  <button>Undo applied changes</button>
+ </form>
+</div>
+{% endblock %}

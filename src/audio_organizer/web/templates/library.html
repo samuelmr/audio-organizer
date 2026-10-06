@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}{{ library.name }} – audio-organizer{% endblock %}
+{% block content %}
+<h1>{{ library.name }}</h1>
+<form class="search" method="get" action="/libraries/{{ library.name }}">
+ <input type="search" name="q" value="{{ q }}" placeholder="Artist, album, title or path" aria-label="Search">
+ <label>Show
+  <select name="show">
+   {% for f in filters %}
+    <option value="{{ f }}" {% if f == show %}selected{% endif %}>{{ {"all": "all tracks", "disputed": "sources disagree", "no-album": "no album", "no-title": "no title"}[f] }}</option>
+   {% endfor %}
+  </select>
+ </label>
+ <label>Sort by
+  <select name="sort">
+   {% for s in sorts %}<option value="{{ s }}" {% if s == sort %}selected{% endif %}>{{ s }}</option>{% endfor %}
+  </select>
+ </label>
+ <button>Search</button>
+</form>
+
+<p class="count">{{ total }} tracks{% if pages > 1 %}, page {{ page }} of {{ pages }}{% endif %}</p>
+
+<table class="tracks">
+ <thead>
+  <tr><th>Artist</th><th>Title</th><th>Album</th><th class="num">#</th><th>Year</th><th>Genre</th><th class="num">Time</th><th></th></tr>
+ </thead>
+ <tbody>
+ {% for file, meta in rows %}
+  <tr>
+   <td>{{ meta.artist or "" }}</td>
+   <td><a href="/tracks/{{ file.id }}">{{ meta.title or file.path.rsplit("/", 1)[-1] }}</a></td>
+   <td>{{ meta.album or "" }}</td>
+   <td class="num">{{ meta.tracknumber or "" }}</td>
+   <td>{{ (meta.date or "")[:4] }}</td>
+   <td>{{ meta.genre or "" }}</td>
+   <td class="num">{{ file.duration | duration }}</td>
+   <td>{% if meta.disputed %}<span class="flag" title="Its sources disagree">≠</span>{% endif %}</td>
+  </tr>
+ {% else %}
+  <tr><td colspan="8">No tracks found.</td></tr>
+ {% endfor %}
+ </tbody>
+</table>
+
+{% if pages > 1 %}
+<nav class="pages" aria-label="Pages">
+ {% if page > 1 %}<a href="{{ url('/libraries/' ~ library.name, q=q, sort=sort, show=show, page=page - 1) }}">← Previous</a>{% endif %}
+ {% if page < pages %}<a href="{{ url('/libraries/' ~ library.name, q=q, sort=sort, show=show, page=page + 1) }}">Next →</a>{% endif %}
+</nav>
+{% endif %}
+{% endblock %}

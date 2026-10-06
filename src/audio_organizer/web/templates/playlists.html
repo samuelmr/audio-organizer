@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Playlists – audio-organizer{% endblock %}
+{% block content %}
+<h1>Playlists</h1>
+<table>
+ <thead><tr><th>Name</th><th>Kind</th><th>Sort</th><th class="num">Max</th></tr></thead>
+ <tbody>
+ {% for p in playlists %}
+  <tr>
+   <td><a href="/playlists/{{ p.id }}">{{ p.name }}</a></td>
+   <td>{% if p.is_smart %}<code>{{ p.rule }}</code>{% if p.group_by %} – one per {{ p.group_by }}{% endif %}{% else %}static, {{ p.entries | length }} entries{% endif %}</td>
+   <td>{{ p.sort }}</td>
+   <td class="num">{{ p.max_tracks or "" }}</td>
+  </tr>
+ {% else %}
+  <tr><td colspan="4">No playlists yet.</td></tr>
+ {% endfor %}
+ </tbody>
+</table>
+
+<h2>New playlist</h2>
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+<form method="post" action="/libraries/{{ library.name }}/playlists" class="stacked">
+ <label>Name <input name="playlist_name" required value="{{ form.playlist_name or '' }}" placeholder="Best Of {mood}"></label>
+ <label>Rule <input name="rule" value="{{ form.rule or '' }}" placeholder='preference="Very Good|Excellent"'>
+  <small>Leave empty for a static playlist. Conditions that must all hold: <code>field=a|b</code>, <code>!=</code>, <code>~</code> (contains), <code>!~</code>, <code>&gt;=</code> etc. for numbers; e.g. <code>genre=Rock year&gt;=1990</code>.</small></label>
+ <label>One playlist per value of <input name="group_by" value="{{ form.group_by or '' }}" placeholder="mood">
+  <small>The name must then contain the field in braces, e.g. "Best Of {mood}".</small></label>
+ <label>Sort
+  <select name="sort">
+   <option value="">default (shuffle; manual for static)</option>
+   {% for s in sorts %}<option value="{{ s }}" {% if form.sort == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+  </select>
+ </label>
+ <label>At most <input name="max_tracks" inputmode="numeric" value="{{ form.max_tracks or '' }}" size="5"> tracks</label>
+ <button class="primary">Create</button>
+</form>
+{% endblock %}

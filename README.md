@@ -50,6 +50,20 @@ The first scan reads every file; later scans only read new and changed ones, so 
 its folder and file name (`path`) or your edit (`manual`), and the other candidates when
 they disagree.
 
+### Web UI
+
+    aorg web                          # then open http://127.0.0.1:8000/
+
+The web UI shows the same catalog: browse, search and sort your tracks, list those whose
+sources disagree or that lack an album or title, see a track's values and where they
+come from, its identical copies and its original tags, and edit them. It is also where
+changesets are easiest to review: approve changes one by one or all at once, try a dry
+run, apply and undo. Playlists can be viewed, created and edited, and a sync target's
+plan previewed.
+
+The web UI has no login, so it only listens on your own computer unless you give
+`--host`. It refuses form submissions that come from other websites.
+
 ### Editing metadata
 
 Edits are stored in the catalog and proposed as a *changeset*. Nothing is written to
@@ -168,7 +182,7 @@ Design principles:
 | `scanner.py` | Incremental scanning, move detection |
 | `tags.py` | Reading and writing tags (ID3, MP4, Vorbis comments) |
 | `pathparse.py` | Metadata evidence from folder and file names |
-| `provenance.py` | Resolving field values from their sources |
+| `provenance.py` | Resolving field values from their sources; the effective metadata table |
 | `audiohash.py` | Audio-only content hash (sampled) |
 | `blockfile.py` | Block-cached reading of a file, for few network round trips |
 | `changes.py` | Changesets: propose, approve, apply, undo |
@@ -178,3 +192,4 @@ Design principles:
 | `sync.py` | Planning and carrying out syncs to object storage |
 | `objectstore.py` | Object storage backends (S3-compatible) |
 | `cli.py` | The `aorg` command |
+| `web/` | The web UI: FastAPI app (`app.py`), Jinja2 templates, stylesheet |

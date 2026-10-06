@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% set library = file.library %}
+{% block title %}{{ resolved.title.value if "title" in resolved else file.path }} – audio-organizer{% endblock %}
+{% block content %}
+<h1>{{ resolved.title.value if "title" in resolved else file.path.rsplit("/", 1)[-1] }}</h1>
+<p class="path">{{ file.path }}</p>
+<p class="details">
+ {{ file.format or "unknown format" }}{% if file.duration %}, {{ file.duration | duration }}{% endif %}{% if file.bitrate %}, {{ file.bitrate // 1000 }} kbps{% endif %}
+ {% if file.missing %}<strong>– missing from disk</strong>{% endif %}
+ {% if file.error %}<strong>– {{ file.error }}</strong>{% endif %}
+</p>
+
+<form method="post" action="/tracks/{{ file.id }}/edit">
+<table class="fields">
+ <thead><tr><th>Field</th><th>Value</th><th>From</th><th>Other sources</th></tr></thead>
+ <tbody>
+ {% for name in fields %}
+  {% set r = resolved.get(name) %}
+  <tr>
+   <th scope="row"><label for="f-{{ name }}">{{ name }}</label></th>
+   <td><input id="f-{{ name }}" name="{{ name }}" value="{{ r.value if r else '' }}"></td>
+   <td class="source">{{ r.source if r else "" }}</td>
+   <td class="others">
+    {% if r %}{% for source, value in r.candidates.items() if source != r.source %}
+     <span class="{% if value != r.value %}differs{% endif %}">{{ source }}: {{ value }}</span>
+    {% endfor %}{% endif %}
+   </td>
+  </tr>
+ {% endfor %}
+ {% for name in extra %}
+  <tr><th scope="row">{{ name }}</th><td>{{ resolved[name].value }}</td><td class="source">{{ resolved[name].source }}</td><td></td></tr>
+ {% endfor %}
+ </tbody>
+</table>
+<p class="hint">Changed fields are saved as your edits and proposed as a change to the
+file's tags, which you review before it is applied. Emptying a field you edited earlier
+drops your edit.</p>
+<button>Save</button>
+</form>
+
+{% if copies %}
+<h2>Identical audio</h2>
+<ul>
+ {% for copy in copies %}<li><a href="/tracks/{{ copy.id }}">{{ copy.path }}</a></li>{% endfor %}
+</ul>
+{% endif %}
+
+{% if snapshot %}
+<details>
+ <summary>Tags when first scanned ({{ snapshot.taken_at.strftime("%Y-%m-%d") }})</summary>
+ <dl class="snapshot">
+  {% for name, value in snapshot.tags.items() %}<dt>{{ name }}</dt><dd>{{ value }}</dd>{% endfor %}
+ </dl>
+</details>
+{% endif %}
+{% endblock %}

@@ -201,6 +201,27 @@ def stats_command(
         typer.echo(f"  identical audio: {groups} groups, {copies or 0} files")
 
 
+@app.command("web")
+def web(
+    ctx: typer.Context,
+    host: Annotated[str, typer.Option(help="Address to listen on")] = "127.0.0.1",
+    port: Annotated[int, typer.Option(help="Port to listen on")] = 8000,
+) -> None:
+    """Run the web UI for browsing, editing and reviewing changes."""
+    import uvicorn
+
+    from .web import create_app
+
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        typer.echo(
+            f"Warning: the web UI has no login; anyone who can reach {host}:{port} can "
+            "change your catalog and files.",
+            err=True,
+        )
+    typer.echo(f"audio-organizer at http://{host}:{port}/")
+    uvicorn.run(create_app(ctx.obj), host=host, port=port, log_level="warning")
+
+
 @app.command("show")
 def show(ctx: typer.Context, path: str) -> None:
     """Show a file's metadata: the effective value of each field and where it came from."""

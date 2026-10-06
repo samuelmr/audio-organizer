@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Sync – audio-organizer{% endblock %}
+{% block content %}
+{% if target %}
+<h1>Sync to {{ target.name }}</h1>
+<p class="path">s3://{{ target.bucket }}/{{ target.prefix }}{% if target.endpoint_url %} at {{ target.endpoint_url }}{% endif %}</p>
+{% set counts = plan.counts() %}
+<p>
+ {% if counts %}{% for kind, n in counts | dictsort %}{{ n }} {{ kind }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}Nothing to do{% endif %};
+ {{ plan.unchanged }} up to date; {{ "%.0f" | format(plan.upload_bytes / 1e6) }} MB to upload.
+ {% if plan.stale %}{{ plan.stale | length }} remote objects are no longer in the library.{% endif %}
+</p>
+<p class="hint">Run the sync with <code>aorg sync {{ target.name }}</code>.</p>
+{% if plan.actions %}
+<table>
+ <thead><tr><th>Action</th><th>Object</th></tr></thead>
+ <tbody>
+ {% for a in plan.actions[:500] %}<tr><td>{{ a.kind }}</td><td class="path">{% if a.kind == "move" %}{{ a.source_key }} → {% endif %}{{ a.key }}</td></tr>{% endfor %}
+ </tbody>
+</table>
+{% if plan.actions | length > 500 %}<p>… and {{ plan.actions | length - 500 }} more.</p>{% endif %}
+{% endif %}
+{% else %}
+<h1>Sync</h1>
+{% if targets %}
+<p>Choose a target to see what a sync would do. Planning checks every album folder for a
+cover image, which can take a while on a network share.</p>
+<ul>{% for t in targets %}<li><a href="/sync/{{ t.name }}">{{ t.name }}</a> – {{ t.library.name }} → s3://{{ t.bucket }}/{{ t.prefix }}</li>{% endfor %}</ul>
+{% else %}
+<p>No sync targets. Add one with <code>aorg target add NAME --bucket BUCKET</code>.</p>
+{% endif %}
+{% endif %}
+{% endblock %}

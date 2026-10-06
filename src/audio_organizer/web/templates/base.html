@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+ <meta charset="utf-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1">
+ <title>{% block title %}audio-organizer{% endblock %}</title>
+ <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+ <nav>
+  <a class="brand" href="/">audio-organizer</a>
+  {% if library is defined and library %}
+   <a href="/libraries/{{ library.name }}">Tracks</a>
+   <a href="/libraries/{{ library.name }}/playlists">Playlists</a>
+  {% endif %}
+  <a href="/changes">Changes</a>
+  <a href="/sync">Sync</a>
+ </nav>
+</header>
+<main>
+ {% if message %}<p class="message" role="status">{{ message }}</p>{% endif %}
+ {% block content %}{% endblock %}
+</main>
+</body>
+</html>
