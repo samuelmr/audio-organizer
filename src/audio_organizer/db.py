@@ -7,6 +7,7 @@ from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
 from .models import Base
+from .provenance import backfill_effective
 
 
 def default_db_url() -> str:
@@ -39,4 +40,7 @@ def make_engine(url: str | None = None) -> Engine:
 
 
 def make_sessionmaker(url: str | None = None) -> sessionmaker[Session]:
-    return sessionmaker(make_engine(url), expire_on_commit=False)
+    factory = sessionmaker(make_engine(url), expire_on_commit=False)
+    with factory() as session:
+        backfill_effective(session)  # catalogs made before the table existed
+    return factory

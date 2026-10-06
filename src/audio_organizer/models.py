@@ -89,6 +89,37 @@ class FieldValue(Base):
     file: Mapped[AudioFile] = relationship(back_populates="values")
 
 
+class EffectiveMetadata(Base):
+    """The effective value of each tag field of a file, as provenance.resolve chooses it
+    from the FieldValues, so that the catalog can be searched and sorted in SQL. Kept up
+    to date by provenance.set_value(s); never written directly."""
+
+    __tablename__ = "effective_metadata"
+
+    file_id: Mapped[int] = mapped_column(
+        ForeignKey("audio_file.id", ondelete="CASCADE"), primary_key=True
+    )
+    artist: Mapped[str | None] = mapped_column(Text, index=True)
+    albumartist: Mapped[str | None] = mapped_column(Text)
+    album: Mapped[str | None] = mapped_column(Text, index=True)
+    title: Mapped[str | None] = mapped_column(Text, index=True)
+    tracknumber: Mapped[str | None] = mapped_column(Text)
+    tracktotal: Mapped[str | None] = mapped_column(Text)
+    discnumber: Mapped[str | None] = mapped_column(Text)
+    disctotal: Mapped[str | None] = mapped_column(Text)
+    date: Mapped[str | None] = mapped_column(Text)
+    genre: Mapped[str | None] = mapped_column(Text)
+    compilation: Mapped[str | None] = mapped_column(Text)
+    mood: Mapped[str | None] = mapped_column(Text)
+    tempo: Mapped[str | None] = mapped_column(Text)
+    situation: Mapped[str | None] = mapped_column(Text)
+    preference: Mapped[str | None] = mapped_column(Text)
+    # Some field's sources disagree beyond case and punctuation
+    disputed: Mapped[bool] = mapped_column(default=False, index=True)
+
+    file: Mapped[AudioFile] = relationship()
+
+
 class TagSnapshot(Base):
     """The tags of a file as they were at some point, e.g. when the file was first seen."""
 
