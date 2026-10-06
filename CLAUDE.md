@@ -24,13 +24,14 @@ Several chats may work on this repository at the same time. To keep them apart:
 - Never push unless the user asks.
 - Each worktree has its own `.venv`; `uv run` creates it on first use.
 
-## Local-only files
+## Plans and reference material
 
 `PLAN.md` (status, roadmap, decisions, open questions, notes on the example library)
 and `reference-material/` (the earlier PHP and shell tools this project replaces) are
-gitignored and exist only in the main checkout (the first entry of `git worktree list`).
-Read and edit them there, also when working in a worktree. Keep PLAN.md up to date when
-status or plans change. Don't mention the reference material in committed files.
+kept outside the repository, in `../audio-organizer-notes/` next to the main checkout
+(`~/github/audio-organizer-notes/`), so that every chat and worktree reads and edits
+the same copy. Keep PLAN.md up to date when status or plans change. Don't mention the
+reference material in committed files.
 
 ## The user's data and services
 
