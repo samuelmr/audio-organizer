@@ -13,18 +13,20 @@ from typing import Annotated
 from urllib.parse import urlencode, urlsplit
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import String, func, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from .. import album_merge as am
 from .. import changes as ch
 from .. import duplicates as du
 from .. import playlists as pl
 from .. import sync as sy
 from ..models import (
     AudioFile,
+    Change,
     Changeset,
     EffectiveMetadata,
     Library,
@@ -221,6 +223,27 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             manual=manual, copies=copies, snapshot=snapshot,
         )  # fmt: skip
 
+    @app.get("/tracks/{file_id}/audio")
+    def track_audio(file_id: int, session: Session = SessionDep):
+        """The track's audio, for listening in the browser (with range requests, so
+        seeking works). A trashed file is played from the trash. Only files in the
+        catalog can be served, by id, so no other file can be reached through this."""
+        file = _file(session, file_id)
+        root = Path(file.library.root)
+        path = root / file.path
+        if not path.is_file():
+            trashed = session.scalars(
+                select(Change)
+                .where(Change.file_id == file.id, Change.kind == "trash")
+                .where(Change.status == "applied")
+                .order_by(Change.id.desc())
+            ).first()
+            path = root / trashed.undo["trash"] if trashed and trashed.undo else path
+        if not path.is_file():
+            raise HTTPException(404, "The file is not on disk")
+        media_type = sy.CONTENT_TYPES.get(path.suffix.lower(), "application/octet-stream")
+        return FileResponse(path, media_type=media_type)
+
     @app.post("/tracks/{file_id}/edit")
     async def edit_track(request: Request, file_id: int, session: Session = SessionDep):
         """Store the edited fields as manual values and propose writing them into the
@@ -268,20 +291,65 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         )  # fmt: skip
 
     @app.post("/libraries/{name}/duplicates")
-    def propose_duplicates(
-        name: str,
-        path: Annotated[str, Form()] = "",
-        limit: Annotated[int, Form()] = 50,
-        compilations: Annotated[bool, Form()] = False,
-        session: Session = SessionDep,
-    ):
+    async def propose_duplicates(request: Request, name: str, session: Session = SessionDep):
+        """Propose the groups shown on the page (one "keep-<audio hash>" field each, the
+        id of the copy to keep), so the batch is what the user saw and chose."""
         lib = _library(session, name)
-        found = du.survey(session, lib, path_prefix=path or None, include_compilations=compilations)
-        batch = found.proposals[: max(limit, 1)]
+        form = await request.form()
+        path = str(form.get("path", ""))
+        keep_ids = {
+            key.removeprefix("keep-"): int(value)
+            for key, value in form.multi_items()
+            if key.startswith("keep-") and str(value).isdigit()
+        }
+        found = du.survey(
+            session, lib, path_prefix=path or None,
+            include_compilations=form.get("compilations") == "true",
+        )  # fmt: skip
+        shown = [p for p in found.proposals if p.keep.file.audio_hash in keep_ids]
+        batch = du.choose(shown, keep_ids)
         if not batch:
             return _redirect(f"/libraries/{lib.name}/duplicates", "Nothing to propose")
         where = f" in {path}" if path else ""
         changeset = du.propose(session, batch, f"Trash loose copies of {len(batch)} tracks{where}")
+        return _redirect(f"/changes/{changeset.id}", "Proposed; review and approve the changes")
+
+    @app.get("/libraries/{name}/album-merges", response_class=HTMLResponse)
+    def album_merges(
+        request: Request, name: str, path: str = "", limit: int = 20, session: Session = SessionDep
+    ):
+        lib = _library(session, name)
+        found = am.survey(session, lib, path_prefix=path or None)
+        return render(
+            request, "album_merges.html", library=lib, found=found,
+            batch=am.batch(found.merges, max(limit, 1)),
+            others=[m for m in found.merges if not m.batchable], path=path, limit=limit,
+        )  # fmt: skip
+
+    @app.post("/libraries/{name}/album-merges")
+    def propose_album_merges(
+        name: str,
+        path: Annotated[str, Form()] = "",
+        limit: Annotated[int, Form()] = 20,
+        source: Annotated[str, Form()] = "",
+        target: Annotated[str, Form()] = "",
+        session: Session = SessionDep,
+    ):
+        """A batch of merges, or with source and target, one merge in that direction."""
+        lib = _library(session, name)
+        if source and target:
+            try:
+                merges = [am.plan_folders(session, lib, source, target)]
+            except ValueError as e:
+                raise HTTPException(400, str(e)) from None
+            description = f"Merge {source} into {target}"
+        else:
+            found = am.survey(session, lib, path_prefix=path or None)
+            merges = am.batch(found.merges, max(limit, 1))
+            description = f"Merge {len(merges)} album folders"
+        if not any(m.trash or m.move for m in merges):
+            return _redirect(f"/libraries/{lib.name}/album-merges", "Nothing to merge")
+        changeset = am.propose(session, merges, description)
         return _redirect(f"/changes/{changeset.id}", "Proposed; review and approve the changes")
 
     # ---- changesets ----------------------------------------------------------------------

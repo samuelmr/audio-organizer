@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import play %}
 {% block title %}Duplicates – audio-organizer{% endblock %}
 {% block content %}
 {% set base = '/libraries/' ~ library.name %}
@@ -23,21 +24,24 @@ folder, {{ found.pending }} with changes waiting for review.</p>
 {% if batch %}
 <form method="post" action="{{ base }}/duplicates">
  <input type="hidden" name="path" value="{{ path }}">
- <input type="hidden" name="limit" value="{{ limit }}">
  {% if compilations %}<input type="hidden" name="compilations" value="true">{% endif %}
- <button class="primary">Propose a changeset for these {{ batch | length }} tracks</button>
+ <p class="hint">For each track, the copy marked <em>keep</em> stays and the others go to the
+ trash. Choose another copy to keep it instead; ▶ plays a copy.</p>
+ <p><button class="primary">Propose a changeset for these {{ batch | length }} tracks</button></p>
+ <table class="duplicates">
+  <thead><tr><th>Keep</th><th>Copy</th><th>Tags to copy to the kept one</th></tr></thead>
+  {% for p in batch %}
+  <tbody>
+   {% for c in [p.keep] + p.trash %}
+   <tr>
+    <td><input type="radio" name="keep-{{ p.keep.file.audio_hash }}" value="{{ c.file.id }}" {% if loop.first %}checked{% endif %} aria-label="Keep {{ c.file.path }}"></td>
+    <td class="path">{{ play(c.file.id, c.file.path) }} <a href="/tracks/{{ c.file.id }}">{{ c.file.path }}</a></td>
+    <td>{% if loop.first %}{% for k, v in p.fill.items() %}{{ k }}: {{ v }}{% if not loop.last %}<br>{% endif %}{% endfor %}{% endif %}</td>
+   </tr>
+   {% endfor %}
+  </tbody>
+  {% endfor %}
+ </table>
 </form>
-<table>
- <thead><tr><th>Keep</th><th>Trash</th><th>Tags to copy</th></tr></thead>
- <tbody>
- {% for p in batch %}
-  <tr>
-   <td class="path"><a href="/tracks/{{ p.keep.file.id }}">{{ p.keep.file.path }}</a></td>
-   <td class="path">{% for c in p.trash %}<a href="/tracks/{{ c.file.id }}">{{ c.file.path }}</a>{% if not loop.last %}<br>{% endif %}{% endfor %}</td>
-   <td>{% for k, v in p.fill.items() %}{{ k }}: {{ v }}{% if not loop.last %}<br>{% endif %}{% endfor %}</td>
-  </tr>
- {% endfor %}
- </tbody>
-</table>
 {% endif %}
 {% endblock %}

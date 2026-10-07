@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Album folders – audio-organizer{% endblock %}
+{% macro merge_rows(m) %}
+ <tr>
+  <td class="path"><a href="{{ url('/libraries/' ~ library.name, folder=m.source.path) }}">{{ m.source.path }}</a> <span class="muted">({{ m.source.distinct }})</span></td>
+  <td class="path"><a href="{{ url('/libraries/' ~ library.name, folder=m.target.path) }}">{{ m.target.path }}</a> <span class="muted">({{ m.target.distinct }})</span></td>
+  <td>
+   {{ m.trash | length }} copies to trash, {{ m.move | length }} to move
+   {% if not m.same_name %}<br><span class="flag">different album names</span>{% endif %}
+   {% for t in m.clashes %}<br><span class="flag">clash, stays:</span> {{ t.name }}{% endfor %}
+  </td>
+ </tr>
+{% endmacro %}
+{% block content %}
+{% set base = '/libraries/' ~ library.name %}
+<h1>Album folders</h1>
+<p>{{ found.merges | length }} pairs of album folders share identical tracks.
+Merging one into the other trashes its copies of tracks the other already has (the other
+folder's copy is kept and playlists switch to it) and moves its remaining tracks over.
+A track whose number is already taken in the other folder is a <em>clash</em> – often a
+different recording or edition – and stays where it is.</p>
+<p class="hint">{{ found.batchable | length }} pairs have the same album name and no clashes
+and can be merged in batches; {{ others | length }} need a look;
+{{ found.pending }} have changes waiting for review.</p>
+
+<form class="search" method="get" action="{{ base }}/album-merges">
+ <input type="search" name="path" value="{{ path }}" placeholder="Only under a path" aria-label="Path">
+ <label>Batch of <input name="limit" inputmode="numeric" size="4" value="{{ limit }}"> merges</label>
+ <button>Show</button>
+</form>
+
+{% if batch %}
+<h2>Next batch</h2>
+<form method="post" action="{{ base }}/album-merges">
+ <input type="hidden" name="path" value="{{ path }}">
+ <input type="hidden" name="limit" value="{{ limit }}">
+ <button class="primary">Propose a changeset for these {{ batch | length }} merges</button>
+</form>
+<table>
+ <thead><tr><th>Merge</th><th>into</th><th></th></tr></thead>
+ <tbody>{% for m in batch %}{{ merge_rows(m) }}{% endfor %}</tbody>
+</table>
+{% endif %}
+
+{% if others %}
+<h2>Need a look</h2>
+<p class="hint">Choose the direction yourself; the folder you merge into keeps its copies.</p>
+<table>
+ <thead><tr><th>Folder</th><th>Other folder</th><th></th><th></th></tr></thead>
+ <tbody>
+ {% for m in others %}
+  <tr>
+   <td class="path"><a href="{{ url(base, folder=m.source.path) }}">{{ m.source.path }}</a> <span class="muted">({{ m.source.distinct }})</span></td>
+   <td class="path"><a href="{{ url(base, folder=m.target.path) }}">{{ m.target.path }}</a> <span class="muted">({{ m.target.distinct }})</span></td>
+   <td>
+    {{ m.shared }} shared
+    {% if not m.same_name %}<br><span class="flag">different album names</span>{% endif %}
+    {% if m.clashes %}<br><span class="flag">{{ m.clashes | length }} clashes</span>{% endif %}
+   </td>
+   <td class="actions">
+    {% for source, target in ((m.source, m.target), (m.target, m.source)) %}
+    <form method="post" action="{{ base }}/album-merges" class="inline">
+     <input type="hidden" name="source" value="{{ source.path }}">
+     <input type="hidden" name="target" value="{{ target.path }}">
+     <button>Merge into {{ target.name }}{% if source.name == target.name %} ({{ target.path.split('/')[0] }}){% endif %}</button>
+    </form>
+    {% endfor %}
+   </td>
+  </tr>
+ {% endfor %}
+ </tbody>
+</table>
+{% endif %}
+{% endblock %}

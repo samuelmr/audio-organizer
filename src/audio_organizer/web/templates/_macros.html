@@ -1,0 +1,5 @@
+{# A play/stop toggle for a track (see static/play.js); without JavaScript a plain link
+   to the audio, which the browser plays in its own player. #}
+{% macro play(file_id, label="") -%}
+<a class="play" href="/tracks/{{ file_id }}/audio" data-play aria-label="Play {{ label }}" title="Play">▶</a>
+{%- endmacro %}

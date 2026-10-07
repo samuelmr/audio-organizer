@@ -9,6 +9,7 @@ import typer
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from . import album_merge as am
 from . import changes as ch
 from . import duplicates as du
 from . import playlists as pl
@@ -808,6 +809,87 @@ def dupes(
             f"Changeset {changeset.id}: {len(changeset.changes)} changes. Review with "
             f"`aorg changes show {changeset.id}` or in the web UI."
         )
+
+
+def _describe_merge(merge: am.Merge) -> list[str]:
+    note = "" if merge.same_name else "  [different album names]"
+    lines = [
+        f"  {merge.source.path} ({merge.source.distinct} tracks) -> {merge.target.path} "
+        f"({merge.target.distinct} tracks){note}",
+        f"      {len(merge.trash)} copies to trash, {len(merge.move)} tracks to move",
+    ]
+    for track in merge.clashes:
+        lines.append(f"      clash, left in place: {track.name}")
+    return lines
+
+
+@app.command("merge-albums")
+def merge_albums(
+    ctx: typer.Context,
+    path: Annotated[str | None, typer.Option(help="Only folders under this path")] = None,
+    limit: Annotated[int, typer.Option(help="Merges to propose in a batch")] = 20,
+    propose: Annotated[
+        bool, typer.Option("--propose", help="Create a changeset for a batch")
+    ] = False,
+    source: Annotated[
+        str | None, typer.Option("--from", help="Merge this album folder ...")
+    ] = None,
+    target: Annotated[str | None, typer.Option("--into", help="... into this one")] = None,
+    library: LibraryOption = None,
+) -> None:
+    """Find album folders that hold the same album, and merge them.
+
+    Merging trashes the source folder's copies of tracks the target already has and
+    moves its other tracks into the target. A track whose number the target already uses
+    is a clash and stays where it is. Batches (--propose) only include folders with the
+    same album name and no clashes; merge others one at a time with --from and --into,
+    in the direction you choose.
+    """
+    with _session(ctx) as session:
+        lib = _library(session, library)
+        if source or target:
+            if not (source and target):
+                raise typer.BadParameter("Give both --from and --into")
+            try:
+                merge = am.plan_folders(session, lib, source.strip("/"), target.strip("/"))
+            except ValueError as e:
+                raise typer.BadParameter(str(e)) from None
+            for line in _describe_merge(merge):
+                typer.echo(line)
+            if not merge.trash and not merge.move:
+                typer.echo("Nothing to merge")
+                return
+            changeset = am.propose(
+                session, [merge], f"Merge {merge.source.path} into {merge.target.path}"
+            )
+            typer.echo(f"Changeset {changeset.id}: {len(changeset.changes)} changes")
+            return
+        found = am.survey(session, lib, path_prefix=path)
+        chosen = am.batch(found.merges, limit)
+        typer.echo(
+            f"{len(found.merges)} pairs of album folders share tracks: "
+            f"{len(found.batchable)} can be merged in batches, "
+            f"{len(found.merges) - len(found.batchable)} need a look; "
+            f"{found.pending} have changes waiting for review."
+        )
+        if propose:
+            if chosen:
+                changeset = am.propose(session, chosen, f"Merge {len(chosen)} album folders")
+                typer.echo(
+                    f"Changeset {changeset.id}: {len(changeset.changes)} changes for "
+                    f"{len(chosen)} merges. Review with `aorg changes show {changeset.id}`."
+                )
+            return
+        typer.echo("Next batch:" if chosen else "Nothing to merge in a batch.")
+        for merge in chosen:
+            for line in _describe_merge(merge):
+                typer.echo(line)
+        others = [m for m in found.merges if not m.batchable]
+        if others:
+            typer.echo("Need a look (merge with --from and --into):")
+            for merge in others:
+                for line in _describe_merge(merge):
+                    typer.echo(line)
 
 
 trash_app = typer.Typer(

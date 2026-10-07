@@ -59,10 +59,11 @@ sources disagree or that lack an album or title, see a track's values and where 
 come from, its identical copies and its original tags, and edit them. Click an album,
 artist or folder to see just its tracks (an album's in disc and track order), or browse
 the albums list. Albums are grouped by their tags, so the tracks of an album scattered
-across folders show up together. It is also where
-changesets are easiest to review: approve changes one by one or all at once, try a dry
-run, apply and undo. Playlists can be viewed, created and edited, and a sync target's
-plan previewed.
+across folders show up together. It is also where changesets are easiest to review:
+select changes (or all, then deselect some) to approve or reject, try a dry run, apply
+and undo. The ▶ buttons on track, duplicate and changeset pages play the files in the
+browser, so copies can be compared by ear (MP3, M4A and AAC play everywhere; WMA does
+not). Playlists can be viewed, created and edited, and a sync target's plan previewed.
 
 The web UI has no login, so it only listens on your own computer unless you give
 `--host`. It refuses form submissions that come from other websites.
@@ -98,13 +99,32 @@ lying loose in an artist folder, in "Unknown Album", or next to it as iTunes cop
 copied to the kept file, and static playlists switch to it. Tracks with copies in
 several album folders are left for you to decide, and so are tracks whose only album
 copy is on a compilation while another copy is in the artist's own folder (add
-`--include-compilations` to include them). The web UI's Duplicates page does the same.
+`--include-compilations` to include them). The web UI's Duplicates page does the same,
+and there you can choose another copy to keep for any track, and listen to the copies.
 
 Trashed files are moved to `.aorg-trash/` in the library folder, and undoing the
 changeset brings them back. They are only deleted when you empty the trash:
 
     aorg trash                                # what is in it
     aorg trash empty
+
+### Album folders
+
+The same album often sits in several folders ("Texas/Greatest Hits" and
+"Texas/The Greatest Hits", or a fragment in another artist's folder). `aorg merge-albums`
+finds pairs of album folders that share identical tracks and have the same album name
+(or share at least half of their tracks):
+
+    aorg merge-albums                         # candidates
+    aorg merge-albums --propose --limit 20    # a changeset for a batch of safe merges
+    aorg merge-albums --from "Texas/Greatest Hits" --into "Texas/The Greatest Hits"
+
+Merging one folder into another trashes its copies of tracks the other already has (that
+copy is kept and playlists switch to it) and moves its other tracks over. A track whose
+number the other folder already uses on the same disc is a *clash*, which usually means
+a different recording or edition; it stays where it is. Batches only include pairs with
+the same album name and no clashes; merge the others one by one in the direction you
+choose, here or on the web UI's Album folders page.
 
 ### Playlists
 
@@ -215,6 +235,7 @@ Design principles:
 | `blockfile.py` | Block-cached reading of a file, for few network round trips |
 | `changes.py` | Changesets: propose, approve, apply, undo; retag, move and trash |
 | `duplicates.py` | Identical copies and what to keep |
+| `album_merge.py` | Album folders holding the same album, and merging them |
 | `tracks.py` | Streaming tracks with resolved metadata, in batches |
 | `playlists.py` | Playlist rules, generation in one pass, import and export |
 | `playlist_formats.py` | M3U, JSON-LD and HTML playlist files |

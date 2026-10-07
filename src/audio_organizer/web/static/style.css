@@ -77,6 +77,22 @@ form.inline { display: inline; }
 .fields .others span { display: block; font-size: 0.85rem; color: var(--muted); }
 .fields .others .differs { color: var(--warn); }
 
+a.play {
+  display: inline-block;
+  width: 1.5em;
+  text-align: center;
+  text-decoration: none;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  font-size: 0.75rem;
+  line-height: 1.5em;
+  color: var(--accent);
+}
+a.play:hover { border-color: var(--accent); }
+a.play.playing { background: var(--accent); color: var(--bg); }
+a.play.unplayable { color: var(--muted); text-decoration: line-through; }
+table.duplicates tbody { border-bottom: 2px solid var(--line); }
+
 .subtitle { color: var(--muted); margin-top: -0.5rem; }
 a.quiet { color: inherit; text-decoration: none; }
 a.quiet:hover { text-decoration: underline; }

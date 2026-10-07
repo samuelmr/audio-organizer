@@ -189,13 +189,62 @@ def test_sync_preview(web, Session):
     assert web.get("/sync/nothing").status_code == 404
 
 
+def _keep_choices(page: str) -> dict[str, list[str]]:
+    """The keep radio buttons of the duplicates page: name -> values, checked first."""
+    choices: dict[str, list[str]] = {}
+    for name, value, checked in re.findall(
+        r'type="radio" name="(keep-\w+)" value="(\d+)" (checked)?', page
+    ):
+        values = choices.setdefault(name, [])
+        values.insert(0, value) if checked else values.append(value)
+    return choices
+
+
 def test_duplicates(web):
     page = web.get("/libraries/music/duplicates").text
     assert "<strong>1</strong>" in page and "Texas/Texas_Halo.mp3" in page
     assert "mood: Upbeat" in page  # only the flat copy has a mood; copied to the album copy
-    response = web.post("/libraries/music/duplicates", data={"limit": "10"})
+    assert "data-play" in page
+    [(name, (proposed, other))] = _keep_choices(page).items()
+    response = web.post("/libraries/music/duplicates", data={name: proposed})
     assert re.fullmatch(r"/changes/\d+", response.url.path)
     assert "trash Texas/Texas_Halo.mp3 (same audio as Texas/Greatest Hits/11 Halo.mp3)" in (
         response.text
     )
+    assert f'href="/tracks/{proposed}/audio"' in response.text  # play the kept copy too
     assert "1 with changes waiting" in web.get("/libraries/music/duplicates").text
+
+
+def test_duplicates_keep_another_copy(web):
+    page = web.get("/libraries/music/duplicates").text
+    [(name, (proposed, other))] = _keep_choices(page).items()
+    response = web.post("/libraries/music/duplicates", data={name: other})
+    assert "trash Texas/Greatest Hits/11 Halo.mp3 (same audio as Texas/Texas_Halo.mp3)" in (
+        response.text
+    )
+
+
+def test_audio(web, Session):
+    file_id = _file_id(Session, "Texas/Texas_Halo.mp3")
+    response = web.get(f"/tracks/{file_id}/audio")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "audio/mpeg"
+    assert response.content == (web.root / "Texas/Texas_Halo.mp3").read_bytes()
+    partial = web.get(f"/tracks/{file_id}/audio", headers={"Range": "bytes=0-99"})
+    assert partial.status_code == 206 and len(partial.content) == 100
+
+    # After trashing, it plays from the trash
+    page = web.get("/libraries/music/duplicates").text
+    [(name, (proposed, other))] = _keep_choices(page).items()
+    changeset_path = web.post("/libraries/music/duplicates", data={name: proposed}).url.path
+    web.post(f"{changeset_path}/status", data={"action": "approve-all"})
+    web.post(f"{changeset_path}/apply", data={})
+    assert not (web.root / "Texas/Texas_Halo.mp3").exists()
+    assert web.get(f"/tracks/{file_id}/audio").status_code == 200
+    assert web.get("/tracks/99999/audio").status_code == 404
+
+
+def test_album_merges_page(web):
+    page = web.get("/libraries/music/album-merges").text
+    assert "0 pairs of album folders" in page
+    assert web.post("/libraries/music/album-merges", data={}).url.path.endswith("album-merges")

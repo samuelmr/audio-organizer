@@ -1,8 +1,10 @@
 {% extends "base.html" %}
+{% from "_macros.html" import play %}
 {% block title %}Changeset {{ changeset.id }} – audio-organizer{% endblock %}
 {% block content %}
 <h1>Changeset {{ changeset.id }}</h1>
 <p>{{ changeset.description }}</p>
+<p class="hint">▶ plays a file; for a copy to trash, the second ▶ plays the copy that is kept.</p>
 
 {% if outcomes is not none %}
 <section class="outcomes">
@@ -24,7 +26,11 @@
   <tr>
    <td>{% if change.status in ("proposed", "approved", "rejected") %}<input type="checkbox" name="change_ids" value="{{ change.id }}" aria-label="Select change {{ change.id }}">{% endif %}</td>
    <td><span class="status {{ change.status }}">{{ change.status }}</span></td>
-   <td>{{ describe(change) }}{% if change.error %}<br><span class="failed">{{ change.error }}</span>{% endif %}</td>
+   <td>
+    {{ play(change.file.id, change.file.path) }}
+    {% if change.kind == "trash" and change.payload.replacement %}{{ play(change.payload.replacement, change.payload.replacement_path) }}{% endif %}
+    {{ describe(change) }}{% if change.error %}<br><span class="failed">{{ change.error }}</span>{% endif %}
+   </td>
   </tr>
  {% endfor %}
  </tbody>

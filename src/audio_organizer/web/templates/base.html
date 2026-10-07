@@ -5,6 +5,7 @@
  <meta name="viewport" content="width=device-width, initial-scale=1">
  <title>{% block title %}audio-organizer{% endblock %}</title>
  <link rel="stylesheet" href="/static/style.css">
+ <script src="/static/play.js" defer></script>
 </head>
 <body>
 <header>
@@ -15,6 +16,7 @@
    <a href="/libraries/{{ library.name }}/albums">Albums</a>
    <a href="/libraries/{{ library.name }}/playlists">Playlists</a>
    <a href="/libraries/{{ library.name }}/duplicates">Duplicates</a>
+   <a href="/libraries/{{ library.name }}/album-merges">Album folders</a>
   {% else %}
    <a href="/">Libraries</a>
   {% endif %}

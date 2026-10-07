@@ -125,24 +125,42 @@ def survey(
             in_albums,
             key=lambda m: (not m.is_copy, len(m.tags), m.file.bitrate or 0, -len(m.file.path)),
         )
-        trash = [m for m in members if m is not keep]
+        proposal = keeping(members, keep)
         if (
             not include_compilations
             and keep.on_compilation
-            and any(m.top_folder != keep.top_folder for m in trash)
+            and any(m.top_folder != keep.top_folder for m in proposal.trash)
         ):
             result.compilations += 1
             continue
-        fill = {}
-        for name in FIELDS:
-            if name in keep.effective:
-                continue
-            value = next((m.tags[name] for m in trash if name in m.tags), None)
-            if value is not None:
-                fill[name] = value
-        result.proposals.append(Proposal(keep, trash, fill))
+        result.proposals.append(proposal)
     result.proposals.sort(key=lambda p: p.keep.file.path)
     return result
+
+
+def keeping(members: list[Copy], keep: Copy) -> Proposal:
+    """The proposal for a group of copies that keeps the given one: the others go to the
+    trash, and tags only they have are copied to it."""
+    trash = [m for m in members if m is not keep]
+    fill = {}
+    for name in FIELDS:
+        if name in keep.effective:
+            continue
+        value = next((m.tags[name] for m in trash if name in m.tags), None)
+        if value is not None:
+            fill[name] = value
+    return Proposal(keep, trash, fill)
+
+
+def choose(proposals: list[Proposal], keep_ids: dict[str, int]) -> list[Proposal]:
+    """The proposals with the user's choices of which copy to keep, by audio hash."""
+    chosen = []
+    for proposal in proposals:
+        members = [proposal.keep, *proposal.trash]
+        wanted = keep_ids.get(proposal.keep.file.audio_hash)
+        keep = next((m for m in members if m.file.id == wanted), proposal.keep)
+        chosen.append(proposal if keep is proposal.keep else keeping(members, keep))
+    return chosen
 
 
 def propose(session: Session, proposals: list[Proposal], description: str) -> Changeset:

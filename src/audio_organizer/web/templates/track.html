@@ -1,11 +1,12 @@
 {% extends "base.html" %}
+{% from "_macros.html" import play %}
 {% set library = file.library %}
 {% block title %}{{ resolved.title.value if "title" in resolved else file.path }} – audio-organizer{% endblock %}
 {% block content %}
 <h1>{{ resolved.title.value if "title" in resolved else file.path.rsplit("/", 1)[-1] }}</h1>
 {% set base = '/libraries/' ~ file.library.name %}
 {% set folder = file.path.rsplit("/", 1)[0] if "/" in file.path else "" %}
-<p class="path">{{ file.path }}</p>
+<p class="path">{{ play(file.id, file.path) }} {{ file.path }}</p>
 <p class="subtitle">
  {% if "album" in resolved %}<a href="{{ url(base, album=resolved.album.value, albumartist=resolved.albumartist.value if 'albumartist' in resolved else none) }}">Tracks of this album</a> · {% endif %}
  {% if "artist" in resolved %}<a href="{{ url(base, artist=resolved.artist.value) }}">Tracks by this artist</a> · {% endif %}
@@ -48,7 +49,7 @@ drops your edit.</p>
 {% if copies %}
 <h2>Identical audio</h2>
 <ul>
- {% for copy in copies %}<li><a href="/tracks/{{ copy.id }}">{{ copy.path }}</a></li>{% endfor %}
+ {% for copy in copies %}<li>{{ play(copy.id, copy.path) }} <a href="/tracks/{{ copy.id }}">{{ copy.path }}</a></li>{% endfor %}
 </ul>
 {% endif %}
 
