@@ -15,7 +15,10 @@
 
 <form method="post" action="/changes/{{ changeset.id }}/status">
 <table>
- <thead><tr><th><span class="visually-hidden">Select</span></th><th>Status</th><th>Change</th></tr></thead>
+ <thead><tr>
+  <th><input type="checkbox" id="select-all" aria-label="Select or deselect all" hidden></th>
+  <th>Status</th><th>Change</th>
+ </tr></thead>
  <tbody>
  {% for change in changeset.changes %}
   <tr>
@@ -33,6 +36,23 @@
  <button name="action" value="approve-all">Approve all</button>
 </p>
 </form>
+<script>
+ // Select or deselect all changes; the box reflects a partial selection. Without
+ // JavaScript the box stays hidden and "Approve all" does the same job.
+ (() => {
+  const all = document.getElementById("select-all");
+  const boxes = [...document.querySelectorAll('input[name="change_ids"]')];
+  if (!boxes.length) return;
+  all.hidden = false;
+  const sync = () => {
+   const checked = boxes.filter((b) => b.checked).length;
+   all.checked = checked === boxes.length;
+   all.indeterminate = checked > 0 && checked < boxes.length;
+  };
+  all.addEventListener("change", () => { boxes.forEach((b) => { b.checked = all.checked; }); sync(); });
+  boxes.forEach((b) => b.addEventListener("change", sync));
+ })();
+</script>
 
 <div class="actions">
  <form method="post" action="/changes/{{ changeset.id }}/apply" class="inline">
