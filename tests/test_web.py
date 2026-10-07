@@ -77,6 +77,7 @@ def test_edit_review_apply_undo(web, Session):
 
     page = web.post(f"{changeset_path}/apply", data={}).text
     assert "Applied" in page and 'class="failed"' not in page
+    assert ">was retagged</span>" in page
     fields = tags.read(web.root / "Texas/Texas_Halo.mp3").fields
     assert (fields["album"], fields["tracknumber"]) == ("Greatest Hits", "11")
 
@@ -212,7 +213,9 @@ def test_duplicates(web):
         response.text
     )
     assert f'href="/tracks/{proposed}/audio"' in response.text  # play the kept copy too
-    assert '<span class="role">Kept copy</span>' in response.text
+    assert ">will be trashed</span>" in response.text
+    assert ">will be kept</span>" in response.text
+    assert re.search(r'href="/static/style\.css\?v=\d+"', response.text)
     assert "data-select-row" in response.text and 'data-select-all="change_ids"' in response.text
     assert "1 with changes waiting" in web.get("/libraries/music/duplicates").text
     assert 'for="keep-' in page  # clicking a copy's path selects it

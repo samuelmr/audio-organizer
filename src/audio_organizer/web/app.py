@@ -63,6 +63,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
     templates = Jinja2Templates(directory=HERE / "templates")
     templates.env.filters["duration"] = _duration
     templates.env.globals["url"] = _url
+    templates.env.globals["asset"] = _asset
     templates.env.globals["move_source"] = ch.move_source
     templates.env.globals["retag_fields"] = ch.retag_fields
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
@@ -578,6 +579,12 @@ def _order(columns) -> list:
         terms.append(column.is_(None))
         terms.append(func.lower(column) if isinstance(column.type, String) else column)
     return terms
+
+
+def _asset(name: str) -> str:
+    """A static file's URL with its modification time, so that browsers fetch it again
+    after an update instead of using a cached copy."""
+    return f"/static/{name}?v={int((HERE / 'static' / name).stat().st_mtime)}"
 
 
 def _like_escape(text: str) -> str:

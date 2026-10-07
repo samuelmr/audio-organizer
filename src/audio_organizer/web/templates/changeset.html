@@ -29,19 +29,21 @@
    <td><span class="status {{ change.status }}">{{ change.status }}</span></td>
    <td>
     {% if selectable %}<label for="change-{{ change.id }}" class="visually-hidden">Select: {{ describe(change) }}</label>{% endif %}
+    {% set done = change.status == "applied" %}
     {% if change.kind == "trash" %}
-     <div class="kind">Trash</div>
-     <div class="file">{{ play(change.file.id, change.file.path) }} <span class="path">{{ change.file.path }}</span></div>
+     <div class="file">{{ play(change.file.id, change.file.path) }} <span class="path">{{ change.file.path }}</span>
+      <span class="verdict trash">{{ "was trashed" if done else ("was restored" if change.status == "undone" else "will be trashed") }}</span></div>
      {% if change.payload.replacement %}
-     <div class="file"><span class="role">Kept copy</span> {{ play(change.payload.replacement, change.payload.replacement_path) }} <span class="path">{{ change.payload.replacement_path }}</span></div>
+     <div class="file">{{ play(change.payload.replacement, change.payload.replacement_path) }} <span class="path">{{ change.payload.replacement_path }}</span>
+      <span class="verdict keep">{{ "was kept" if done or change.status == "undone" else "will be kept" }}</span></div>
      {% endif %}
     {% elif change.kind == "move" %}
-     <div class="kind">Move</div>
-     <div class="file">{{ play(change.file.id, change.file.path) }} <span class="path">{{ move_source(change) }}</span></div>
-     <div class="file"><span class="role">to</span> <span class="path">{{ change.payload.to }}</span></div>
+     <div class="file">{{ play(change.file.id, change.file.path) }} <span class="path">{{ move_source(change) }}</span>
+      <span class="verdict">{{ "was moved to" if done else "will be moved to" }}</span></div>
+     <div class="file indent"><span class="path">{{ change.payload.to }}</span></div>
     {% else %}
-     <div class="kind">Retag</div>
-     <div class="file">{{ play(change.file.id, change.file.path) }} <span class="path">{{ change.file.path }}</span></div>
+     <div class="file">{{ play(change.file.id, change.file.path) }} <span class="path">{{ change.file.path }}</span>
+      <span class="verdict">{{ "was retagged" if done else "will be retagged" }}</span></div>
      <ul class="fields-changed">
       {% for name, old, new in retag_fields(change) %}
       <li><span class="role">{{ name }}</span> {{ old if old is not none else "–" }} → <strong>{{ new if new is not none else "(removed)" }}</strong></li>
