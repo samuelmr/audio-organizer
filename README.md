@@ -83,6 +83,29 @@ your files until you approve and apply it:
 `aorg` never writes to a file that has changed since it was last scanned; rescan first.
 The tags each file had when it was first scanned are kept in the catalog.
 
+### Duplicates
+
+Files with identical audio are copies of one track, even when their tags and names
+differ. `aorg dupes` finds them and proposes, in batches, to trash the loose copies:
+
+    aorg dupes                                # what would be proposed
+    aorg dupes --path "Texas" --propose       # a changeset for the copies under Texas/
+    aorg dupes --propose --limit 100          # or the next 100 tracks anywhere
+
+When exactly one album folder (`Artist/Album/…`) holds a copy, that copy is kept. Copies
+lying loose in an artist folder, in "Unknown Album", or next to it as iTunes copies
+("Title 1.mp3") are proposed for the trash. Tags only the loose copies have are first
+copied to the kept file, and static playlists switch to it. Tracks with copies in
+several album folders are left for you to decide, and so are tracks whose only album
+copy is on a compilation while another copy is in the artist's own folder (add
+`--include-compilations` to include them). The web UI's Duplicates page does the same.
+
+Trashed files are moved to `.aorg-trash/` in the library folder, and undoing the
+changeset brings them back. They are only deleted when you empty the trash:
+
+    aorg trash                                # what is in it
+    aorg trash empty
+
 ### Playlists
 
 *Smart* playlists are rules over the catalog and stay up to date as the library
@@ -190,7 +213,8 @@ Design principles:
 | `provenance.py` | Resolving field values from their sources; the effective metadata table |
 | `audiohash.py` | Audio-only content hash (sampled) |
 | `blockfile.py` | Block-cached reading of a file, for few network round trips |
-| `changes.py` | Changesets: propose, approve, apply, undo |
+| `changes.py` | Changesets: propose, approve, apply, undo; retag, move and trash |
+| `duplicates.py` | Identical copies and what to keep |
 | `tracks.py` | Streaming tracks with resolved metadata, in batches |
 | `playlists.py` | Playlist rules, generation in one pass, import and export |
 | `playlist_formats.py` | M3U, JSON-LD and HTML playlist files |

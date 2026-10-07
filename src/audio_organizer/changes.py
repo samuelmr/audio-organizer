@@ -9,14 +9,18 @@ scanned, so edits made elsewhere are never silently overwritten.
 import os
 import shutil
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import pathparse, tags
-from .models import AudioFile, Change, Changeset, utcnow
+from .models import AudioFile, Change, Changeset, PlaylistEntry, utcnow
 from .provenance import resolve, set_value, set_values
+
+# Trashed files are kept here, inside the library root, until `aorg trash empty`. The
+# scanner skips folders whose names start with a dot.
+TRASH_DIR = ".aorg-trash"
 
 
 class ChangeError(Exception):
@@ -47,6 +51,24 @@ def propose_retag(changeset: Changeset, file: AudioFile, fields: dict[str, str |
 
 def propose_move(changeset: Changeset, file: AudioFile, to: str) -> Change:
     change = Change(file=file, kind="move", payload={"to": Path(to).as_posix()}, status="proposed")
+    changeset.changes.append(change)
+    return change
+
+
+def propose_trash(
+    changeset: Changeset, file: AudioFile, replacement: AudioFile | None = None
+) -> Change:
+    """Propose moving a file to the library's trash folder (TRASH_DIR), from where undo
+    can bring it back. Static playlists that contain it get the replacement instead."""
+    change = Change(
+        file=file,
+        kind="trash",
+        payload={
+            "replacement": replacement.id if replacement else None,
+            "replacement_path": replacement.path if replacement else None,
+        },
+        status="proposed",
+    )
     changeset.changes.append(change)
     return change
 
@@ -96,6 +118,9 @@ def set_status(changes: list[Change], status: str) -> int:
 def describe(change: Change) -> str:
     if change.kind == "move":
         return f"move {change.file.path} -> {change.payload['to']}"
+    if change.kind == "trash":
+        keeper = change.payload.get("replacement_path")
+        return f"trash {change.file.path}" + (f" (same audio as {keeper})" if keeper else "")
     current = {fv.field: fv.value for fv in change.file.values if fv.source == "tag"}
     if change.status == "applied" and change.undo:
         current = change.undo.get("fields", {})
@@ -122,6 +147,8 @@ def apply(session: Session, changeset: Changeset, *, dry_run: bool = False) -> l
                 change.undo = _retag(session, change.file, change.payload["fields"])
             elif change.kind == "move":
                 change.undo = _move(session, change.file, change.payload["to"])
+            elif change.kind == "trash":
+                change.undo = _trash(session, change)
             else:
                 raise ChangeError(f"Unknown change kind {change.kind}")
             change.status, change.error, change.applied_at = "applied", None, utcnow()
@@ -143,12 +170,15 @@ def undo(session: Session, changeset: Changeset, *, dry_run: bool = False) -> li
             outcomes.append(Outcome(change, True, "would undo " + describe(change)))
             continue
         try:
-            _check_unchanged(change.file)
+            if change.kind == "trash":
+                _untrash(session, change)
+            else:
+                _check_unchanged(change.file)
             if change.kind == "retag":
                 _retag(session, change.file, change.undo["fields"])
                 for name, value in change.payload.get("manual_before", {}).items():
                     set_value(session, change.file, "manual", name, value)
-            else:
+            elif change.kind == "move":
                 _move(session, change.file, change.undo["from"])
             change.status = "undone"
             outcomes.append(Outcome(change, True, "undid " + describe(change)))
@@ -207,6 +237,46 @@ def _move(session: Session, file: AudioFile, to: str) -> dict:
     file.path = Path(to).as_posix()
     _refresh(session, file)
     return {"from": old_path}
+
+
+def _trash(session: Session, change: Change) -> dict:
+    """Move the file into TRASH_DIR/<changeset id>/<its path>. The catalog keeps it as
+    missing, so undo can restore it with its history."""
+    file = change.file
+    root = Path(file.library.root)
+    trash_path = (PurePosixPath(TRASH_DIR) / str(change.changeset_id) / file.path).as_posix()
+    target = root / trash_path
+    if target.exists():
+        raise ChangeError(f"{trash_path} already exists")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(_full_path(file), target)
+    _remove_empty_dirs(_full_path(file).parent, root)
+    file.missing = True
+    entries = []
+    replacement = change.payload.get("replacement")
+    if replacement is not None:
+        for entry in session.scalars(select(PlaylistEntry).where(PlaylistEntry.file_id == file.id)):
+            entry.file_id = replacement
+            entries.append(entry.id)
+    return {"trash": trash_path, "entries": entries}
+
+
+def _untrash(session: Session, change: Change) -> None:
+    file = change.file
+    root = Path(file.library.root)
+    source, target = root / change.undo["trash"], _full_path(file)
+    if not source.exists():
+        raise ChangeError(f"{change.undo['trash']} is no longer in the trash")
+    if target.exists():
+        raise ChangeError(f"{file.path} exists again; move it away first")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(source, target)
+    _remove_empty_dirs(source.parent, root)
+    file.missing = False
+    for entry_id in change.undo.get("entries", []):
+        entry = session.get(PlaylistEntry, entry_id)
+        if entry is not None:
+            entry.file_id = file.id
 
 
 def _remove_empty_dirs(directory: Path, root: Path) -> None:

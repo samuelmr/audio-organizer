@@ -187,3 +187,15 @@ def test_sync_preview(web, Session):
     assert "3 upload" in page
     assert "Texas/Greatest Hits/11 Halo.mp3" in page
     assert web.get("/sync/nothing").status_code == 404
+
+
+def test_duplicates(web):
+    page = web.get("/libraries/music/duplicates").text
+    assert "<strong>1</strong>" in page and "Texas/Texas_Halo.mp3" in page
+    assert "mood: Upbeat" in page  # only the flat copy has a mood; copied to the album copy
+    response = web.post("/libraries/music/duplicates", data={"limit": "10"})
+    assert re.fullmatch(r"/changes/\d+", response.url.path)
+    assert "trash Texas/Texas_Halo.mp3 (same audio as Texas/Greatest Hits/11 Halo.mp3)" in (
+        response.text
+    )
+    assert "1 with changes waiting" in web.get("/libraries/music/duplicates").text

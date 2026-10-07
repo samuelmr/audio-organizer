@@ -20,6 +20,7 @@ from sqlalchemy import String, func, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from .. import changes as ch
+from .. import duplicates as du
 from .. import playlists as pl
 from .. import sync as sy
 from ..models import (
@@ -246,6 +247,42 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             return _redirect(f"/tracks/{file.id}", "Saved; the file's tags already match")
         session.commit()
         return _redirect(f"/changes/{changeset.id}", "Edit saved; review the change to the file")
+
+    # ---- duplicates ----------------------------------------------------------------------
+
+    @app.get("/libraries/{name}/duplicates", response_class=HTMLResponse)
+    def duplicates(
+        request: Request,
+        name: str,
+        path: str = "",
+        limit: int = 50,
+        compilations: bool = False,
+        session: Session = SessionDep,
+    ):
+        lib = _library(session, name)
+        found = du.survey(session, lib, path_prefix=path or None, include_compilations=compilations)
+        return render(
+            request, "duplicates.html", library=lib, found=found,
+            batch=found.proposals[: max(limit, 1)], path=path, limit=limit,
+            compilations=compilations,
+        )  # fmt: skip
+
+    @app.post("/libraries/{name}/duplicates")
+    def propose_duplicates(
+        name: str,
+        path: Annotated[str, Form()] = "",
+        limit: Annotated[int, Form()] = 50,
+        compilations: Annotated[bool, Form()] = False,
+        session: Session = SessionDep,
+    ):
+        lib = _library(session, name)
+        found = du.survey(session, lib, path_prefix=path or None, include_compilations=compilations)
+        batch = found.proposals[: max(limit, 1)]
+        if not batch:
+            return _redirect(f"/libraries/{lib.name}/duplicates", "Nothing to propose")
+        where = f" in {path}" if path else ""
+        changeset = du.propose(session, batch, f"Trash loose copies of {len(batch)} tracks{where}")
+        return _redirect(f"/changes/{changeset.id}", "Proposed; review and approve the changes")
 
     # ---- changesets ----------------------------------------------------------------------
 

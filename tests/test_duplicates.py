@@ -1,0 +1,107 @@
+import pytest
+from sqlalchemy import select
+
+from audio_organizer import changes as ch
+from audio_organizer import duplicates as du
+from audio_organizer import playlists as pl
+from audio_organizer import tags
+from audio_organizer.models import AudioFile, Library, Playlist
+from audio_organizer.scanner import scan
+
+
+@pytest.fixture
+def library(Session, copy_audio, tmp_path):
+    root = tmp_path / "music"
+    # One track: album copy, iTunes copy next to it, flat copy with an extra tag
+    copy_audio("mp3", root / "Texas/Greatest Hits/11 Halo.mp3")
+    copy_audio("mp3", root / "Texas/Greatest Hits/11 Halo 1.mp3")
+    flat = copy_audio("mp3", root / "Texas/Texas_Halo.mp3")
+    tags.write(root / "Texas/Greatest Hits/11 Halo.mp3", {"genre": None})
+    tags.write(root / "Texas/Greatest Hits/11 Halo 1.mp3", {"genre": None})
+    tags.write(flat, {"mood": "Upbeat"})
+    # Another: only on a compilation, besides the artist's folder
+    copy_audio("mp3b", root / "Various Artists/Hits 2000/04 Insane.mp3")
+    copy_audio("mp3b", root / "Texas/Texas_Insane.mp3")
+    # Another: in two album folders: a decision for the user
+    copy_audio("m4a", root / "P!nk/Funhouse/01 So What.m4a")
+    copy_audio("m4a", root / "P!nk/Funhouse (Deluxe)/01 So What.m4a")
+    session = Session()
+    lib = Library(name="music", root=str(root))
+    session.add(lib)
+    session.commit()
+    scan(session, lib)
+    yield session, lib, root
+    session.close()
+
+
+def test_survey(library):
+    session, lib, root = library
+    found = du.survey(session, lib)
+    assert (found.groups, found.several_albums, found.compilations) == (3, 1, 1)
+    [proposal] = found.proposals
+    assert proposal.keep.file.path == "Texas/Greatest Hits/11 Halo.mp3"
+    assert sorted(c.file.path for c in proposal.trash) == [
+        "Texas/Greatest Hits/11 Halo 1.mp3",
+        "Texas/Texas_Halo.mp3",
+    ]
+    assert proposal.fill == {"genre": "Pop", "mood": "Upbeat"}
+
+    found = du.survey(session, lib, include_compilations=True)
+    assert [p.keep.file.path for p in found.proposals] == [
+        "Texas/Greatest Hits/11 Halo.mp3",
+        "Various Artists/Hits 2000/04 Insane.mp3",
+    ]
+    assert du.survey(session, lib, path_prefix="P!nk").proposals == []
+
+
+def test_propose_apply_and_undo(library):
+    session, lib, root = library
+    flat = session.scalar(select(AudioFile).where(AudioFile.path == "Texas/Texas_Halo.mp3"))
+    playlist = Playlist(library=lib, name="Mine", sort="manual")
+    pl.set_entries(playlist, [(flat.path, flat.id)])
+    session.add(playlist)
+    session.commit()
+
+    found = du.survey(session, lib)
+    changeset = du.propose(session, found.proposals, "Trash loose copies")
+    assert [c.kind for c in changeset.changes] == ["retag", "trash", "trash"]
+    assert du.survey(session, lib).pending == 1  # not proposed twice
+
+    ch.set_status(changeset.changes, "approved")
+    outcomes = ch.apply(session, changeset)
+    assert all(o.ok for o in outcomes), [o.message for o in outcomes]
+    assert not (root / "Texas/Texas_Halo.mp3").exists()
+    assert not (root / "Texas/Greatest Hits/11 Halo 1.mp3").exists()
+    trashed = root / ch.TRASH_DIR / str(changeset.id) / "Texas/Texas_Halo.mp3"
+    assert trashed.exists()
+    kept = tags.read(root / "Texas/Greatest Hits/11 Halo.mp3").fields
+    assert (kept["mood"], kept["genre"]) == ("Upbeat", "Pop")
+    keeper_id = found.proposals[0].keep.file.id
+    [generated] = pl.generate(session, lib, [playlist])
+    assert [t.file_id for t in generated.tracks] == [keeper_id]
+
+    # The trash folder is not scanned; trashed files stay missing
+    stats = scan(session, lib)
+    assert stats.new == 0
+    assert du.survey(session, lib).groups == 2
+
+    outcomes = ch.undo(session, changeset)
+    assert all(o.ok for o in outcomes), [o.message for o in outcomes]
+    assert (root / "Texas/Texas_Halo.mp3").exists()
+    assert not trashed.exists()
+    assert "mood" not in tags.read(root / "Texas/Greatest Hits/11 Halo.mp3").fields
+    session.expire_all()
+    assert not session.get(AudioFile, flat.id).missing
+    assert session.get(Playlist, playlist.id).entries[0].file_id == flat.id
+    assert scan(session, lib).unchanged == 7
+
+
+def test_trash_refuses_changed_file(library):
+    session, lib, root = library
+    found = du.survey(session, lib)
+    changeset = du.propose(session, found.proposals, "Trash loose copies")
+    (root / "Texas/Texas_Halo.mp3").write_bytes(b"changed")
+    ch.set_status(changeset.changes, "approved")
+    outcomes = {o.change.file.path: o for o in ch.apply(session, changeset)}
+    assert not outcomes["Texas/Texas_Halo.mp3"].ok
+    assert (root / "Texas/Texas_Halo.mp3").exists()

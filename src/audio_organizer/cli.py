@@ -1,5 +1,6 @@
 """Command line interface: aorg <command>."""
 
+import shutil
 import time
 from pathlib import Path
 from typing import Annotated
@@ -9,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import changes as ch
+from . import duplicates as du
 from . import playlists as pl
 from . import sync as sy
 from .db import make_sessionmaker
@@ -744,3 +746,115 @@ def playlists_export(
         generated = pl.generate(session, lib, playlists)
         written = pl.export(generated, Path(lib.root), directory, fmts)
     typer.echo(f"Wrote {len(written)} files for {len(generated)} playlists to {directory}")
+
+
+# ---- duplicates and trash ----------------------------------------------------------------
+
+
+@app.command("dupes")
+def dupes(
+    ctx: typer.Context,
+    path: Annotated[
+        str | None, typer.Option(help="Only copies under this path, e.g. an artist folder")
+    ] = None,
+    limit: Annotated[int, typer.Option(help="Tracks to include")] = 50,
+    propose: Annotated[bool, typer.Option("--propose", help="Create a changeset for them")] = False,
+    include_compilations: Annotated[
+        bool,
+        typer.Option(
+            "--include-compilations",
+            help="Also when only a compilation's copy would be kept",
+        ),
+    ] = False,
+    library: LibraryOption = None,
+) -> None:
+    """Find identical copies of tracks and propose to trash the loose ones.
+
+    A copy in an album folder is kept; copies lying loose in an artist folder, in
+    "Unknown Album" or next to it as iTunes copies ("Title 1.mp3") are proposed for the
+    trash, after copying any tags only they have to the kept file. Tracks with copies
+    in several album folders are left for you to decide, and so, unless you add
+    --include-compilations, are tracks whose only album copy is on a compilation.
+    Trashed files can be restored by undoing the changeset until the trash is emptied.
+    """
+    with _session(ctx) as session:
+        lib = _library(session, library)
+        found = du.survey(session, lib, path_prefix=path, include_compilations=include_compilations)
+        typer.echo(
+            f"{found.groups} tracks with identical copies: {len(found.proposals)} can be "
+            f"cleaned up ({found.trash_count} copies to trash). Left alone: "
+            f"{found.several_albums} in several album folders, {found.no_album} in no album "
+            f"folder, {found.compilations} only on a compilation besides the artist's "
+            f"folder, {found.pending} with changes waiting for review."
+        )
+        batch = found.proposals[:limit]
+        for proposal in batch[:20] if not propose else []:
+            typer.echo(f"  keep  {proposal.keep.file.path}")
+            for copy in proposal.trash:
+                typer.echo(f"  trash {copy.file.path}")
+            if proposal.fill:
+                typer.echo(f"        copying tags: {', '.join(proposal.fill)}")
+        if not propose:
+            if len(batch) > 20:
+                typer.echo(f"  ... and {len(batch) - 20} more in this batch")
+            if batch:
+                typer.echo(f"Run with --propose to create a changeset for {len(batch)} tracks.")
+            return
+        if not batch:
+            return
+        where = f" in {path}" if path else ""
+        changeset = du.propose(session, batch, f"Trash loose copies of {len(batch)} tracks{where}")
+        typer.echo(
+            f"Changeset {changeset.id}: {len(changeset.changes)} changes. Review with "
+            f"`aorg changes show {changeset.id}` or in the web UI."
+        )
+
+
+trash_app = typer.Typer(
+    no_args_is_help=False,
+    rich_markup_mode="markdown",
+    help="Files moved to the trash by applied changes.",
+    invoke_without_command=True,
+)
+app.add_typer(trash_app, name="trash")
+
+
+def _trash_files(lib: Library) -> list[Path]:
+    trash = Path(lib.root) / ch.TRASH_DIR
+    return [p for p in trash.rglob("*") if p.is_file()] if trash.is_dir() else []
+
+
+@trash_app.callback()
+def trash_summary(ctx: typer.Context, library: LibraryOption = None) -> None:
+    """Show what is in the trash. Undoing a changeset brings its files back."""
+    if ctx.invoked_subcommand is not None:
+        return
+    with _session(ctx) as session:
+        lib = _library(session, library)
+        files = _trash_files(lib)
+    size = sum(p.stat().st_size for p in files)
+    typer.echo(f"{len(files)} files, {size / 1e6:.0f} MB in {Path(lib.root) / ch.TRASH_DIR}")
+
+
+@trash_app.command("empty")
+def trash_empty(
+    ctx: typer.Context,
+    yes: Annotated[bool, typer.Option("--yes", help="Do not ask for confirmation")] = False,
+    library: LibraryOption = None,
+) -> None:
+    """Delete the files in the trash for good. Changes that trashed them can no longer be
+    undone."""
+    with _session(ctx) as session:
+        lib = _library(session, library)
+    trash = Path(lib.root) / ch.TRASH_DIR
+    files = _trash_files(lib)
+    if not files:
+        typer.echo("The trash is empty")
+        return
+    size = sum(p.stat().st_size for p in files)
+    if not yes and not typer.confirm(
+        f"Delete {len(files)} files ({size / 1e6:.0f} MB) in {trash} for good?"
+    ):
+        raise typer.Exit(1)
+    shutil.rmtree(trash)
+    typer.echo(f"Deleted {len(files)} files")
