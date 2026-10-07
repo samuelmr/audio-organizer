@@ -63,6 +63,8 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
     templates = Jinja2Templates(directory=HERE / "templates")
     templates.env.filters["duration"] = _duration
     templates.env.globals["url"] = _url
+    templates.env.globals["move_source"] = ch.move_source
+    templates.env.globals["retag_fields"] = ch.retag_fields
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 
     def get_session() -> Iterator[Session]:

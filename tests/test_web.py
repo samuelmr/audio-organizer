@@ -193,7 +193,7 @@ def _keep_choices(page: str) -> dict[str, list[str]]:
     """The keep radio buttons of the duplicates page: name -> values, checked first."""
     choices: dict[str, list[str]] = {}
     for name, value, checked in re.findall(
-        r'type="radio" name="(keep-\w+)" value="(\d+)" (checked)?', page
+        r'type="radio" id="keep-\d+" name="(keep-\w+)" value="(\d+)" (checked)?', page
     ):
         values = choices.setdefault(name, [])
         values.insert(0, value) if checked else values.append(value)
@@ -212,7 +212,10 @@ def test_duplicates(web):
         response.text
     )
     assert f'href="/tracks/{proposed}/audio"' in response.text  # play the kept copy too
+    assert '<span class="role">Kept copy</span>' in response.text
+    assert "data-select-row" in response.text and 'data-select-all="change_ids"' in response.text
     assert "1 with changes waiting" in web.get("/libraries/music/duplicates").text
+    assert 'for="keep-' in page  # clicking a copy's path selects it
 
 
 def test_duplicates_keep_another_copy(web):
@@ -247,4 +250,8 @@ def test_audio(web, Session):
 def test_album_merges_page(web):
     page = web.get("/libraries/music/album-merges").text
     assert "0 pairs of album folders" in page
+    response = web.post(
+        "/libraries/music/album-merges", data={"source": "No/Such", "target": "Texas/Greatest Hits"}
+    )
+    assert response.status_code == 400
     assert web.post("/libraries/music/album-merges", data={}).url.path.endswith("album-merges")

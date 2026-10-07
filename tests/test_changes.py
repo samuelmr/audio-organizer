@@ -66,6 +66,7 @@ def test_move_apply_and_undo(catalog):
     [outcome] = ch.apply(session, changeset)
     assert outcome.ok, outcome.message
     assert (root / "Texas/Greatest Hits/11 Halo.mp3").exists()
+    assert ch.describe(change) == "move Texas/Texas_Halo.mp3 -> Texas/Greatest Hits/11 Halo.mp3"
     assert not (root / "Texas/Texas_Halo.mp3").exists()
     assert resolve(file.values)["album"].candidates["path"] == "Greatest Hits"
 

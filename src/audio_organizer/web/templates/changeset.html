@@ -4,7 +4,7 @@
 {% block content %}
 <h1>Changeset {{ changeset.id }}</h1>
 <p>{{ changeset.description }}</p>
-<p class="hint">▶ plays a file; for a copy to trash, the second ▶ plays the copy that is kept.</p>
+<p class="hint">▶ plays the file next to it. Click a row to select it.</p>
 
 {% if outcomes is not none %}
 <section class="outcomes">
@@ -16,20 +16,39 @@
 {% endif %}
 
 <form method="post" action="/changes/{{ changeset.id }}/status">
-<table>
+<table class="changes">
  <thead><tr>
-  <th><input type="checkbox" id="select-all" aria-label="Select or deselect all" hidden></th>
+  <th><input type="checkbox" data-select-all="change_ids" aria-label="Select or deselect all changes" hidden></th>
   <th>Status</th><th>Change</th>
  </tr></thead>
  <tbody>
  {% for change in changeset.changes %}
-  <tr>
-   <td>{% if change.status in ("proposed", "approved", "rejected") %}<input type="checkbox" name="change_ids" value="{{ change.id }}" aria-label="Select change {{ change.id }}">{% endif %}</td>
+  {% set selectable = change.status in ("proposed", "approved", "rejected") %}
+  <tr {% if selectable %}data-select-row{% endif %}>
+   <td>{% if selectable %}<input type="checkbox" id="change-{{ change.id }}" name="change_ids" value="{{ change.id }}">{% endif %}</td>
    <td><span class="status {{ change.status }}">{{ change.status }}</span></td>
    <td>
-    {{ play(change.file.id, change.file.path) }}
-    {% if change.kind == "trash" and change.payload.replacement %}{{ play(change.payload.replacement, change.payload.replacement_path) }}{% endif %}
-    {{ describe(change) }}{% if change.error %}<br><span class="failed">{{ change.error }}</span>{% endif %}
+    {% if selectable %}<label for="change-{{ change.id }}" class="visually-hidden">Select: {{ describe(change) }}</label>{% endif %}
+    {% if change.kind == "trash" %}
+     <div class="kind">Trash</div>
+     <div class="file">{{ play(change.file.id, change.file.path) }} <span class="path">{{ change.file.path }}</span></div>
+     {% if change.payload.replacement %}
+     <div class="file"><span class="role">Kept copy</span> {{ play(change.payload.replacement, change.payload.replacement_path) }} <span class="path">{{ change.payload.replacement_path }}</span></div>
+     {% endif %}
+    {% elif change.kind == "move" %}
+     <div class="kind">Move</div>
+     <div class="file">{{ play(change.file.id, change.file.path) }} <span class="path">{{ move_source(change) }}</span></div>
+     <div class="file"><span class="role">to</span> <span class="path">{{ change.payload.to }}</span></div>
+    {% else %}
+     <div class="kind">Retag</div>
+     <div class="file">{{ play(change.file.id, change.file.path) }} <span class="path">{{ change.file.path }}</span></div>
+     <ul class="fields-changed">
+      {% for name, old, new in retag_fields(change) %}
+      <li><span class="role">{{ name }}</span> {{ old if old is not none else "–" }} → <strong>{{ new if new is not none else "(removed)" }}</strong></li>
+      {% endfor %}
+     </ul>
+    {% endif %}
+    {% if change.error %}<div class="failed">{{ change.error }}</div>{% endif %}
    </td>
   </tr>
  {% endfor %}
@@ -42,23 +61,6 @@
  <button name="action" value="approve-all">Approve all</button>
 </p>
 </form>
-<script>
- // Select or deselect all changes; the box reflects a partial selection. Without
- // JavaScript the box stays hidden and "Approve all" does the same job.
- (() => {
-  const all = document.getElementById("select-all");
-  const boxes = [...document.querySelectorAll('input[name="change_ids"]')];
-  if (!boxes.length) return;
-  all.hidden = false;
-  const sync = () => {
-   const checked = boxes.filter((b) => b.checked).length;
-   all.checked = checked === boxes.length;
-   all.indeterminate = checked > 0 && checked < boxes.length;
-  };
-  all.addEventListener("change", () => { boxes.forEach((b) => { b.checked = all.checked; }); sync(); });
-  boxes.forEach((b) => b.addEventListener("change", sync));
- })();
-</script>
 
 <div class="actions">
  <form method="post" action="/changes/{{ changeset.id }}/apply" class="inline">

@@ -9,6 +9,13 @@
    {% if not m.same_name %}<br><span class="flag">different album names</span>{% endif %}
    {% for t in m.clashes %}<br><span class="flag">clash, stays:</span> {{ t.name }}{% endfor %}
   </td>
+  <td>
+   <form method="post" action="/libraries/{{ library.name }}/album-merges" class="inline">
+    <input type="hidden" name="source" value="{{ m.source.path }}">
+    <input type="hidden" name="target" value="{{ m.target.path }}">
+    <button aria-label="Propose merging {{ m.source.path }} into {{ m.target.path }}">Propose this merge</button>
+   </form>
+  </td>
  </tr>
 {% endmacro %}
 {% block content %}
@@ -37,7 +44,7 @@ and can be merged in batches; {{ others | length }} need a look;
  <button class="primary">Propose a changeset for these {{ batch | length }} merges</button>
 </form>
 <table>
- <thead><tr><th>Merge</th><th>into</th><th></th></tr></thead>
+ <thead><tr><th>Merge</th><th>into</th><th></th><th></th></tr></thead>
  <tbody>{% for m in batch %}{{ merge_rows(m) }}{% endfor %}</tbody>
 </table>
 {% endif %}

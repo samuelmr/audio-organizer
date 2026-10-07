@@ -26,16 +26,21 @@ folder, {{ found.pending }} with changes waiting for review.</p>
  <input type="hidden" name="path" value="{{ path }}">
  {% if compilations %}<input type="hidden" name="compilations" value="true">{% endif %}
  <p class="hint">For each track, the copy marked <em>keep</em> stays and the others go to the
- trash. Choose another copy to keep it instead; ▶ plays a copy.</p>
+ trash. Click another copy to keep it instead; ▶ plays a copy, ⓘ opens its details.</p>
  <p><button class="primary">Propose a changeset for these {{ batch | length }} tracks</button></p>
  <table class="duplicates">
-  <thead><tr><th>Keep</th><th>Copy</th><th>Tags to copy to the kept one</th></tr></thead>
+  <thead><tr><th><span class="visually-hidden">Keep</span></th><th></th><th>Copy</th><th>Tags copied to the kept copy (as proposed)</th></tr></thead>
   {% for p in batch %}
   <tbody>
    {% for c in [p.keep] + p.trash %}
-   <tr>
-    <td><input type="radio" name="keep-{{ p.keep.file.audio_hash }}" value="{{ c.file.id }}" {% if loop.first %}checked{% endif %} aria-label="Keep {{ c.file.path }}"></td>
-    <td class="path">{{ play(c.file.id, c.file.path) }} <a href="/tracks/{{ c.file.id }}">{{ c.file.path }}</a></td>
+   <tr class="choice" data-select-row>
+    <td><input type="radio" id="keep-{{ c.file.id }}" name="keep-{{ p.keep.file.audio_hash }}" value="{{ c.file.id }}" {% if loop.first %}checked{% endif %}></td>
+    <td class="fate" aria-hidden="true"></td>
+    <td class="path">
+     {{ play(c.file.id, c.file.path) }}
+     <label for="keep-{{ c.file.id }}"><span class="visually-hidden">Keep </span>{{ c.file.path }}</label>
+     <a class="details" href="/tracks/{{ c.file.id }}" title="Details" aria-label="Details of {{ c.file.path }}">ⓘ</a>
+    </td>
     <td>{% if loop.first %}{% for k, v in p.fill.items() %}{{ k }}: {{ v }}{% if not loop.last %}<br>{% endif %}{% endfor %}{% endif %}</td>
    </tr>
    {% endfor %}

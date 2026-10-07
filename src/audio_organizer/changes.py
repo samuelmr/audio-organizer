@@ -117,18 +117,27 @@ def set_status(changes: list[Change], status: str) -> int:
 
 def describe(change: Change) -> str:
     if change.kind == "move":
-        return f"move {change.file.path} -> {change.payload['to']}"
+        return f"move {move_source(change)} -> {change.payload['to']}"
     if change.kind == "trash":
         keeper = change.payload.get("replacement_path")
         return f"trash {change.file.path}" + (f" (same audio as {keeper})" if keeper else "")
+    parts = [f"{name}: {old!r} -> {new!r}" for name, old, new in retag_fields(change)]
+    return f"retag {change.file.path}: " + "; ".join(parts)
+
+
+def move_source(change: Change) -> str:
+    """Where a move takes the file from (once applied, the file is already elsewhere)."""
+    if change.status == "applied" and change.undo:
+        return change.undo["from"]
+    return change.file.path
+
+
+def retag_fields(change: Change) -> list[tuple[str, str | None, str | None]]:
+    """(field, value before, value after) of a retag."""
     current = {fv.field: fv.value for fv in change.file.values if fv.source == "tag"}
     if change.status == "applied" and change.undo:
         current = change.undo.get("fields", {})
-    parts = [
-        f"{name}: {current.get(name)!r} -> {value!r}"
-        for name, value in change.payload["fields"].items()
-    ]
-    return f"retag {change.file.path}: " + "; ".join(parts)
+    return [(name, current.get(name), value) for name, value in change.payload["fields"].items()]
 
 
 def apply(session: Session, changeset: Changeset, *, dry_run: bool = False) -> list[Outcome]:
