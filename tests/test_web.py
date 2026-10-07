@@ -101,6 +101,9 @@ def test_select_single_changes(web, Session):
         f"{changeset_path}/status", data={"action": "reject", "change_ids": [change_id]}
     ).text
     assert "1 changes updated" in page and "rejected" in page
+    web.post(f"{changeset_path}/status", data={"action": "approve-all"})
+    page = web.post(f"{changeset_path}/status", data={"action": "reject-all"}).text
+    assert "1 changes updated" in page and 'class="status rejected"' in page
 
 
 def test_cross_site_posts_are_refused(web, Session):
