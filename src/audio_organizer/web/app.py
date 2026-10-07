@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from .. import album_merge as am
 from .. import changes as ch
 from .. import duplicates as du
+from .. import layout as lo
 from .. import playlists as pl
 from .. import sync as sy
 from ..models import (
@@ -354,6 +355,66 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             return _redirect(f"/libraries/{lib.name}/album-merges", "Nothing to merge")
         changeset = am.propose(session, merges, description)
         return _redirect(f"/changes/{changeset.id}", "Proposed; review and approve the changes")
+
+    # ---- layout --------------------------------------------------------------------------
+
+    @app.get("/libraries/{name}/layout", response_class=HTMLResponse)
+    def layout_page(
+        request: Request, name: str, path: str = "", limit: int = 20, session: Session = SessionDep
+    ):
+        lib = _library(session, name)
+        template = lo.get_layout(session, lib)
+        plan = lo.plan(session, lib, template, path_prefix=path or None)
+        return render(
+            request, "layout.html", library=lib, layout_template=template, plan=plan,
+            batch=plan.albums[: max(limit, 1)], path=path, limit=limit, error=None,
+            fields=lo.TEMPLATE_FIELDS, default=lo.DEFAULT_LAYOUT,
+        )  # fmt: skip
+
+    @app.post("/libraries/{name}/layout", response_class=HTMLResponse)
+    def set_layout(
+        request: Request,
+        name: str,
+        template: Annotated[str, Form()],
+        session: Session = SessionDep,
+    ):
+        lib = _library(session, name)
+        try:
+            lo.set_layout(session, lib, template)
+        except lo.LayoutError as e:
+            current = lo.get_layout(session, lib)
+            plan = lo.plan(session, lib, current)
+            return render(
+                request, "layout.html", status_code=400, library=lib, layout_template=template,
+                plan=plan, batch=plan.albums[:20], path="", limit=20, error=str(e),
+                fields=lo.TEMPLATE_FIELDS, default=lo.DEFAULT_LAYOUT,
+            )  # fmt: skip
+        session.commit()
+        return _redirect(f"/libraries/{lib.name}/layout", "Layout saved")
+
+    @app.post("/libraries/{name}/layout/propose")
+    def propose_layout(
+        name: str,
+        path: Annotated[str, Form()] = "",
+        limit: Annotated[int, Form()] = 20,
+        folder: Annotated[str, Form()] = "",
+        session: Session = SessionDep,
+    ):
+        """A batch of albums, or with folder, the one album going into that folder."""
+        lib = _library(session, name)
+        plan = lo.plan(session, lib, lo.get_layout(session, lib), path_prefix=path or None)
+        if folder:
+            albums = [a for a in plan.albums if a.folder == folder]
+        else:
+            albums = plan.albums[: max(limit, 1)]
+        if not albums:
+            return _redirect(f"/libraries/{lib.name}/layout", "Nothing to move")
+        description = (
+            f"Move {albums[0].folder} into place" if folder
+            else f"Move {len(albums)} albums into the layout"
+        )  # fmt: skip
+        changeset = lo.propose(session, lib, albums, description)
+        return _redirect(f"/changes/{changeset.id}", "Proposed; review and approve the moves")
 
     # ---- changesets ----------------------------------------------------------------------
 

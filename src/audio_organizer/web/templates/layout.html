@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Layout – audio-organizer{% endblock %}
+{% block content %}
+{% set base = '/libraries/' ~ library.name %}
+<h1>Layout</h1>
+<p>The layout says where each file belongs, as a template filled in from its metadata.
+Files are moved into it album by album, with the album's cover image, and every move can
+be undone.</p>
+
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+<form method="post" action="{{ base }}/layout" class="stacked">
+ <label>Template <input name="template" value="{{ layout_template }}" required>
+  <small>Fields: {% for f in fields %}<code>{{ '{' ~ f ~ '}' }}</code>{% if not loop.last %}, {% endif %}{% endfor %}.
+  <code>{albumartist}</code> is the artist when missing and "Various Artists" on compilations;
+  <code>{track}</code> has two digits; <code>{disc}</code> is "2-" on albums with several
+  discs and otherwise empty. Default: <code>{{ default }}</code></small></label>
+ <button>Save layout</button>
+</form>
+
+<h2>Plan</h2>
+<p>{{ plan.files }} files in {{ plan.albums | length }} albums can move.
+{{ plan.in_place }} are in place.</p>
+<p class="hint">Left where they are: {{ plan.conflicts | length }} conflicts (another file
+is already at the path, or several files would get it – usually duplicates: clean up
+<a href="{{ base }}/duplicates">duplicates</a> and <a href="{{ base }}/album-merges">album
+folders</a> first), {{ plan.incomplete }} lack a field the layout needs
+(<a href="{{ url(base, show='no-album') }}">no album</a>,
+<a href="{{ url(base, show='no-title') }}">no title</a>), {{ plan.case_only }} differ only in
+letter case, {{ plan.pending }} have changes waiting for review.</p>
+
+<form class="search" method="get" action="{{ base }}/layout">
+ <input type="search" name="path" value="{{ path }}" placeholder="Only files under a path" aria-label="Path">
+ <label>Batch of <input name="limit" inputmode="numeric" size="4" value="{{ limit }}"> albums</label>
+ <button>Show</button>
+</form>
+
+{% if batch %}
+<form method="post" action="{{ base }}/layout/propose">
+ <input type="hidden" name="path" value="{{ path }}">
+ <input type="hidden" name="limit" value="{{ limit }}">
+ <button class="primary">Propose a changeset for these {{ batch | length }} albums</button>
+</form>
+<table>
+ <thead><tr><th>Into</th><th>From</th><th class="num">Files</th><th></th></tr></thead>
+ <tbody>
+ {% for album in batch %}
+  <tr>
+   <td class="path">{{ album.folder }}/</td>
+   <td class="path">{% for source in album.sources %}<a href="{{ url(base, folder=source) }}">{{ source }}/</a>{% if not loop.last %}<br>{% endif %}{% endfor %}</td>
+   <td class="num">{{ album.moves | length }}</td>
+   <td>
+    <form method="post" action="{{ base }}/layout/propose" class="inline">
+     <input type="hidden" name="folder" value="{{ album.folder }}">
+     <button aria-label="Propose moving the files into {{ album.folder }}">Propose this album</button>
+    </form>
+   </td>
+  </tr>
+ {% endfor %}
+ </tbody>
+</table>
+{% endif %}
+
+{% if plan.conflicts %}
+<details>
+ <summary>Conflicts ({{ plan.conflicts | length }}{% if plan.conflicts | length > 100 %}, first 100{% endif %})</summary>
+ <table>
+  <thead><tr><th>File</th><th>Would go to</th><th>Why not</th></tr></thead>
+  <tbody>
+  {% for file, target, why in plan.conflicts[:100] %}
+   <tr><td class="path"><a href="/tracks/{{ file.id }}">{{ file.path }}</a></td><td class="path">{{ target }}</td><td>{{ why }}</td></tr>
+  {% endfor %}
+  </tbody>
+ </table>
+</details>
+{% endif %}
+{% endblock %}

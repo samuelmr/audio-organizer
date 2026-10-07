@@ -9,9 +9,11 @@ import typer
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from . import __version__
 from . import album_merge as am
 from . import changes as ch
 from . import duplicates as du
+from . import layout as lo
 from . import playlists as pl
 from . import sync as sy
 from .db import make_sessionmaker
@@ -43,6 +45,12 @@ app.add_typer(target_app, name="target")
 app.add_typer(playlists_app, name="playlists")
 
 
+def _show_version(value: bool) -> None:
+    if value:
+        typer.echo(f"audio-organizer {__version__}")
+        raise typer.Exit()
+
+
 @app.callback()
 def main(
     ctx: typer.Context,
@@ -50,6 +58,12 @@ def main(
         str | None,
         typer.Option(help="Catalog database path or URL [default: $AORG_DB or ~/.local/share]"),
     ] = None,
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version", help="Show the version and exit", is_eager=True, callback=_show_version
+        ),
+    ] = False,
 ) -> None:
     ctx.obj = make_sessionmaker(db if db is None or "://" in db else f"sqlite:///{db}")
 
@@ -890,6 +904,77 @@ def merge_albums(
             for merge in others:
                 for line in _describe_merge(merge):
                     typer.echo(line)
+
+
+@app.command("layout")
+def layout_command(
+    ctx: typer.Context,
+    set_: Annotated[str | None, typer.Option("--set", help="New layout template")] = None,
+    library: LibraryOption = None,
+) -> None:
+    """Show or set the library's folder layout, a template of file paths.
+
+    Fields: {albumartist} (the artist when missing, "Various Artists" on compilations),
+    {artist}, {album}, {title}, {genre}, {year}, {track} (two digits) and {disc} ("2-" on
+    albums with several discs, else empty). The default is
+    "{albumartist}/{album}/{disc}{track} {title}". `aorg reorganize` moves files into it.
+    """
+    with _session(ctx) as session:
+        lib = _library(session, library)
+        if set_ is not None:
+            try:
+                lo.set_layout(session, lib, set_)
+            except lo.LayoutError as e:
+                raise typer.BadParameter(str(e)) from None
+            session.commit()
+        typer.echo(lo.get_layout(session, lib))
+
+
+@app.command("reorganize")
+def reorganize(
+    ctx: typer.Context,
+    path: Annotated[str | None, typer.Option(help="Only files under this path")] = None,
+    limit: Annotated[int, typer.Option(help="Albums to propose in a batch")] = 20,
+    propose: Annotated[
+        bool, typer.Option("--propose", help="Create a changeset for a batch")
+    ] = False,
+    library: LibraryOption = None,
+) -> None:
+    """Move files into the library's layout (see `aorg layout`), album by album.
+
+    Run the duplicate and album folder cleanups first: copies that would get the same
+    path are conflicts and stay where they are.
+    """
+    with _session(ctx) as session:
+        lib = _library(session, library)
+        template = lo.get_layout(session, lib)
+        plan = lo.plan(session, lib, template, path_prefix=path)
+        typer.echo(f"Layout: {template}")
+        typer.echo(
+            f"{plan.files} files in {len(plan.albums)} albums can move; {plan.in_place} are "
+            f"in place, {plan.case_only} differ only in letter case, {plan.incomplete} lack "
+            f"a field the layout needs, {len(plan.conflicts)} conflict, {plan.pending} have "
+            "changes waiting for review."
+        )
+        batch = plan.albums[:limit]
+        if propose:
+            if batch:
+                changeset = lo.propose(
+                    session, lib, batch, f"Move {len(batch)} albums into the layout"
+                )
+                typer.echo(
+                    f"Changeset {changeset.id}: {len(changeset.changes)} moves. Review with "
+                    f"`aorg changes show {changeset.id}`."
+                )
+            return
+        for album in batch:
+            typer.echo(f"  {album.folder}/  ({len(album.moves)} files)")
+            for source in album.sources:
+                typer.echo(f"      from {source}/")
+        if len(plan.albums) > len(batch):
+            typer.echo(f"  ... and {len(plan.albums) - len(batch)} more albums")
+        if batch:
+            typer.echo(f"Run with --propose to create a changeset for {len(batch)} albums.")
 
 
 trash_app = typer.Typer(

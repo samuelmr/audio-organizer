@@ -124,7 +124,32 @@ copy is kept and playlists switch to it) and moves its other tracks over. A trac
 number the other folder already uses on the same disc is a *clash*, which usually means
 a different recording or edition; it stays where it is. Batches only include pairs with
 the same album name and no clashes; merge the others one by one in the direction you
-choose, here or on the web UI's Album folders page.
+choose, here or on the web UI's Album folders page. To go the other way after proposing
+a merge, reject its changeset (or undo it, if applied) and propose the other direction.
+
+### Folder layout
+
+The layout is a template of where files belong, filled in from their metadata. The
+default is the iTunes-style `{albumartist}/{album}/{disc}{track} {title}`:
+
+    aorg layout                               # show it
+    aorg layout --set "{albumartist}/{year} {album}/{track} {title}"
+    aorg reorganize                           # what would move
+    aorg reorganize --path "Elfman, Danny" --propose
+    aorg reorganize --propose --limit 20      # or the next 20 albums
+
+Fields: `{albumartist}`, `{artist}`, `{album}`, `{title}`, `{genre}`, `{year}`, `{track}`
+(two digits) and `{disc}` ("2-" on albums with several discs, otherwise empty). Without
+an album artist tag, the album artist is decided per album, so its tracks stay
+together: the artist of most of its tracks, or "Various Artists"; compilations always
+go under "Various Artists". Characters that file systems do not allow become `_`.
+
+Files move album by album, and an album's cover image goes with it when its last track
+leaves a folder. Files lacking a field the template needs stay where they are, and so do
+conflicts: a path that is taken, or that several files would get. These are mostly
+duplicates, so clean up duplicates and album folders first. Names that differ only in
+letter case are left alone. The web UI's Layout page does the same, and lets you propose
+a single album.
 
 ### Playlists
 
@@ -236,6 +261,7 @@ Design principles:
 | `changes.py` | Changesets: propose, approve, apply, undo; retag, move and trash |
 | `duplicates.py` | Identical copies and what to keep |
 | `album_merge.py` | Album folders holding the same album, and merging them |
+| `layout.py` | The folder layout template, and moving files into it |
 | `tracks.py` | Streaming tracks with resolved metadata, in batches |
 | `playlists.py` | Playlist rules, generation in one pass, import and export |
 | `playlist_formats.py` | M3U, JSON-LD and HTML playlist files |

@@ -253,6 +253,23 @@ def test_audio(web, Session):
     assert web.get("/tracks/99999/audio").status_code == 404
 
 
+def test_layout_page(web):
+    page = web.get("/libraries/music/layout").text
+    assert "0 files in 0 albums can move" in page  # all in place or lacking an album
+
+    response = web.post("/libraries/music/layout", data={"template": "{artist}/{colour}"})
+    assert response.status_code == 400 and "Unknown fields" in response.text
+
+    template = "{albumartist}/{year} {album}/{track} {title}"
+    page = web.post("/libraries/music/layout", data={"template": template}).text
+    assert "Layout saved" in page and "Texas/2000 Greatest Hits/" in page
+    response = web.post(
+        "/libraries/music/layout/propose", data={"folder": "Texas/2000 Greatest Hits"}
+    )
+    assert re.fullmatch(r"/changes/\d+", response.url.path)
+    assert "Texas/2000 Greatest Hits/11 Halo.mp3" in response.text
+
+
 def test_album_merges_page(web):
     page = web.get("/libraries/music/album-merges").text
     assert "0 pairs of album folders" in page

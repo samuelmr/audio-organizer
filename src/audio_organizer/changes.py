@@ -49,8 +49,19 @@ def propose_retag(changeset: Changeset, file: AudioFile, fields: dict[str, str |
     return change
 
 
-def propose_move(changeset: Changeset, file: AudioFile, to: str) -> Change:
-    change = Change(file=file, kind="move", payload={"to": Path(to).as_posix()}, status="proposed")
+def propose_move(
+    changeset: Changeset,
+    file: AudioFile,
+    to: str,
+    extras: list[tuple[str, str]] | None = None,
+) -> Change:
+    """Propose moving a file. Extras are other files (such as the album's cover image)
+    to move along with it, as (from, to) library paths; they are moved if they still exist
+    and the destination is free."""
+    payload: dict = {"to": Path(to).as_posix()}
+    if extras:
+        payload["extras"] = [[source, target] for source, target in extras]
+    change = Change(file=file, kind="move", payload=payload, status="proposed")
     changeset.changes.append(change)
     return change
 
@@ -155,7 +166,9 @@ def apply(session: Session, changeset: Changeset, *, dry_run: bool = False) -> l
             if change.kind == "retag":
                 change.undo = _retag(session, change.file, change.payload["fields"])
             elif change.kind == "move":
-                change.undo = _move(session, change.file, change.payload["to"])
+                change.undo = _move(
+                    session, change.file, change.payload["to"], change.payload.get("extras")
+                )
             elif change.kind == "trash":
                 change.undo = _trash(session, change)
             else:
@@ -188,7 +201,8 @@ def undo(session: Session, changeset: Changeset, *, dry_run: bool = False) -> li
                 for name, value in change.payload.get("manual_before", {}).items():
                     set_value(session, change.file, "manual", name, value)
             elif change.kind == "move":
-                _move(session, change.file, change.undo["from"])
+                back = [[target, source] for source, target in change.undo.get("extras", [])]
+                _move(session, change.file, change.undo["from"], back)
             change.status = "undone"
             outcomes.append(Outcome(change, True, "undid " + describe(change)))
         except (ChangeError, OSError, tags.UnsupportedFormat) as e:
@@ -228,8 +242,11 @@ def _retag(session: Session, file: AudioFile, fields: dict[str, str | None]) -> 
     return {"fields": {name: before.get(name) for name in fields}}
 
 
-def _move(session: Session, file: AudioFile, to: str) -> dict:
-    source, target = _full_path(file), Path(file.library.root) / to
+def _move(
+    session: Session, file: AudioFile, to: str, extras: list[list[str]] | None = None
+) -> dict:
+    root = Path(file.library.root)
+    source, target = _full_path(file), root / to
     if target.exists():
         raise ChangeError(f"{to} already exists")
     clash = session.scalar(
@@ -241,11 +258,23 @@ def _move(session: Session, file: AudioFile, to: str) -> dict:
         raise ChangeError(f"{to} is still in the catalog as a missing file; rescan first")
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(source, target)
-    _remove_empty_dirs(source.parent, Path(file.library.root))
+    moved_extras = _move_extras(root, extras or [])
+    _remove_empty_dirs(source.parent, root)
     old_path = file.path
     file.path = Path(to).as_posix()
     _refresh(session, file)
-    return {"from": old_path}
+    return {"from": old_path, "extras": moved_extras}
+
+
+def _move_extras(root: Path, pairs: list[list[str]]) -> list[list[str]]:
+    """Move the extra files that still exist to free destinations; returns those moved."""
+    moved = []
+    for source, target in pairs:
+        if (root / source).is_file() and not (root / target).exists():
+            (root / target).parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(root / source, root / target)
+            moved.append([source, target])
+    return moved
 
 
 def _trash(session: Session, change: Change) -> dict:

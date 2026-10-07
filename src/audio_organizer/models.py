@@ -270,3 +270,15 @@ class PlaylistEntry(Base):
     path: Mapped[str] = mapped_column(Text)
 
     playlist: Mapped[Playlist] = relationship(back_populates="entries")
+
+
+class LibrarySetting(Base):
+    """A per-library setting, such as the folder layout ("layout")."""
+
+    __tablename__ = "library_setting"
+
+    library_id: Mapped[int] = mapped_column(
+        ForeignKey("library.id", ondelete="CASCADE"), primary_key=True
+    )
+    key: Mapped[str] = mapped_column(String(50), primary_key=True)
+    value: Mapped[str] = mapped_column(Text)
