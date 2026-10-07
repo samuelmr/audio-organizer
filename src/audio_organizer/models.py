@@ -282,3 +282,17 @@ class LibrarySetting(Base):
     )
     key: Mapped[str] = mapped_column(String(50), primary_key=True)
     value: Mapped[str] = mapped_column(Text)
+
+
+class ArtistSortName(Base):
+    """How an artist is sorted and filed, e.g. "Aarne Tenkanen" as "Tenkanen, Aarne".
+    Set by the user, per library; artists without one are filed under their name."""
+
+    __tablename__ = "artist_sort_name"
+
+    library_id: Mapped[int] = mapped_column(
+        ForeignKey("library.id", ondelete="CASCADE"), primary_key=True
+    )
+    key: Mapped[str] = mapped_column(Text, primary_key=True)  # pathparse.normalize_name
+    name: Mapped[str] = mapped_column(Text)
+    sort_name: Mapped[str] = mapped_column(Text)

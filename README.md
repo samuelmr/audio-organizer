@@ -144,6 +144,19 @@ an album artist tag, the album artist is decided per album, so its tracks stay
 together: the artist of most of its tracks, or "Various Artists"; compilations always
 go under "Various Artists". Characters that file systems do not allow become `_`.
 
+`{albumartistsort}` and `{artistsort}` file artists under a sort name you have set,
+such as "Tenkanen, Aarne" for "Aarne Tenkanen", and under their name otherwise:
+
+    aorg artists                              # sort names, and suggested ones
+    aorg artists --set "Aarne Tenkanen=Tenkanen, Aarne"
+    aorg artists --accept-suggestions
+    aorg layout --set "{albumartistsort}/{album}/{disc}{track} {title}"
+
+Suggestions come from your folders: a folder named "Tenkanen, Aarne" suggests that sort
+name for the artist "Aarne Tenkanen". Names are never turned around by rule, which would
+also file bands under their last word. The web UI's Artists page lists the artists, with
+their suggestions to accept one by one or all at once.
+
 Files move album by album, and an album's cover image goes with it when its last track
 leaves a folder. Files lacking a field the template needs stay where they are, and so do
 conflicts: a path that is taken, or that several files would get. These are mostly
@@ -262,6 +275,7 @@ Design principles:
 | `duplicates.py` | Identical copies and what to keep |
 | `album_merge.py` | Album folders holding the same album, and merging them |
 | `layout.py` | The folder layout template, and moving files into it |
+| `artists.py` | Artists' sort names and suggestions for them |
 | `tracks.py` | Streaming tracks with resolved metadata, in batches |
 | `playlists.py` | Playlist rules, generation in one pass, import and export |
 | `playlist_formats.py` | M3U, JSON-LD and HTML playlist files |

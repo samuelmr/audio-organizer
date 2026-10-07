@@ -6,6 +6,7 @@ create_app() takes the session factory, so the same app can serve a local catalo
 (`aorg web`) or, later, a hosted one.
 """
 
+import unicodedata
 from collections.abc import Iterator
 from math import ceil
 from pathlib import Path
@@ -20,6 +21,7 @@ from sqlalchemy import String, func, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from .. import album_merge as am
+from .. import artists as art
 from .. import changes as ch
 from .. import duplicates as du
 from .. import layout as lo
@@ -356,6 +358,62 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         changeset = am.propose(session, merges, description)
         return _redirect(f"/changes/{changeset.id}", "Proposed; review and approve the changes")
 
+    # ---- artists -------------------------------------------------------------------------
+
+    def _artists(session: Session, lib: Library, show: str, q: str) -> list:
+        listed = art.album_artists(session, lib)
+        if show == "suggested":
+            listed = [a for a in listed if a.suggestion]
+        elif show == "named":
+            listed = [a for a in listed if a.sort_name]
+        words = [_fold_text(w) for w in q.split()]
+        if words:
+            listed = [
+                a for a in listed
+                if all(w in _fold_text(f"{a.name} {a.sort_name or ''}") for w in words)
+            ]  # fmt: skip
+        return listed
+
+    @app.get("/libraries/{name}/artists", response_class=HTMLResponse)
+    def artists_page(
+        request: Request,
+        name: str,
+        show: str = "suggested",
+        q: str = "",
+        page: int = 1,
+        session: Session = SessionDep,
+    ):
+        lib = _library(session, name)
+        listed = _artists(session, lib, show, q)
+        pages = max(1, ceil(len(listed) / 100))
+        page = min(max(page, 1), pages)
+        everyone = art.album_artists(session, lib)
+        return render(
+            request, "artists.html", library=lib, artists=listed[(page - 1) * 100 : page * 100],
+            total=len(listed), show=show, q=q, page=page, pages=pages,
+            named=sum(1 for a in everyone if a.sort_name),
+            suggested=sum(1 for a in everyone if a.suggestion), count=len(everyone),
+        )  # fmt: skip
+
+    @app.post("/libraries/{name}/artists")
+    async def set_artist_sort_names(request: Request, name: str, session: Session = SessionDep):
+        """Set one artist's sort name (artist, sort_name), or with accept=all, use the
+        suggestions of the artists listed with the given filter."""
+        lib = _library(session, name)
+        form = await request.form()
+        show, q = str(form.get("show", "suggested")), str(form.get("q", ""))
+        if form.get("accept") == "all":
+            count = art.accept_suggestions(session, lib, _artists(session, lib, show, q))
+            message = f"Accepted {count} suggested sort names"
+        else:
+            artist = str(form.get("artist", "")).strip()
+            if not artist:
+                raise HTTPException(400, "No artist given")
+            art.set_sort_name(session, lib, artist, str(form.get("sort_name", "")))
+            message = f"Saved the sort name of {artist}"
+        session.commit()
+        return _redirect(_url(f"/libraries/{lib.name}/artists", show=show, q=q), message)
+
     # ---- layout --------------------------------------------------------------------------
 
     @app.get("/libraries/{name}/layout", response_class=HTMLResponse)
@@ -646,6 +704,10 @@ def _asset(name: str) -> str:
     """A static file's URL with its modification time, so that browsers fetch it again
     after an update instead of using a cached copy."""
     return f"/static/{name}?v={int((HERE / 'static' / name).stat().st_mtime)}"
+
+
+def _fold_text(text: str) -> str:
+    return unicodedata.normalize("NFC", text).casefold()
 
 
 def _like_escape(text: str) -> str:

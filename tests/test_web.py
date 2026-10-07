@@ -253,6 +253,18 @@ def test_audio(web, Session):
     assert web.get("/tracks/99999/audio").status_code == 404
 
 
+def test_artists_page(web):
+    page = web.get("/libraries/music/artists", params={"show": "all"}).text
+    assert "2 artists" in page and "P!nk" in page
+    page = web.post(
+        "/libraries/music/artists",
+        data={"artist": "Texas", "sort_name": "Texas (band)", "show": "named"},
+    ).text
+    assert "Saved the sort name of Texas" in page and 'value="Texas (band)"' in page
+    page = web.post("/libraries/music/artists", data={"accept": "all", "show": "suggested"}).text
+    assert "Accepted 0 suggested sort names" in page
+
+
 def test_layout_page(web):
     page = web.get("/libraries/music/layout").text
     assert "0 files in 0 albums can move" in page  # all in place or lacking an album

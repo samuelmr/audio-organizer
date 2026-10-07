@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from . import __version__
 from . import album_merge as am
+from . import artists as art
 from . import changes as ch
 from . import duplicates as du
 from . import layout as lo
@@ -906,6 +907,56 @@ def merge_albums(
                     typer.echo(line)
 
 
+@app.command("artists")
+def artists_command(
+    ctx: typer.Context,
+    set_: Annotated[
+        list[str] | None,
+        typer.Option("--set", help='Sort name: "Aarne Tenkanen=Tenkanen, Aarne"; empty removes'),
+    ] = None,
+    accept_suggestions: Annotated[
+        bool, typer.Option("--accept-suggestions", help="Use all suggested sort names")
+    ] = False,
+    all_: Annotated[
+        bool, typer.Option("--all", help="List all artists, not only those with sort names")
+    ] = False,
+    library: LibraryOption = None,
+) -> None:
+    """Artists' sort names, used by the layout fields {albumartistsort} and {artistsort}
+    (e.g. "Aarne Tenkanen" filed as "Tenkanen, Aarne").
+
+    Suggestions come from your folders: a folder "Tenkanen, Aarne" suggests that sort
+    name for "Aarne Tenkanen".
+    """
+    with _session(ctx) as session:
+        lib = _library(session, library)
+        for item in set_ or []:
+            name, sep, sort_name = item.partition("=")
+            if not sep or not name.strip():
+                raise typer.BadParameter('--set takes "Name=Sort name"')
+            art.set_sort_name(session, lib, name.strip(), sort_name)
+        if accept_suggestions:
+            count = art.accept_suggestions(session, lib, art.album_artists(session, lib))
+            typer.echo(f"Accepted {count} suggested sort names")
+        session.commit()
+        artists = art.album_artists(session, lib)
+        suggested = [a for a in artists if a.suggestion]
+        named = [a for a in artists if a.sort_name]
+        typer.echo(
+            f"{len(artists)} album artists: {len(named)} with a sort name, "
+            f"{len(suggested)} with a suggested one."
+        )
+        for artist in artists:
+            if artist.sort_name:
+                typer.echo(f"  {artist.name}  ->  {artist.sort_name}")
+            elif artist.suggestion:
+                typer.echo(f"  {artist.name}  ->  {artist.suggestion}  (suggested)")
+            elif all_:
+                typer.echo(f"  {artist.name}")
+        if suggested:
+            typer.echo("Use --accept-suggestions to take the suggested ones, or --set to choose.")
+
+
 @app.command("layout")
 def layout_command(
     ctx: typer.Context,
@@ -915,9 +966,11 @@ def layout_command(
     """Show or set the library's folder layout, a template of file paths.
 
     Fields: {albumartist} (the artist when missing, "Various Artists" on compilations),
-    {artist}, {album}, {title}, {genre}, {year}, {track} (two digits) and {disc} ("2-" on
-    albums with several discs, else empty). The default is
-    "{albumartist}/{album}/{disc}{track} {title}". `aorg reorganize` moves files into it.
+    {albumartistsort} and {artistsort} (the sort name set with `aorg artists`, e.g.
+    "Tenkanen, Aarne", else the name), {artist}, {album}, {title}, {genre}, {year},
+    {track} (two digits) and {disc} ("2-" on albums with several discs, else empty). The
+    default is "{albumartist}/{album}/{disc}{track} {title}". `aorg reorganize` moves
+    files into it.
     """
     with _session(ctx) as session:
         lib = _library(session, library)

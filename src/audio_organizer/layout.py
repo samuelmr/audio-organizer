@@ -5,6 +5,8 @@ effective metadata, e.g. the default "{albumartist}/{album}/{disc}{track} {title
 "Texas/The Greatest Hits/11 Halo.mp3". Fields:
 
     albumartist  album artist; the artist when missing; "Various Artists" on compilations
+    albumartistsort, artistsort   the artist's sort name if one is set ("Tenkanen,
+                 Aarne"; see artists.py), otherwise the name
     artist, album, title, genre, year
     track        two digits, "07"
     disc         "2-" on albums with several discs, otherwise empty
@@ -27,13 +29,17 @@ from pathlib import PurePosixPath
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from . import artists
 from . import changes as ch
 from .models import AudioFile, Change, Changeset, EffectiveMetadata, Library, LibrarySetting
 from .pathparse import normalize_name
 from .tracks import present
 
 DEFAULT_LAYOUT = "{albumartist}/{album}/{disc}{track} {title}"
-TEMPLATE_FIELDS = ("albumartist", "artist", "album", "title", "genre", "year", "track", "disc")
+TEMPLATE_FIELDS = (
+    "albumartist", "albumartistsort", "artist", "artistsort", "album", "title", "genre", "year",
+    "track", "disc",
+)  # fmt: skip
 OPTIONAL_FIELDS = ("disc",)  # may be empty
 VARIOUS_ARTISTS = "Various Artists"
 MAX_COMPONENT = 120
@@ -120,6 +126,7 @@ def plan(
         session.scalars(select(Change.file_id).where(Change.status.in_(("proposed", "approved"))))
     )
     album_artists = _album_artists(rows)
+    sorting = artists.sort_names(session, library)
     discs: dict[tuple[str, str], int] = defaultdict(int)  # album -> most discs
     for file, meta in rows:
         key = (normalize_name(album_artists[file.id] or ""), normalize_name(meta.album or ""))
@@ -136,7 +143,13 @@ def plan(
         album_artist = album_artists[file.id]
         key = (normalize_name(album_artist or ""), normalize_name(meta.album or ""))
         target = render(
-            template, names, meta, file.path, album_artist, several_discs=discs[key] > 1
+            template,
+            names,
+            meta,
+            file.path,
+            album_artist,
+            several_discs=discs[key] > 1,
+            sort_names=sorting,
         )
         if target is None:
             result.incomplete += 1
@@ -172,11 +185,14 @@ def render(
     album_artist: str | None,
     *,
     several_discs: bool,
+    sort_names: dict[str, str] | None = None,
 ) -> str | None:
     """The path the template gives a file, or None when a field it needs is missing."""
     values = {
         "albumartist": album_artist,
+        "albumartistsort": artists.sorted_name(sort_names or {}, album_artist),
         "artist": meta.artist,
+        "artistsort": artists.sorted_name(sort_names or {}, meta.artist),
         "album": meta.album,
         "title": meta.title,
         "genre": meta.genre,
