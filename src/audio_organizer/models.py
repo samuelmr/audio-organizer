@@ -163,6 +163,8 @@ class Change(Base):
     kind "move":  payload {"to": new relative path}
     kind "cover": payload {"image": library path} or {"cover_image": CoverImage sha1},
                   and "replace": true to replace a (too small) embedded cover
+    kind "image": payload {"cover_image": sha1, "to": library path, "label"}: save an image
+                  file (a folder's cover.jpg); "replace": true to overwrite a thumbnail
     status: proposed -> approved | rejected; approved -> applied | failed; applied -> undone
     """
 
@@ -312,7 +314,7 @@ class CoverImage(Base):
     mime: Mapped[str] = mapped_column(String(20))
     width: Mapped[int | None]
     height: Mapped[int | None]
-    data: Mapped[bytes] = mapped_column(LargeBinary)
+    data: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)  # loaded when used
     source: Mapped[str] = mapped_column(String(20))
     url: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)

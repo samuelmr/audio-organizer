@@ -5,6 +5,7 @@ has no usable image, from an online lookup (see coverart.py).
 """
 
 import hashlib
+import os
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -249,13 +250,14 @@ def album_key(artist: str, album: str) -> str:
 
 @dataclass
 class Album:
-    """The tracks of one album in one folder that need a cover."""
+    """The tracks of one album in one folder, and those of them that need a cover."""
 
     folder: str
     artist: str | None
     album: str | None
-    files: list[AudioFile]
+    files: list[AudioFile]  # without a cover, or with a thumbnail
     replace: set[int]  # ids of files whose embedded cover is a thumbnail
+    first: AudioFile  # the album's first track in the folder
 
     @property
     def key(self) -> str | None:
@@ -264,15 +266,19 @@ class Album:
 
 @dataclass
 class FolderCovers:
-    """A cover to embed into tracks of a folder: the folder's image, or one found online."""
+    """A cover for the tracks of a folder: the folder's image, or one found online, which
+    can also be saved as the folder's image (save_as)."""
 
     folder: str
-    files: list[AudioFile]
+    files: list[AudioFile]  # to embed the cover in
     replace: set[int] = field(default_factory=set)  # ids of files whose thumbnail goes
     image: Path | None = None  # the folder's cover image
     dimensions: tuple[int, int] | None = None  # pixels, when the image header says
     fetched: CoverImage | None = None  # found online, when the folder has no usable image
     album: str | None = None  # "Artist – Album", for a cover found online
+    save_as: str | None = None  # library path to save the cover found online as
+    overwrite: bool = False  # save_as is a thumbnail, to be replaced
+    first: AudioFile | None = None  # the track that a save_as change belongs to
 
     @property
     def image_size(self) -> int:
@@ -301,37 +307,61 @@ def survey(
     path_prefix: str | None = None,
     enough: int | None = None,
     min_pixels: int = MIN_PIXELS,
+    save_images: bool = True,
 ) -> Survey:
     """Tracks without an embedded cover, or with one smaller than min_pixels on a side,
     and the cover each could get: the folder's image, else one found online. Folder
-    images smaller than min_pixels are listed apart, not proposed. Looking for the
-    images lists each folder, slow on a network share, so with enough the survey stops
-    once that many folders are found."""
+    images smaller than min_pixels are listed apart, not proposed.
+
+    With save_images, a cover found online is also to be saved as the folder's
+    cover.jpg (or .png), for players that read folder images and for sync, when the
+    folder holds just that album and has no usable image; also when its tracks already
+    have the cover embedded.
+
+    Looking for the images lists each folder, slow on a network share, so with enough
+    the survey stops once that many folders are found."""
     from .sync import find_cover
 
-    by_folder = _needing(session, library, min_pixels, path_prefix)
+    by_folder = _albums(session, library, min_pixels, path_prefix)
+    found_online = _found_online(session, min_pixels)
     result = Survey()
     for folder, albums in by_folder.items():
+        needy = [a for a in albums if a.files]
+        only = albums[0] if len(albums) == 1 else None
+        to_save = save_images and only is not None and only.key in found_online
+        if not needy and not to_save:
+            continue
         if enough is not None and len(result.folders) >= enough:
             result.checked_all = False
             break
-        image = find_cover(Path(library.root) / folder)
+        directory = Path(library.root) / folder
+        image = find_cover(directory)
         size = dimensions(image) if image else None
         if image is not None and not small(size, min_pixels):
-            files = [f for a in albums for f in a.files]
-            replace = set().union(*(a.replace for a in albums))
-            result.folders.append(FolderCovers(folder, files, replace, image, size))
+            if needy:
+                files = [f for a in needy for f in a.files]
+                replace = set().union(*(a.replace for a in needy))
+                result.folders.append(FolderCovers(folder, files, replace, image, size))
             continue
-        fetched = _fetched(session, [a.key for a in albums if a.key], min_pixels)
         left = []
         for album in albums:
-            found = fetched.get(album.key) if album.key else None
-            if found is None:
-                left.append(album)
+            fetched = found_online.get(album.key) if album.key else None
+            target = _save_target(directory, fetched.mime) if fetched and to_save else None
+            if fetched is None or not (album.files or target):
+                if album.files:
+                    left.append(album)
                 continue
-            label = f"{album.artist} – {album.album}"
             result.folders.append(
-                FolderCovers(folder, album.files, album.replace, fetched=found, album=label)
+                FolderCovers(
+                    folder,
+                    album.files,
+                    album.replace,
+                    fetched=fetched,
+                    album=f"{album.artist} – {album.album}",
+                    save_as=f"{folder}/{target[0]}" if target else None,
+                    overwrite=bool(target and target[1]),
+                    first=album.first,
+                )  # fmt: skip
             )
         result.missing.extend(left)
         if left and image is not None:
@@ -342,10 +372,29 @@ def survey(
     return result
 
 
-def _needing(
+def _save_target(directory: Path, mime: str) -> tuple[str, bool] | None:
+    """The name to save a cover as in this folder, and whether a file of that name is
+    there to overwrite: cover.jpg (cover.png for a PNG), which the folder's other images
+    do not outrank (see sync.find_cover). None when an existing cover.jpg would."""
+    from .sync import COVER_NAMES, IMAGE_EXTENSIONS
+
+    extension = ".png" if mime == "image/png" else ".jpg"
+    try:
+        names = {n.casefold(): n for n in os.listdir(directory)}
+    except OSError:
+        return None
+    stem = COVER_NAMES[0]
+    earlier = IMAGE_EXTENSIONS[: IMAGE_EXTENSIONS.index(extension)]
+    if any(stem + e in names for e in earlier):
+        return None
+    existing = names.get(stem + extension)
+    return (existing, True) if existing else (stem + extension, False)
+
+
+def _albums(
     session: Session, library: Library, min_pixels: int, path_prefix: str | None
 ) -> dict[str, list[Album]]:
-    """The tracks that need a cover, by folder and album."""
+    """The tracks by folder and album, with those that need a cover."""
     cover = (
         select(FieldValue.file_id, FieldValue.value)
         .where(FieldValue.source == "tag", FieldValue.field == tags.EMBEDDED_COVER)
@@ -362,19 +411,16 @@ def _needing(
         query = query.where(AudioFile.path.startswith(path_prefix, autoescape=True))
     groups: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
     for file, value, meta in session.execute(query):
-        size = images.parse_size(value)
-        if value is not None and not small(size, min_pixels):
-            continue  # has a cover that is big enough, or of unknown size
         album = meta.album if meta and meta.album else None
         folder = str(PurePosixPath(file.path).parent)
         groups[folder][normalize_name(album) if album else ""].append((file, value, meta))
     return {
-        folder: [_album(folder, members) for members in albums.values()]
+        folder: [_album(folder, members, min_pixels) for members in albums.values()]
         for folder, albums in groups.items()
     }
 
 
-def _album(folder: str, members: list) -> Album:
+def _album(folder: str, members: list, min_pixels: int) -> Album:
     """The album's artist: the album artist, else the tracks' common artist, else
     "Various Artists" (as MusicBrainz credits compilations)."""
     metas = [meta for _, _, meta in members if meta is not None]
@@ -387,23 +433,29 @@ def _album(folder: str, members: list) -> Album:
         artist = artists.pop()
     else:
         artist = "Various Artists" if artists else None
+    # A cover of unknown size (or one of an older catalog) is given the benefit of doubt
+    needing = [
+        (file, value)
+        for file, value, _ in members
+        if value is None or small(images.parse_size(value), min_pixels)
+    ]
     return Album(
         folder=folder,
         artist=artist,
         album=album[0][0] if album else None,
-        files=[file for file, _, _ in members],
-        replace={file.id for file, value, _ in members if value is not None},
+        files=[file for file, _ in needing],
+        replace={file.id for file, value in needing if value is not None},
+        first=members[0][0],
     )
 
 
-def _fetched(session: Session, keys: list[str], min_pixels: int) -> dict[str, CoverImage]:
-    """Covers found online for these albums, at least min_pixels on a side."""
-    if not keys:
-        return {}
+def _found_online(session: Session, min_pixels: int) -> dict[str, CoverImage]:
+    """Covers found online, by album, at least min_pixels on a side (without their data,
+    which is loaded when used)."""
     rows = session.execute(
         select(CoverLookup.key, CoverImage)
         .join(CoverImage, CoverImage.sha1 == CoverLookup.image_sha1)
-        .where(CoverLookup.key.in_(keys), CoverLookup.status == "found")
+        .where(CoverLookup.status == "found")
     ).all()
     return {key: image for key, image in rows if not small(image.size, min_pixels)}
 
@@ -414,11 +466,13 @@ def propose(session: Session, library: Library, folders: list[FolderCovers], des
     changeset = ch.new_changeset(session, description)
     root = Path(library.root)
     for folder in folders:
+        label = None
+        if folder.fetched is not None:
+            size = images.format_size(folder.fetched.size)
+            label = f"the Cover Art Archive's image of {folder.album} ({size})"
         for file in folder.files:
             replace = file.id in folder.replace
             if folder.fetched is not None:
-                size = images.format_size(folder.fetched.size)
-                label = f"the Cover Art Archive's image of {folder.album} ({size})"
                 ch.propose_embed_cover(
                     changeset, file, cover_image=folder.fetched.sha1, label=label,
                     replace=replace,
@@ -426,5 +480,10 @@ def propose(session: Session, library: Library, folders: list[FolderCovers], des
             else:
                 image = folder.image.relative_to(root).as_posix()
                 ch.propose_embed_cover(changeset, file, image, replace=replace)
+        if folder.save_as and folder.fetched is not None and folder.first is not None:
+            ch.propose_save_image(
+                changeset, folder.first, folder.fetched.sha1, folder.save_as, label,
+                replace=folder.overwrite,
+            )  # fmt: skip
     session.commit()
     return changeset

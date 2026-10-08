@@ -114,6 +114,26 @@ def propose_embed_cover(
     return change
 
 
+def propose_save_image(
+    changeset: Changeset,
+    file: AudioFile,
+    cover_image: str,
+    to: str,
+    label: str,
+    replace: bool = False,
+) -> Change:
+    """Propose saving a CoverImage as an image file in the library (a folder's cover.jpg).
+    The change belongs to one of the album's tracks, as every change belongs to a file,
+    but leaves the track alone. With replace, an image already there (a thumbnail) is
+    overwritten and kept in the catalog for undo; otherwise the change fails if one is."""
+    payload: dict = {"cover_image": cover_image, "to": to, "label": label}
+    if replace:
+        payload["replace"] = True
+    change = Change(file=file, kind="image", payload=payload, status="proposed")
+    changeset.changes.append(change)
+    return change
+
+
 # Sources whose values are meant to end up in the files: the user's edits, measurements,
 # lookups and rules. Values inferred from paths or neighbouring files are only evidence.
 WRITTEN_SOURCES = ("manual", "analysis", "gnudb", "rule")
@@ -184,6 +204,10 @@ def describe(change: Change) -> str:
         if change.payload.get("replace"):
             return f"replace the cover of {change.file.path} with {image}"
         return f"embed {image} as the cover of {change.file.path}"
+    if change.kind == "image":
+        if change.payload.get("replace"):
+            return f"replace {change.payload['to']} with {change.payload['label']}"
+        return f"save {change.payload['label']} as {change.payload['to']}"
     if change.kind == "trash":
         keeper = change.payload.get("replacement_path")
         return f"trash {change.file.path}" + (f" (same audio as {keeper})" if keeper else "")
@@ -217,7 +241,8 @@ def apply(session: Session, changeset: Changeset, *, dry_run: bool = False) -> l
             outcomes.append(Outcome(change, True, "would " + describe(change)))
             continue
         try:
-            _check_unchanged(change.file)
+            if change.kind != "image":  # which leaves its track alone
+                _check_unchanged(change.file)
             if change.kind == "retag":
                 change.undo = _retag(
                     session, change.file, change.payload["fields"],
@@ -231,6 +256,8 @@ def apply(session: Session, changeset: Changeset, *, dry_run: bool = False) -> l
                 change.undo = _trash(session, change)
             elif change.kind == "cover":
                 change.undo = _embed_cover(session, change)
+            elif change.kind == "image":
+                change.undo = _save_image(session, change)
             else:
                 raise ChangeError(f"Unknown change kind {change.kind}")
             change.status, change.error, change.applied_at = "applied", None, utcnow()
@@ -254,7 +281,7 @@ def undo(session: Session, changeset: Changeset, *, dry_run: bool = False) -> li
         try:
             if change.kind == "trash":
                 _untrash(session, change)
-            else:
+            elif change.kind != "image":
                 _check_unchanged(change.file)
             if change.kind == "retag":
                 _retag(session, change.file, change.undo["fields"])
@@ -265,6 +292,8 @@ def undo(session: Session, changeset: Changeset, *, dry_run: bool = False) -> li
                 _move(session, change.file, change.undo["from"], back)
             elif change.kind == "cover":
                 _unembed_cover(session, change)
+            elif change.kind == "image":
+                _unsave_image(session, change)
             change.status = "undone"
             outcomes.append(Outcome(change, True, "undid " + describe(change)))
         except (ChangeError, OSError, ValueError, tags.UnsupportedFormat) as e:
@@ -348,6 +377,43 @@ def _unembed_cover(session: Session, change: Change) -> None:
             )
         covers.unembed(path, change.undo["embedded"], restore)
     _refresh(session, change.file)
+
+
+def _save_image(session: Session, change: Change) -> dict:
+    stored = session.get(CoverImage, change.payload["cover_image"])
+    if stored is None:
+        raise ChangeError("the image is no longer in the catalog")
+    target = Path(change.file.library.root) / change.payload["to"]
+    replaced = None
+    if target.exists():
+        if not change.payload.get("replace"):
+            raise ChangeError(f"{change.payload['to']} already exists")
+        replaced = covers.store_image(session, target.read_bytes(), "replaced").sha1
+    _write_atomically(target, stored.data)
+    return {"saved": stored.sha1, "replaced": replaced}
+
+
+def _unsave_image(session: Session, change: Change) -> None:
+    to = change.payload["to"]
+    target = Path(change.file.library.root) / to
+    if not target.is_file():
+        raise ChangeError(f"{to} no longer exists")
+    if covers.digest(target.read_bytes()) != change.undo["saved"]:
+        raise ChangeError(f"{to} has changed since it was saved")
+    if change.undo.get("replaced") is None:
+        target.unlink()
+        return
+    stored = session.get(CoverImage, change.undo["replaced"])
+    if stored is None:
+        raise ChangeError("the replaced image is no longer in the catalog")
+    _write_atomically(target, stored.data)
+
+
+def _write_atomically(target: Path, data: bytes) -> None:
+    """Write next to the target, then rename, so an interruption leaves no half image."""
+    temporary = target.with_name(f".{target.name}.aorg-tmp")
+    temporary.write_bytes(data)
+    os.replace(temporary, target)
 
 
 def _move(

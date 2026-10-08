@@ -70,10 +70,10 @@ default) on a side, and whose folder has no image at least that big, are looked 
 [Cover Art Archive](https://coverartarchive.org), in the smallest size that is big
 enough (250, 500 or 1200 pixels, else the original). An album is found by its album
 artist (or the tracks' common artist, else "Various Artists") and title. The covers are
-kept in the catalog until you embed them (see [Covers](#covers)); each album is looked
-up once, and again only for a larger `--min-pixels`. MusicBrainz asks for a contact
-address in every request: `aorg` sends the one in `AORG_CONTACT`, else the package
-author's.
+kept in the catalog until you embed them and save them in their folders (see
+[Covers](#covers)); each album is looked up once, and again only for a larger
+`--min-pixels`. MusicBrainz asks for a contact address in every request: `aorg` sends
+the one in `AORG_CONTACT`, else the package author's.
 
 `aorg show` lists each field with where its value comes from: the file's tags (`tag`),
 its folder and file name (`path`) or your edit (`manual`), and the other candidates when
@@ -174,6 +174,13 @@ and an embedded thumbnail is replaced (undo puts it back). The image is copied i
 every track, so mind large images. A file whose cover is big enough is never given
 another one. The web UI's Covers page does the same, also for single folders, and a
 track's page can embed its folder's cover into that one file.
+
+A cover found online is also saved as the folder's `cover.jpg` (`cover.png` for a PNG),
+so that players that read folder images and [sync](#syncing-to-object-storage) have it
+too; also for albums whose tracks already have it embedded. That happens only when the
+folder holds just that album and has no image big enough. A smaller `cover.jpg` is
+replaced (undo puts it back); other images are left alone, as `cover.jpg` comes first.
+With `--no-save-images` covers are only embedded.
 
 Catalogs made before `aorg` read the size of embedded covers know only that a file has
 one; the next deep scan reads their sizes (only the tags, not the whole files).

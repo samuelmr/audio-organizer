@@ -398,6 +398,10 @@ def test_covers_found_online(web, Session, tmp_path):
 
     response = web.post("/libraries/music/covers", data={"folder": "Texas/Greatest Hits"})
     assert "Archive&#39;s image of Texas – Greatest Hits (300x300)" in response.text
+    assert "will be saved as" in response.text and "Texas/Greatest Hits/cover.jpg" in response.text
+
+    page = web.get("/libraries/music/covers", params={"save_images": "false"}).text
+    assert "to be saved as" not in page and "Greatest Hits, found online" in page
 
 
 def test_artists_page(web):

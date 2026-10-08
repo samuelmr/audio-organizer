@@ -618,15 +618,17 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         path: str = "",
         limit: int = 20,
         min_pixels: int = covers.MIN_PIXELS,
+        save_images: bool = True,
         session: Session = SessionDep,
     ):
         lib = _library(session, name)
         found = covers.survey(
-            session, lib, path_prefix=path or None, enough=max(limit, 1), min_pixels=min_pixels
-        )
+            session, lib, path_prefix=path or None, enough=max(limit, 1),
+            min_pixels=min_pixels, save_images=save_images,
+        )  # fmt: skip
         return render(
             request, "covers.html", library=lib, found=found, path=path, limit=limit,
-            min_pixels=min_pixels,
+            min_pixels=min_pixels, save_images=save_images,
         )  # fmt: skip
 
     @app.post("/libraries/{name}/covers")
@@ -635,18 +637,22 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         path: Annotated[str, Form()] = "",
         limit: Annotated[int, Form()] = 20,
         min_pixels: Annotated[int, Form()] = covers.MIN_PIXELS,
+        save_images: Annotated[bool, Form()] = True,
         folder: Annotated[str, Form()] = "",
         session: Session = SessionDep,
     ):
         """A batch of folders, or with folder, just that one."""
         lib = _library(session, name)
         if folder:
-            found = covers.survey(session, lib, path_prefix=folder + "/", min_pixels=min_pixels)
+            found = covers.survey(
+                session, lib, path_prefix=folder + "/", min_pixels=min_pixels,
+                save_images=save_images,
+            )  # fmt: skip
             chosen = [f for f in found.folders if f.folder == folder]
         else:
             found = covers.survey(
                 session, lib, path_prefix=path or None, enough=max(limit, 1),
-                min_pixels=min_pixels,
+                min_pixels=min_pixels, save_images=save_images,
             )  # fmt: skip
             chosen = found.folders
         if not chosen:

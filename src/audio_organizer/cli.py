@@ -2,7 +2,7 @@
 
 import shutil
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Annotated
 
 import typer
@@ -1104,6 +1104,10 @@ def covers_command(
     min_pixels: Annotated[
         int, typer.Option(help="Smaller covers (on a side) are thumbnails, to be replaced")
     ] = cv.MIN_PIXELS,
+    save_images: Annotated[
+        bool,
+        typer.Option(help="Also save covers found online as the folder's cover.jpg"),
+    ] = True,
     propose: Annotated[
         bool, typer.Option("--propose", help="Create a changeset for a batch")
     ] = False,
@@ -1114,20 +1118,25 @@ def covers_command(
     The cover is the folder's image (cover/folder/front.jpg or .png, or the folder's only
     image), or when the folder has no image of at least --min-pixels, one that `aorg scan
     --deep` found online. It is copied into every such track, so large images make every
-    file bigger. Run `aorg scan --reread` once first if the catalog is older than cover
-    detection.
+    file bigger. A cover found online is also saved as the folder's cover.jpg when the
+    folder holds just that album. Run `aorg scan --reread` once first if the catalog is
+    older than cover detection.
     """
     with _session(ctx) as session:
         lib = _library(session, library)
-        found = cv.survey(session, lib, path_prefix=path, min_pixels=min_pixels)
+        found = cv.survey(
+            session, lib, path_prefix=path, min_pixels=min_pixels, save_images=save_images
+        )
         files = sum(len(f.files) for f in found.folders)
         replaced = sum(len(f.replace) for f in found.folders)
         online = sum(1 for f in found.folders if f.fetched is not None)
+        saved = sum(1 for f in found.folders if f.save_as)
         typer.echo(
             f"{len(found.folders)} folders have a cover for {files} tracks without one "
-            f"({replaced} with a thumbnail to replace; {online} covers found online); "
-            f"{len(found.too_small)} more have only a thumbnail (under {min_pixels} pixels), "
-            f"and {found.without_image} folders with such tracks have no image."
+            f"({replaced} with a thumbnail to replace; {online} covers found online, "
+            f"{saved} to save in their folder); {len(found.too_small)} more have only a "
+            f"thumbnail (under {min_pixels} pixels), and {found.without_image} folders "
+            "with such tracks have no image."
         )
         batch = found.folders[:limit]
         if propose:
@@ -1136,7 +1145,7 @@ def covers_command(
                     session, lib, batch, f"Embed the covers of {len(batch)} folders"
                 )
                 typer.echo(
-                    f"Changeset {changeset.id}: {len(changeset.changes)} files. Review with "
+                    f"Changeset {changeset.id}: {len(changeset.changes)} changes. Review with "
                     f"`aorg changes show {changeset.id}`."
                 )
             return
@@ -1145,9 +1154,13 @@ def covers_command(
             size = "×".join(map(str, dims)) if dims else "?"
             name = f"{folder.album} found online" if folder.fetched else folder.image_name
             replace = f", replacing {len(folder.replace)} thumbnails" if folder.replace else ""
+            save = ""
+            if folder.save_as:
+                verb = "replacing" if folder.overwrite else "to be saved as"
+                save = f", {verb} {PurePosixPath(folder.save_as).name}"
             typer.echo(
                 f"  {folder.folder}/: {name} ({size}, {folder.image_size // 1024} KB) into "
-                f"{len(folder.files)} tracks{replace}"
+                f"{len(folder.files)} tracks{replace}{save}"
             )
         if batch:
             typer.echo(f"Run with --propose to create a changeset for {len(batch)} folders.")

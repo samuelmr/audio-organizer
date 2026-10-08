@@ -166,7 +166,7 @@ def lookup_library(
     is committed, so an interrupted run continues where it stopped."""
     client = client or Client()
     stats = LookupStats()
-    survey = covers.survey(session, library, min_pixels=min_pixels)
+    survey = covers.survey(session, library, min_pixels=min_pixels, save_images=False)
     albums = {a.key: a for a in survey.missing if a.key}  # one lookup per album
     done = {
         row.key: row
