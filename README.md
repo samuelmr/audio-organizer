@@ -49,10 +49,12 @@ The first scan reads every file; later scans only read new and changed ones, so 
 After updating `aorg`, `aorg scan --reread` reads every file again once, so that tags a
 newer version reads (such as ratings, sort names or embedded covers) are in the catalog.
 
-A *deep* scan also measures the loudness of every file not measured yet, for ReplayGain:
+A *deep* scan also measures the loudness of every file not measured yet, for ReplayGain,
+and looks up missing album covers online:
 
     aorg scan --deep                  # continues where an interrupted run stopped
     aorg scan --deep --deep-limit 500 # or in parts
+    aorg scan --deep --min-pixels 500 # covers smaller than 500 px count as missing
 
 It reads every file in full, so the first one takes long (about 1 file per second from
 a network share). It uses ReplayGain 2.0 (EBU R128 loudness, -18 LUFS): track gain and
@@ -61,6 +63,17 @@ one folder with the same album tag) are measured. The album gain is computed fro
 tracks' loudness rather than by measuring the whole album again, which is usually within
 a few tenths of a dB. The results stay in the catalog until you write them into the
 files (see [Writing tags](#writing-tags)); a file whose audio changes is measured again.
+
+Albums whose tracks have no embedded cover, or one smaller than `--min-pixels` (200 by
+default) on a side, and whose folder has no image at least that big, are looked up in
+[MusicBrainz](https://musicbrainz.org) and their front cover fetched from the
+[Cover Art Archive](https://coverartarchive.org), in the smallest size that is big
+enough (250, 500 or 1200 pixels, else the original). An album is found by its album
+artist (or the tracks' common artist, else "Various Artists") and title. The covers are
+kept in the catalog until you embed them (see [Covers](#covers)); each album is looked
+up once, and again only for a larger `--min-pixels`. MusicBrainz asks for a contact
+address in every request: `aorg` sends the one in `AORG_CONTACT`, else the package
+author's.
 
 `aorg show` lists each field with where its value comes from: the file's tags (`tag`),
 its folder and file name (`path`) or your edit (`manual`), and the other candidates when
@@ -149,15 +162,21 @@ UI's Ratings page does the same. Smart playlists can then use rules such as `rat
 
 Phones, car stereos and many players only show covers embedded in the files:
 
-    aorg covers                               # folders with an image and tracks without
+    aorg covers                               # tracks without a cover, and the cover
     aorg covers --path "Björk" --propose      # embed it into those tracks
+    aorg covers --min-pixels 500 --propose    # also replace covers under 500 px
 
-A folder's cover image is `cover`, `folder` or `front` (`.jpg`, `.jpeg` or `.png`), or
-its only image. Thumbnails under 200 pixels, such as Windows Media Player's
-`AlbumArtSmall.jpg`, are listed but not embedded. The image is copied into every track,
-so mind large images. A file that already has an embedded cover is never given another
-one. The web UI's Covers page does the same, also for single folders, and a track's
-page can embed its folder's cover into that one file.
+The cover is the folder's image, `cover`, `folder` or `front` (`.jpg`, `.jpeg` or
+`.png`), or its only image; when the folder has none at least `--min-pixels` (200 by
+default) on a side, it is the cover a deep scan found online. Smaller images, such as
+Windows Media Player's `AlbumArtSmall.jpg`, are thumbnails: listed but not embedded,
+and an embedded thumbnail is replaced (undo puts it back). The image is copied into
+every track, so mind large images. A file whose cover is big enough is never given
+another one. The web UI's Covers page does the same, also for single folders, and a
+track's page can embed its folder's cover into that one file.
+
+Catalogs made before `aorg` read the size of embedded covers know only that a file has
+one; the next deep scan reads their sizes (only the tags, not the whole files).
 
 ### Duplicates
 
@@ -352,7 +371,9 @@ Design principles:
 | `layout.py` | The folder layout template, and moving files into it |
 | `artists.py` | Artists' sort names and suggestions for them |
 | `loudness.py` | ReplayGain 2.0: measuring tracks with ffmpeg, album gains, deep scan |
-| `covers.py` | Embedded cover images: reading, embedding, removing; folders to embed in |
+| `covers.py` | Embedded cover images: reading, embedding, replacing thumbnails; which tracks get which cover |
+| `coverart.py` | Looking up album covers online (MusicBrainz, Cover Art Archive) in the deep scan |
+| `images.py` | Size and type of JPEG and PNG images from their headers |
 | `writing.py` | Writing values not yet in the files, in batches |
 | `ratings.py` | Star ratings from MusicMatch preferences |
 | `tracks.py` | Streaming tracks with resolved metadata, in batches |

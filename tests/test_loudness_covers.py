@@ -73,13 +73,14 @@ def test_measure_fails_clearly(tmp_path):
 def test_embed_and_remove_cover(copy_audio, tmp_path, name):
     path = copy_audio(name, tmp_path / f"x.{name}")
     image = tmp_path / "cover.jpg"
-    image.write_bytes(b"\xff\xd8\xff\xe0 a tiny jpeg")
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=320x240",
+                    "-frames:v", "1", str(image)], check=True)  # fmt: skip
     before = tags.read(path).fields
     assert covers.embedded(path) is None
     covers.embed(path, image)
     assert covers.embedded(path) == ("image/jpeg", image.read_bytes())
     after = tags.read(path).fields
-    assert after.pop(tags.EMBEDDED_COVER) == "1"
+    assert after.pop(tags.EMBEDDED_COVER) == "320x240"
     assert after == before  # other tags untouched
     covers.remove(path)
     assert covers.embedded(path) is None

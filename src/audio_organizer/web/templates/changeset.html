@@ -39,8 +39,12 @@
      {% endif %}
     {% elif change.kind == "cover" %}
      <div class="file">{{ play(change.file.id, change.file.path) }} <span class="path">{{ change.file.path }}</span>
-      <span class="verdict">{{ "got" if done else "will get" }} the cover image</span></div>
+      <span class="verdict">{% if change.payload.replace %}{{ "had its thumbnail cover replaced by" if done else "will have its thumbnail cover replaced by" }}{% else %}{{ "got" if done else "will get" }}{% endif %} the cover image</span></div>
+     {% if change.payload.cover_image %}
+     <div class="file indent"><img src="/cover-images/{{ change.payload.cover_image }}" alt="" width="56" height="56" loading="lazy" class="thumb"> {{ change.payload.label }}</div>
+     {% else %}
      <div class="file indent"><span class="path">{{ change.payload.image }}</span></div>
+     {% endif %}
     {% elif change.kind == "move" %}
      <div class="file">{{ play(change.file.id, change.file.path) }} <span class="path">{{ move_source(change) }}</span>
       <span class="verdict">{{ "was moved to" if done else "will be moved to" }}</span></div>

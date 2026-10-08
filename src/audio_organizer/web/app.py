@@ -40,6 +40,7 @@ from ..models import (
     AudioFile,
     Change,
     Changeset,
+    CoverImage,
     EffectiveMetadata,
     Library,
     Playlist,
@@ -304,6 +305,16 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             raise HTTPException(404, "No embedded cover")
         mime, data = found
         return Response(data, media_type=mime)
+
+    @app.get("/cover-images/{sha1}")
+    def cover_image(sha1: str, session: Session = SessionDep):
+        """A cover kept in the catalog: found online, or replaced by a change."""
+        image = session.get(CoverImage, sha1)
+        if image is None:
+            raise HTTPException(404, "No such cover image")
+        return Response(
+            image.data, media_type=image.mime, headers={"Cache-Control": "max-age=31536000"}
+        )
 
     @app.get("/tracks/{file_id}/art")
     def track_art(request: Request, file_id: int, session: Session = SessionDep):
@@ -602,12 +613,20 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
 
     @app.get("/libraries/{name}/covers", response_class=HTMLResponse)
     def covers_page(
-        request: Request, name: str, path: str = "", limit: int = 20, session: Session = SessionDep
+        request: Request,
+        name: str,
+        path: str = "",
+        limit: int = 20,
+        min_pixels: int = covers.MIN_PIXELS,
+        session: Session = SessionDep,
     ):
         lib = _library(session, name)
-        found = covers.survey(session, lib, path_prefix=path or None, enough=max(limit, 1))
+        found = covers.survey(
+            session, lib, path_prefix=path or None, enough=max(limit, 1), min_pixels=min_pixels
+        )
         return render(
             request, "covers.html", library=lib, found=found, path=path, limit=limit,
+            min_pixels=min_pixels,
         )  # fmt: skip
 
     @app.post("/libraries/{name}/covers")
@@ -615,16 +634,20 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         name: str,
         path: Annotated[str, Form()] = "",
         limit: Annotated[int, Form()] = 20,
+        min_pixels: Annotated[int, Form()] = covers.MIN_PIXELS,
         folder: Annotated[str, Form()] = "",
         session: Session = SessionDep,
     ):
         """A batch of folders, or with folder, just that one."""
         lib = _library(session, name)
         if folder:
-            found = covers.survey(session, lib, path_prefix=folder + "/")
+            found = covers.survey(session, lib, path_prefix=folder + "/", min_pixels=min_pixels)
             chosen = [f for f in found.folders if f.folder == folder]
         else:
-            found = covers.survey(session, lib, path_prefix=path or None, enough=max(limit, 1))
+            found = covers.survey(
+                session, lib, path_prefix=path or None, enough=max(limit, 1),
+                min_pixels=min_pixels,
+            )  # fmt: skip
             chosen = found.folders
         if not chosen:
             return _redirect(f"/libraries/{lib.name}/covers", "Nothing to embed")

@@ -1,11 +1,12 @@
 import re
+import subprocess
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from audio_organizer import covers, tags
-from audio_organizer.models import AudioFile, Library, SyncTarget
+from audio_organizer.models import AudioFile, CoverLookup, Library, SyncTarget
 from audio_organizer.scanner import scan
 from audio_organizer.web import create_app
 
@@ -376,6 +377,27 @@ def test_ratings_and_covers_pages(web, Session):
     response = web.post("/libraries/music/covers", data={"folder": "Texas/Greatest Hits"})
     assert re.fullmatch(r"/changes/\d+", response.url.path)
     assert "will get the cover image" in response.text
+
+
+def test_covers_found_online(web, Session, tmp_path):
+    image = tmp_path / "found.jpg"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=300x300",
+                    "-frames:v", "1", str(image)], check=True)  # fmt: skip
+    with Session() as session:
+        stored = covers.store_image(session, image.read_bytes(), "coverartarchive")
+        session.add(CoverLookup(
+            key=covers.album_key("Texas", "Greatest Hits"), artist="Texas",
+            album="Greatest Hits", status="found", image_sha1=stored.sha1, min_pixels=200,
+        ))  # fmt: skip
+        session.commit()
+    page = web.get("/libraries/music/covers").text
+    assert "Texas – Greatest Hits, found online" in page and f"/cover-images/{stored.sha1}" in page
+    assert web.get(f"/cover-images/{stored.sha1}").content == image.read_bytes()
+    page = web.get("/libraries/music/covers", params={"min_pixels": 400}).text
+    assert "Greatest Hits, found online" not in page and "scan --deep --min-pixels 400" in page
+
+    response = web.post("/libraries/music/covers", data={"folder": "Texas/Greatest Hits"})
+    assert "Archive&#39;s image of Texas – Greatest Hits (300x300)" in response.text
 
 
 def test_artists_page(web):

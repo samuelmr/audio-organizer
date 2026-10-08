@@ -4,9 +4,11 @@
 {% set base = '/libraries/' ~ library.name %}
 <h1>Covers</h1>
 <p>Phones, car stereos and many players only show covers embedded in the files. These
-album folders have a cover image, and tracks without an embedded cover. Embedding copies
-the image into every such track, so a large image makes every file bigger; undoing the
-changeset removes the embedded covers again.</p>
+tracks have no embedded cover, or only a thumbnail smaller than {{ min_pixels }} pixels,
+and their album has a cover: the image in its folder, or one that <code>aorg scan
+--deep</code> found online. Embedding copies the image into every such track, so a
+large image makes every file bigger; undoing the changeset removes the embedded covers
+again and puts back the thumbnails they replaced.</p>
 <p class="hint">If the catalog was made before cover detection, run <code>aorg scan
 --reread</code> once; until then, files that already have a cover are left as they are
 when the changes are applied.</p>
@@ -14,6 +16,7 @@ when the changes are applied.</p>
 <form class="search" method="get" action="{{ base }}/covers">
  <input type="search" name="path" value="{{ path }}" placeholder="Only folders under a path" aria-label="Path">
  <label>Batch of <input name="limit" inputmode="numeric" size="4" value="{{ limit }}"> folders</label>
+ <label>At least <input name="min_pixels" inputmode="numeric" size="5" value="{{ min_pixels }}"> pixels</label>
  <button>Show</button>
 </form>
 
@@ -21,19 +24,22 @@ when the changes are applied.</p>
 <form method="post" action="{{ base }}/covers">
  <input type="hidden" name="path" value="{{ path }}">
  <input type="hidden" name="limit" value="{{ limit }}">
+ <input type="hidden" name="min_pixels" value="{{ min_pixels }}">
  <button class="primary">Propose a changeset for these {{ found.folders | length }} folders</button>
 </form>
 <table>
  <thead><tr><th>Cover</th><th>Folder</th><th class="num">Tracks</th><th></th></tr></thead>
  <tbody>
  {% for f in found.folders %}
+  {% set dims = f.fetched.size if f.fetched else f.dimensions %}
   <tr>
-   <td><img src="/tracks/{{ f.files[0].id }}/cover?folder=1" alt="" width="56" height="56" loading="lazy" class="thumb"></td>
-   <td class="path"><a href="{{ url(base, folder=f.folder) }}">{{ f.folder }}/</a><br>{{ f.image.name }}, {% if f.dimensions %}{{ f.dimensions[0] }}×{{ f.dimensions[1] }} pixels, {% endif %}{{ (f.image_size / 1024) | round | int }} KB{% if f.image_size > 500 * 1024 %} <span class="flag">large</span>{% endif %}</td>
+   <td><img src="{{ '/cover-images/' ~ f.fetched.sha1 if f.fetched else '/tracks/' ~ f.files[0].id ~ '/cover?folder=1' }}" alt="" width="56" height="56" loading="lazy" class="thumb"></td>
+   <td class="path"><a href="{{ url(base, folder=f.folder) }}">{{ f.folder }}/</a><br>{% if f.fetched %}{{ f.album }}, found online{% else %}{{ f.image.name }}{% endif %}, {% if dims %}{{ dims[0] }}×{{ dims[1] }} pixels, {% endif %}{{ (f.image_size / 1024) | round | int }} KB{% if f.image_size > 500 * 1024 %} <span class="flag">large</span>{% endif %}{% if f.replace %}<br>replaces the thumbnail of {{ f.replace | length }} tracks{% endif %}</td>
    <td class="num">{{ f.files | length }}</td>
    <td>
     <form method="post" action="{{ base }}/covers" class="inline">
      <input type="hidden" name="folder" value="{{ f.folder }}">
+     <input type="hidden" name="min_pixels" value="{{ min_pixels }}">
      <button aria-label="Propose embedding the cover of {{ f.folder }}">Propose this folder</button>
     </form>
    </td>
@@ -45,9 +51,13 @@ when the changes are applied.</p>
 {% endif %}
 {% if found.too_small %}
 <details>
- <summary>{{ found.too_small | length }} folders have only a thumbnail (under 200 pixels), not proposed</summary>
+ <summary>{{ found.too_small | length }} folders have only a thumbnail (under {{ min_pixels }} pixels), not proposed</summary>
  <ul>{% for f in found.too_small %}<li class="path">{{ f.folder }}/{{ f.image.name }}{% if f.dimensions %} ({{ f.dimensions[0] }}×{{ f.dimensions[1] }}){% endif %}</li>{% endfor %}</ul>
 </details>
+{% endif %}
+{% if found.missing %}
+<p class="hint">{{ found.missing | length }} albums here have no usable cover; <code>aorg
+scan --deep --min-pixels {{ min_pixels }}</code> looks them up online.</p>
 {% endif %}
 {% if not found.folders and not found.too_small %}
 <p>No folders to show.</p>

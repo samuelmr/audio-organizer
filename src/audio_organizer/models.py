@@ -16,6 +16,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -160,6 +161,8 @@ class Change(Base):
 
     kind "retag": payload {"fields": {field: new value or None to remove}}
     kind "move":  payload {"to": new relative path}
+    kind "cover": payload {"image": library path} or {"cover_image": CoverImage sha1},
+                  and "replace": true to replace a (too small) embedded cover
     status: proposed -> approved | rejected; approved -> applied | failed; applied -> undone
     """
 
@@ -296,3 +299,43 @@ class ArtistSortName(Base):
     key: Mapped[str] = mapped_column(Text, primary_key=True)  # pathparse.normalize_name
     name: Mapped[str] = mapped_column(Text)
     sort_name: Mapped[str] = mapped_column(Text)
+
+
+class CoverImage(Base):
+    """A cover image kept in the catalog, by the SHA-1 of its data: one found online
+    (source "coverartarchive"), or an embedded cover that a change replaced, so that undo
+    can put it back (source "replaced")."""
+
+    __tablename__ = "cover_image"
+
+    sha1: Mapped[str] = mapped_column(String(40), primary_key=True)
+    mime: Mapped[str] = mapped_column(String(20))
+    width: Mapped[int | None]
+    height: Mapped[int | None]
+    data: Mapped[bytes] = mapped_column(LargeBinary)
+    source: Mapped[str] = mapped_column(String(20))
+    url: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    @property
+    def size(self) -> tuple[int, int] | None:
+        return (self.width, self.height) if self.width and self.height else None
+
+
+class CoverLookup(Base):
+    """The outcome of looking up an album's cover online, so that the deep scan asks only
+    once. Albums are keyed by artist and title (pathparse.normalize_name), not by folder,
+    so copies of an album share the lookup and it survives reorganizing."""
+
+    __tablename__ = "cover_lookup"
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    artist: Mapped[str] = mapped_column(Text)
+    album: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20))  # found | not_found
+    release_group: Mapped[str | None] = mapped_column(String(36))  # MusicBrainz id
+    image_sha1: Mapped[str | None] = mapped_column(ForeignKey("cover_image.sha1"))
+    min_pixels: Mapped[int]  # the size asked for; a larger one is looked up again
+    looked_up_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    image: Mapped[CoverImage | None] = relationship()

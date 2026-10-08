@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import covers, pathparse, tags
-from .models import AudioFile, Change, Changeset, PlaylistEntry, utcnow
+from .models import AudioFile, Change, Changeset, CoverImage, PlaylistEntry, utcnow
 from .provenance import resolve, set_value, set_values
 
 # Trashed files are kept here, inside the library root, until `aorg trash empty`. The
@@ -94,9 +94,22 @@ def propose_trash(
     return change
 
 
-def propose_embed_cover(changeset: Changeset, file: AudioFile, image: str) -> Change:
-    """Propose embedding an image (a library path) as the file's front cover."""
-    change = Change(file=file, kind="cover", payload={"image": image}, status="proposed")
+def propose_embed_cover(
+    changeset: Changeset,
+    file: AudioFile,
+    image: str | None = None,
+    *,
+    cover_image: str | None = None,
+    label: str | None = None,
+    replace: bool = False,
+) -> Change:
+    """Propose embedding an image as the file's front cover: a library path, or a
+    CoverImage (by its sha1, described by label). With replace, the file's present cover
+    (a thumbnail) makes way for it; otherwise the change fails if the file has one."""
+    payload: dict = {"image": image} if image else {"cover_image": cover_image, "label": label}
+    if replace:
+        payload["replace"] = True
+    change = Change(file=file, kind="cover", payload=payload, status="proposed")
     changeset.changes.append(change)
     return change
 
@@ -167,7 +180,10 @@ def describe(change: Change) -> str:
     if change.kind == "move":
         return f"move {move_source(change)} -> {change.payload['to']}"
     if change.kind == "cover":
-        return f"embed {change.payload['image']} as the cover of {change.file.path}"
+        image = change.payload.get("image") or change.payload.get("label")
+        if change.payload.get("replace"):
+            return f"replace the cover of {change.file.path} with {image}"
+        return f"embed {image} as the cover of {change.file.path}"
     if change.kind == "trash":
         keeper = change.payload.get("replacement_path")
         return f"trash {change.file.path}" + (f" (same audio as {keeper})" if keeper else "")
@@ -214,13 +230,7 @@ def apply(session: Session, changeset: Changeset, *, dry_run: bool = False) -> l
             elif change.kind == "trash":
                 change.undo = _trash(session, change)
             elif change.kind == "cover":
-                image = Path(change.file.library.root) / change.payload["image"]
-                if covers.embedded(_full_path(change.file)) is not None:
-                    # Undo would remove that one too; the catalog may predate cover info
-                    raise ChangeError("the file already has an embedded cover")
-                covers.embed(_full_path(change.file), image)
-                _refresh(session, change.file)
-                change.undo = {}
+                change.undo = _embed_cover(session, change)
             else:
                 raise ChangeError(f"Unknown change kind {change.kind}")
             change.status, change.error, change.applied_at = "applied", None, utcnow()
@@ -254,8 +264,7 @@ def undo(session: Session, changeset: Changeset, *, dry_run: bool = False) -> li
                 back = [[target, source] for source, target in change.undo.get("extras", [])]
                 _move(session, change.file, change.undo["from"], back)
             elif change.kind == "cover":
-                covers.remove(_full_path(change.file))
-                _refresh(session, change.file)
+                _unembed_cover(session, change)
             change.status = "undone"
             outcomes.append(Outcome(change, True, "undid " + describe(change)))
         except (ChangeError, OSError, ValueError, tags.UnsupportedFormat) as e:
@@ -295,6 +304,50 @@ def _retag(
     tags.write(path, fields, id3_version=id3_version)
     _refresh(session, file)
     return {"fields": {name: before.get(name) for name in fields}}
+
+
+def _embed_cover(session: Session, change: Change) -> dict:
+    path = _full_path(change.file)
+    if "cover_image" in change.payload:
+        stored = session.get(CoverImage, change.payload["cover_image"])
+        if stored is None:
+            raise ChangeError("the cover image is no longer in the catalog")
+        mime, data = stored.mime, stored.data
+    else:
+        image = Path(change.file.library.root) / change.payload["image"]
+        mime = covers.IMAGE_TYPES.get(image.suffix.lower())
+        if mime is None:
+            raise ChangeError(f"not a JPEG or PNG image: {image.name}")
+        data = image.read_bytes()
+    replace = bool(change.payload.get("replace"))
+    if not replace and covers.embedded(path) is not None:
+        # The catalog may predate cover info; a second cover would be a surprise
+        raise ChangeError("the file already has an embedded cover")
+    replaced = covers.embed_data(path, mime, data, replace=replace)
+    kept = [
+        {"sha1": covers.store_image(session, p.data, "replaced", mime=p.mime).sha1,
+         "mime": p.mime, "type": p.type, "desc": p.desc}
+        for p in replaced
+    ]  # fmt: skip
+    _refresh(session, change.file)
+    return {"embedded": covers.digest(data), "replaced": kept}
+
+
+def _unembed_cover(session: Session, change: Change) -> None:
+    path = _full_path(change.file)
+    if not change.undo or "embedded" not in change.undo:
+        covers.remove(path)  # applied by an earlier version, to a file without a cover
+    else:
+        restore = []
+        for picture in change.undo["replaced"]:
+            stored = session.get(CoverImage, picture["sha1"])
+            if stored is None:
+                raise ChangeError("the replaced cover is no longer in the catalog")
+            restore.append(
+                covers.Embedded(picture["mime"], stored.data, picture["type"], picture["desc"])
+            )
+        covers.unembed(path, change.undo["embedded"], restore)
+    _refresh(session, change.file)
 
 
 def _move(

@@ -9,7 +9,7 @@ import typer
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from . import __version__, loudness
+from . import __version__, coverart, loudness
 from . import album_merge as am
 from . import artists as art
 from . import changes as ch
@@ -162,19 +162,28 @@ def scan_command(
     ] = False,
     deep: Annotated[
         bool,
-        typer.Option("--deep", help="Also measure loudness (ReplayGain) of files not measured yet"),
+        typer.Option(
+            "--deep",
+            help="Also measure loudness (ReplayGain) and look up missing covers online",
+        ),
     ] = False,
     deep_limit: Annotated[
-        int | None, typer.Option(help="Measure at most this many files in this run")
+        int | None,
+        typer.Option(help="Measure at most this many files and look up this many albums"),
     ] = None,
+    min_pixels: Annotated[
+        int, typer.Option(help="Look up covers for tracks whose cover is smaller than this")
+    ] = cv.MIN_PIXELS,
 ) -> None:
     """Catalog new and changed files. Unchanged files are skipped.
 
     With --deep, files are also read in full to measure their loudness: ReplayGain 2.0
     track gain and peak, and album gain and peak once all of an album's tracks are
-    measured. The results are kept in the catalog, not written into the files (see
-    `aorg write-tags`). Measuring takes long; it continues where an interrupted run
-    stopped, and --deep-limit splits it into parts.
+    measured. Albums whose tracks have no cover, or one smaller than --min-pixels on a
+    side, and no big enough image in their folder, are looked up in MusicBrainz and the
+    Cover Art Archive. The results are kept in the catalog, not written into the files
+    (see `aorg write-tags` and `aorg covers`). It takes long; it continues where an
+    interrupted run stopped, and --deep-limit splits it into parts.
     """
     started = time.monotonic()
     last_report = 0.0
@@ -205,6 +214,7 @@ def scan_command(
         typer.echo(f"  ... and {len(stats.errors) - 20} more")
     if deep:
         _deep_scan(ctx, library, deep_limit)
+        _deep_covers(ctx, library, deep_limit, min_pixels)
 
 
 def _deep_scan(ctx: typer.Context, library: str | None, limit: int | None) -> None:
@@ -235,6 +245,38 @@ def _deep_scan(ctx: typer.Context, library: str | None, limit: int | None) -> No
         f"Measured {stats.measured} files, {len(stats.errors)} errors; album gain for "
         f"{stats.albums} albums ({time.monotonic() - started:.0f} s)"
     )
+
+
+def _deep_covers(ctx: typer.Context, library: str | None, limit: int | None, min_pixels: int):
+    started = time.monotonic()
+    last_report = 0.0
+
+    def progress(done: int, total: int, album: str, error: str | None) -> None:
+        nonlocal last_report
+        now = time.monotonic()
+        if error:
+            typer.echo(f"  ! {error}", err=True)
+        if now - last_report >= 5 or done == total:
+            last_report = now
+            typer.echo(f"  looked up {done}/{total}: {album}", err=True)
+
+    with _session(ctx) as session:
+        lib = _library(session, library)
+        checked = cv.refresh_sizes(session, lib)
+        if checked:
+            typer.echo(f"Read the size of {checked} embedded covers")
+        typer.echo("Looking up covers online (MusicBrainz, Cover Art Archive)")
+        stats = coverart.lookup_library(
+            session, lib, min_pixels=min_pixels, limit=limit, progress=progress
+        )
+    typer.echo(
+        f"Covers: {stats.found} found, {stats.not_found} not found, {len(stats.errors)} "
+        f"errors, of {stats.albums} albums to look up ({time.monotonic() - started:.0f} s)"
+    )
+    if stats.stopped:
+        typer.echo(f"Stopped: {stats.stopped}")
+    if stats.found:
+        typer.echo("Embed them with `aorg covers`.")
 
 
 @app.command("stats")
@@ -1059,25 +1101,33 @@ def covers_command(
     ctx: typer.Context,
     path: Annotated[str | None, typer.Option(help="Only folders under this path")] = None,
     limit: Annotated[int, typer.Option(help="Folders in a batch")] = 20,
+    min_pixels: Annotated[
+        int, typer.Option(help="Smaller covers (on a side) are thumbnails, to be replaced")
+    ] = cv.MIN_PIXELS,
     propose: Annotated[
         bool, typer.Option("--propose", help="Create a changeset for a batch")
     ] = False,
     library: LibraryOption = None,
 ) -> None:
-    """Embed folders' cover images into their tracks that have no embedded cover.
+    """Embed covers into tracks that have none, or only a thumbnail.
 
-    The image (cover/folder/front.jpg or .png, or the folder's only image) is copied
-    into every such track, so large images make every file bigger. Run `aorg scan
-    --reread` once first if the catalog is older than cover detection.
+    The cover is the folder's image (cover/folder/front.jpg or .png, or the folder's only
+    image), or when the folder has no image of at least --min-pixels, one that `aorg scan
+    --deep` found online. It is copied into every such track, so large images make every
+    file bigger. Run `aorg scan --reread` once first if the catalog is older than cover
+    detection.
     """
     with _session(ctx) as session:
         lib = _library(session, library)
-        found = cv.survey(session, lib, path_prefix=path)
+        found = cv.survey(session, lib, path_prefix=path, min_pixels=min_pixels)
         files = sum(len(f.files) for f in found.folders)
+        replaced = sum(len(f.replace) for f in found.folders)
+        online = sum(1 for f in found.folders if f.fetched is not None)
         typer.echo(
-            f"{len(found.folders)} folders have a cover image and {files} tracks without an "
-            f"embedded cover; {len(found.too_small)} more have only a thumbnail (under 200 "
-            f"pixels), and {found.without_image} folders with such tracks have no image."
+            f"{len(found.folders)} folders have a cover for {files} tracks without one "
+            f"({replaced} with a thumbnail to replace; {online} covers found online); "
+            f"{len(found.too_small)} more have only a thumbnail (under {min_pixels} pixels), "
+            f"and {found.without_image} folders with such tracks have no image."
         )
         batch = found.folders[:limit]
         if propose:
@@ -1091,10 +1141,13 @@ def covers_command(
                 )
             return
         for folder in batch:
-            size = "×".join(map(str, folder.dimensions)) if folder.dimensions else "?"
+            dims = folder.fetched.size if folder.fetched else folder.dimensions
+            size = "×".join(map(str, dims)) if dims else "?"
+            name = f"{folder.album} found online" if folder.fetched else folder.image_name
+            replace = f", replacing {len(folder.replace)} thumbnails" if folder.replace else ""
             typer.echo(
-                f"  {folder.folder}/: {folder.image.name} ({size}, "
-                f"{folder.image_size // 1024} KB) into {len(folder.files)} tracks"
+                f"  {folder.folder}/: {name} ({size}, {folder.image_size // 1024} KB) into "
+                f"{len(folder.files)} tracks{replace}"
             )
         if batch:
             typer.echo(f"Run with --propose to create a changeset for {len(batch)} folders.")

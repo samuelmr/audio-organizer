@@ -10,13 +10,16 @@ ID3 tags are written as version 2.3 or 2.4: by default the version the file alre
 has (2.3 for files without a tag, as more players read it), or the one asked for.
 """
 
+import base64
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import BinaryIO
 
 import mutagen
+from mutagen import MutagenError
 from mutagen.aac import AAC, AACError
+from mutagen.flac import Picture
 from mutagen.id3 import (
     COMM,
     ID3,
@@ -30,7 +33,9 @@ from mutagen.id3 import (
     Frames,
     ID3NoHeaderError,
 )
-from mutagen.mp4 import MP4FreeForm, MP4Tags
+from mutagen.mp4 import MP4Cover, MP4FreeForm, MP4Tags
+
+from . import images
 
 FIELDS = (
     "artist",
@@ -64,7 +69,9 @@ FIELDS = (
     "replaygain_album_peak",
 )
 
-# Not a field one edits: read() reports "1" in it when the file has an embedded picture
+# Not a field one edits: read() reports the size of the file's embedded cover in it,
+# "500x500" (or "?" when the image's size is unknown). Catalogs made before cover sizes
+# were read have "1" (see covers.refresh_sizes).
 EMBEDDED_COVER = "embedded_cover"
 
 # One field per ID3 text frame (ID3v2.3 TORY is read as TDOR)
@@ -198,19 +205,33 @@ def read(path: str | Path | BinaryIO) -> AudioInfo:
         _put(info.fields, name, values)
     _split_pair(info.fields, "tracknumber", "tracktotal")
     _split_pair(info.fields, "discnumber", "disctotal")
-    if _has_picture(audio, tags):
-        info.fields[EMBEDDED_COVER] = "1"
+    picture = front_picture(audio, tags)
+    if picture is not None:
+        info.fields[EMBEDDED_COVER] = images.format_size(images.dimensions(picture[1][:65536]))
     return info
 
 
-def _has_picture(audio, tags) -> bool:
+def front_picture(audio, tags) -> tuple[str, bytes] | None:
+    """(MIME type, data) of the embedded front cover (or first picture), or None."""
     if isinstance(tags, ID3):
-        return bool(tags.getall("APIC"))
-    if isinstance(tags, MP4Tags):
-        return bool(tags.get("covr"))
-    if getattr(audio, "pictures", None):  # FLAC
-        return True
-    return bool(tags is not None and hasattr(tags, "get") and tags.get("metadata_block_picture"))
+        pictures = sorted(tags.getall("APIC"), key=lambda p: p.type != 3)  # front cover first
+        if pictures:
+            return pictures[0].mime or "image/jpeg", pictures[0].data
+    elif isinstance(tags, MP4Tags):
+        if tags.get("covr"):
+            cover = tags["covr"][0]
+            mime = "image/png" if cover.imageformat == MP4Cover.FORMAT_PNG else "image/jpeg"
+            return mime, bytes(cover)
+    elif getattr(audio, "pictures", None):  # FLAC
+        picture = sorted(audio.pictures, key=lambda p: p.type != 3)[0]
+        return picture.mime, picture.data
+    elif tags is not None and hasattr(tags, "get") and tags.get("metadata_block_picture"):
+        try:  # Ogg Vorbis and Opus
+            picture = Picture(base64.b64decode(tags["metadata_block_picture"][0]))
+        except (ValueError, MutagenError):
+            return None
+        return picture.mime, picture.data
+    return None
 
 
 def _read_id3(tags: ID3) -> dict[str, list]:
