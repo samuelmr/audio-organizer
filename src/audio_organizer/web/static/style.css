@@ -118,6 +118,15 @@ a.details {
 }
 a.details:hover, a.details:focus-visible { color: var(--bg); background: var(--accent); }
 
+form.notice { background: var(--highlight); border-left: 3px solid var(--warn); padding: 0.5rem 0.75rem; margin: 1rem 0; }
+form.notice p { margin: 0 0 0.5rem; }
+.fields th[scope=row] { width: 14rem; font-weight: normal; }
+.covers { display: flex; flex-wrap: wrap; gap: 1.5rem; }
+.covers figure { margin: 0; }
+.covers img, .no-cover { width: 160px; height: 160px; object-fit: contain; border: 1px solid var(--line); }
+.no-cover { display: grid; place-items: center; color: var(--muted); font-size: 0.85rem; text-align: center; }
+.covers figcaption { color: var(--muted); font-size: 0.85rem; margin-top: 0.25rem; }
+
 .subtitle { color: var(--muted); margin-top: -0.5rem; }
 a.quiet { color: inherit; text-decoration: none; }
 a.quiet:hover { text-decoration: underline; }

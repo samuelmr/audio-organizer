@@ -143,7 +143,7 @@ class AudioInfo:
     fields: dict[str, str] = field(default_factory=dict)
 
 
-def _load(source: str | Path | BinaryIO) -> tuple[mutagen.FileType | None, object]:
+def load_tags(source: str | Path | BinaryIO) -> tuple[mutagen.FileType | None, object]:
     """mutagen's object for a file, and its tags.
 
     Raw AAC streams (ADTS) with an ID3 tag in front lead mutagen's format detection to
@@ -173,7 +173,7 @@ def _rewind(source) -> None:
 
 def read(path: str | Path | BinaryIO) -> AudioInfo:
     """Read a file given by path, or an open, seekable binary file object."""
-    audio, tags = _load(path)
+    audio, tags = load_tags(path)
     if audio is None:
         return AudioInfo()
     info = AudioInfo(
@@ -315,7 +315,7 @@ def _split_pair(fields: dict[str, str], number_key: str, total_key: str) -> None
 
 def id3_version(path: str | Path) -> int | None:
     """The ID3v2 version of a file's tag (3 or 4), or None if it has none."""
-    _, tags = _load(path)
+    _, tags = load_tags(path)
     if isinstance(tags, ID3) and tags.version >= (2, 3, 0):
         return 4 if tags.version >= (2, 4, 0) else 3
     return None
@@ -331,7 +331,7 @@ def write(
         raise ValueError(f"Unknown fields: {', '.join(sorted(unknown))}")
     if id3_version not in (None, 3, 4):
         raise ValueError(f"ID3 version must be 3 or 4, not {id3_version}")
-    audio, tags = _load(path)
+    audio, tags = load_tags(path)
     if audio is None:
         raise UnsupportedFormat(f"Not a recognized audio file: {path}")
     current = read(path).fields
@@ -340,8 +340,8 @@ def write(
         had_tag = tags is not None
         tags = tags if had_tag else ID3()
         _write_id3(tags, changes, merged)
-        version = id3_version or (_version(tags) if had_tag else 3)
-        _prepare_id3(tags, version)
+        version = id3_version or (id3_tag_version(tags) if had_tag else 3)
+        prepare_id3(tags, version)
         tags.save(path, v2_version=version)
         return
     had_tag = tags is not None
@@ -350,8 +350,8 @@ def write(
         tags = audio.tags
     if isinstance(tags, ID3):
         _write_id3(tags, changes, merged)
-        version = id3_version or (_version(tags) if had_tag else 3)
-        _prepare_id3(tags, version)
+        version = id3_version or (id3_tag_version(tags) if had_tag else 3)
+        prepare_id3(tags, version)
         audio.save(v2_version=version)
     elif isinstance(tags, MP4Tags):
         _write_mp4(tags, changes, merged)
@@ -425,11 +425,11 @@ def _write_id3(tags: ID3, changes: dict[str, str | None], merged: dict[str, str 
                 tags.add(frame_cls(encoding=3, text=[pair]))
 
 
-def _version(tags: ID3) -> int:
+def id3_tag_version(tags: ID3) -> int:
     return 4 if tags.version >= (2, 4, 0) else 3
 
 
-def _prepare_id3(tags: ID3, version: int) -> None:
+def prepare_id3(tags: ID3, version: int) -> None:
     """Make the frames fit the ID3 version: mutagen keeps tags as 2.4 in memory, so for
     2.3 they are converted (TDRC to TYER, TDOR to TORY, ...); the sort frames that
     iTunes and others also use in 2.3 are kept."""

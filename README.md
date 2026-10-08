@@ -84,6 +84,23 @@ your files until you approve and apply it:
 `aorg` never writes to a file that has changed since it was last scanned; rescan first.
 The tags each file had when it was first scanned are kept in the catalog.
 
+Besides title, artist, album, track and disc numbers, year and genre, these fields can
+be read and edited: original year, album artist and artist sort names, composer,
+conductor, grouping, subtitle, language, mood, a 1–5 star rating, the gnudb disc ID and
+ReplayGain values. They are written in the usual tags for MP3 (ID3), M4A and FLAC/Ogg,
+so that other players read them; moods also go to the standard MOOD tag rather than only
+the MusicMatch comment they may have come from.
+
+On a track's page in the web UI:
+
+- **Measure ReplayGain** measures the track's loudness with ffmpeg and stores the track
+  gain and peak in the catalog. Values that are not yet in the file are marked, and
+  **Write them to the file** proposes writing them.
+- When writing to MP3 files, you can keep their ID3 version or write ID3v2.3 or 2.4.
+  ID3v2.3 is read by more players and devices; both keep all of the fields above.
+- **Cover** shows the cover embedded in the file and the image in its folder, and can
+  embed the folder's image in a file that has none.
+
 ### Duplicates
 
 Files with identical audio are copies of one track, even when their tags and names
@@ -276,6 +293,8 @@ Design principles:
 | `album_merge.py` | Album folders holding the same album, and merging them |
 | `layout.py` | The folder layout template, and moving files into it |
 | `artists.py` | Artists' sort names and suggestions for them |
+| `loudness.py` | Measuring ReplayGain with ffmpeg |
+| `covers.py` | Embedded cover images: reading, embedding, removing |
 | `tracks.py` | Streaming tracks with resolved metadata, in batches |
 | `playlists.py` | Playlist rules, generation in one pass, import and export |
 | `playlist_formats.py` | M3U, JSON-LD and HTML playlist files |

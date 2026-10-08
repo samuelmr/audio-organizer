@@ -14,7 +14,7 @@ from pathlib import Path, PurePosixPath
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import pathparse, tags
+from . import covers, pathparse, tags
 from .models import AudioFile, Change, Changeset, PlaylistEntry, utcnow
 from .provenance import resolve, set_value, set_values
 
@@ -40,11 +40,21 @@ def new_changeset(session: Session, description: str) -> Changeset:
     return changeset
 
 
-def propose_retag(changeset: Changeset, file: AudioFile, fields: dict[str, str | None]) -> Change:
+def propose_retag(
+    changeset: Changeset,
+    file: AudioFile,
+    fields: dict[str, str | None],
+    id3_version: int | None = None,
+) -> Change:
+    """Propose setting tag fields (None removes one). id3_version (3 or 4) writes ID3 tags
+    in that version; by default the file keeps its own."""
     unknown = set(fields) - set(tags.FIELDS)
     if unknown:
         raise ChangeError(f"Not tag fields: {', '.join(sorted(unknown))}")
-    change = Change(file=file, kind="retag", payload={"fields": fields}, status="proposed")
+    payload: dict = {"fields": fields}
+    if id3_version:
+        payload["id3_version"] = id3_version
+    change = Change(file=file, kind="retag", payload=payload, status="proposed")
     changeset.changes.append(change)
     return change
 
@@ -84,20 +94,47 @@ def propose_trash(
     return change
 
 
-def propose_tag_sync(changeset: Changeset, file: AudioFile) -> Change | None:
-    """Propose writing the resolved values (e.g. manual edits) into the file's tags,
-    for the fields where they differ from what the tags now say."""
+def propose_embed_cover(changeset: Changeset, file: AudioFile, image: str) -> Change:
+    """Propose embedding an image (a library path) as the file's front cover."""
+    change = Change(file=file, kind="cover", payload={"image": image}, status="proposed")
+    changeset.changes.append(change)
+    return change
+
+
+# Sources whose values are meant to end up in the files: the user's edits, measurements
+# and lookups. Values inferred from paths or neighbouring files are only evidence.
+WRITTEN_SOURCES = ("manual", "analysis", "gnudb")
+
+
+def unwritten(file: AudioFile) -> dict[str, str]:
+    """The fields whose chosen value is an edit, a measurement or a lookup that differs
+    from what the file's tags say: values not yet written into the file."""
     resolved = resolve(file.values)
     current = {fv.field: fv.value for fv in file.values if fv.source == "tag"}
-    fields: dict[str, str | None] = {}
-    for name in tags.FIELDS:
-        if name in resolved and resolved[name].value != current.get(name):
-            fields[name] = resolved[name].value
-    return propose_retag(changeset, file, fields) if fields else None
+    return {
+        name: resolved[name].value
+        for name in tags.FIELDS
+        if name in resolved
+        and resolved[name].source in WRITTEN_SOURCES
+        and resolved[name].value != current.get(name)
+    }
+
+
+def propose_tag_sync(
+    changeset: Changeset, file: AudioFile, id3_version: int | None = None
+) -> Change | None:
+    """Propose writing the resolved values (e.g. manual edits) into the file's tags,
+    for the fields where they differ from what the tags now say."""
+    fields: dict[str, str | None] = dict(unwritten(file))
+    return propose_retag(changeset, file, fields, id3_version) if fields else None
 
 
 def propose_manual_edit(
-    session: Session, changeset: Changeset, file: AudioFile, values: dict[str, str | None]
+    session: Session,
+    changeset: Changeset,
+    file: AudioFile,
+    values: dict[str, str | None],
+    id3_version: int | None = None,
 ) -> Change | None:
     """Store manual values for a file (None removes one) and propose writing the result
     into its tags. The change remembers the earlier manual values, so undoing it also
@@ -108,7 +145,7 @@ def propose_manual_edit(
     earlier = {fv.field: fv.value for fv in file.values if fv.source == "manual"}
     for name, value in values.items():
         set_value(session, file, "manual", name, value)
-    change = propose_tag_sync(changeset, file)
+    change = propose_tag_sync(changeset, file, id3_version)
     if change is not None:
         change.payload = {**change.payload, "manual_before": {n: earlier.get(n) for n in values}}
     return change
@@ -129,6 +166,8 @@ def set_status(changes: list[Change], status: str) -> int:
 def describe(change: Change) -> str:
     if change.kind == "move":
         return f"move {move_source(change)} -> {change.payload['to']}"
+    if change.kind == "cover":
+        return f"embed {change.payload['image']} as the cover of {change.file.path}"
     if change.kind == "trash":
         keeper = change.payload.get("replacement_path")
         return f"trash {change.file.path}" + (f" (same audio as {keeper})" if keeper else "")
@@ -164,18 +203,26 @@ def apply(session: Session, changeset: Changeset, *, dry_run: bool = False) -> l
         try:
             _check_unchanged(change.file)
             if change.kind == "retag":
-                change.undo = _retag(session, change.file, change.payload["fields"])
+                change.undo = _retag(
+                    session, change.file, change.payload["fields"],
+                    change.payload.get("id3_version"),
+                )  # fmt: skip
             elif change.kind == "move":
                 change.undo = _move(
                     session, change.file, change.payload["to"], change.payload.get("extras")
                 )
             elif change.kind == "trash":
                 change.undo = _trash(session, change)
+            elif change.kind == "cover":
+                image = Path(change.file.library.root) / change.payload["image"]
+                covers.embed(_full_path(change.file), image)
+                _refresh(session, change.file)
+                change.undo = {}
             else:
                 raise ChangeError(f"Unknown change kind {change.kind}")
             change.status, change.error, change.applied_at = "applied", None, utcnow()
             outcomes.append(Outcome(change, True, describe(change)))
-        except (ChangeError, OSError, tags.UnsupportedFormat) as e:
+        except (ChangeError, OSError, ValueError, tags.UnsupportedFormat) as e:
             change.status, change.error = "failed", str(e)
             outcomes.append(Outcome(change, False, f"{describe(change)}: FAILED: {e}"))
         session.commit()
@@ -203,9 +250,12 @@ def undo(session: Session, changeset: Changeset, *, dry_run: bool = False) -> li
             elif change.kind == "move":
                 back = [[target, source] for source, target in change.undo.get("extras", [])]
                 _move(session, change.file, change.undo["from"], back)
+            elif change.kind == "cover":
+                covers.remove(_full_path(change.file))
+                _refresh(session, change.file)
             change.status = "undone"
             outcomes.append(Outcome(change, True, "undid " + describe(change)))
-        except (ChangeError, OSError, tags.UnsupportedFormat) as e:
+        except (ChangeError, OSError, ValueError, tags.UnsupportedFormat) as e:
             change.error = f"undo failed: {e}"
             outcomes.append(Outcome(change, False, f"undo {describe(change)}: FAILED: {e}"))
         session.commit()
@@ -234,10 +284,12 @@ def _refresh(session: Session, file: AudioFile) -> None:
     set_values(session, file, "path", pathparse.parse(file.path))
 
 
-def _retag(session: Session, file: AudioFile, fields: dict[str, str | None]) -> dict:
+def _retag(
+    session: Session, file: AudioFile, fields: dict[str, str | None], id3_version: int | None = None
+) -> dict:
     path = _full_path(file)
     before = tags.read(path).fields
-    tags.write(path, fields)
+    tags.write(path, fields, id3_version=id3_version)
     _refresh(session, file)
     return {"fields": {name: before.get(name) for name in fields}}
 

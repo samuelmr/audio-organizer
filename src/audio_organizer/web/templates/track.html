@@ -1,6 +1,18 @@
 {% extends "base.html" %}
 {% from "_macros.html" import play %}
 {% set library = file.library %}
+{% set labels = {
+  "title": "Title", "artist": "Artist", "album": "Album", "albumartist": "Album artist",
+  "tracknumber": "Track", "tracktotal": "Tracks", "discnumber": "Disc", "disctotal": "Discs",
+  "date": "Year or date", "originaldate": "Original year", "genre": "Genre",
+  "compilation": "Compilation (1)", "albumartistsort": "Album artist sort name",
+  "artistsort": "Artist sort name", "composer": "Composer", "conductor": "Conductor",
+  "grouping": "Grouping", "subtitle": "Subtitle", "language": "Language (e.g. fin, eng)",
+  "mood": "Mood", "rating": "Rating", "tempo": "Tempo", "situation": "Situation",
+  "preference": "Preference", "replaygain_track_gain": "Track gain",
+  "replaygain_track_peak": "Track peak", "replaygain_album_gain": "Album gain",
+  "replaygain_album_peak": "Album peak", "discid": "gnudb disc ID",
+} %}
 {% block title %}{{ resolved.title.value if "title" in resolved else file.path }} – audio-organizer{% endblock %}
 {% block content %}
 <h1>{{ resolved.title.value if "title" in resolved else file.path.rsplit("/", 1)[-1] }}</h1>
@@ -13,21 +25,46 @@
  {% if folder %}<a href="{{ url(base, folder=folder) }}">Files in this folder</a>{% endif %}
 </p>
 <p class="details">
- {{ file.format or "unknown format" }}{% if file.duration %}, {{ file.duration | duration }}{% endif %}{% if file.bitrate %}, {{ file.bitrate // 1000 }} kbps{% endif %}
+ {{ file.format or "unknown format" }}{% if file.duration %}, {{ file.duration | duration }}{% endif %}{% if file.bitrate %}, {{ file.bitrate // 1000 }} kbps{% endif %}{% if id3_version %}, ID3v2.{{ id3_version }} tag{% endif %}
  {% if file.missing %}<strong>– missing from disk</strong>{% endif %}
  {% if file.error %}<strong>– {{ file.error }}</strong>{% endif %}
 </p>
 
+{% if unwritten %}
+<form method="post" action="/tracks/{{ file.id }}/write" class="notice">
+ <p><strong>{{ unwritten | length }} value{{ "s" if unwritten | length > 1 }} not yet in the file</strong>
+ ({% for name in unwritten %}{{ labels.get(name, name) }}{% if not loop.last %}, {% endif %}{% endfor %}).</p>
+ {% if id3_version %}<label>Write as <select name="id3_version">
+  <option value="">ID3v2.{{ id3_version }}, as now</option>
+  <option value="3">ID3v2.3</option><option value="4">ID3v2.4</option>
+ </select></label>{% endif %}
+ <button class="primary">Write them to the file…</button>
+ <span class="hint">You review the change before it is applied.</span>
+</form>
+{% endif %}
+
+<form id="replaygain" method="post" action="/tracks/{{ file.id }}/replaygain"></form>
+
 <form method="post" action="/tracks/{{ file.id }}/edit">
+{% for title, names in groups %}
+<h2>{{ title }}</h2>
 <table class="fields">
- <thead><tr><th>Field</th><th>Value</th><th>From</th><th>Other sources</th></tr></thead>
  <tbody>
- {% for name in fields %}
+ {% for name in names %}
   {% set r = resolved.get(name) %}
   <tr>
-   <th scope="row"><label for="f-{{ name }}">{{ name }}</label></th>
-   <td><input id="f-{{ name }}" name="{{ name }}" value="{{ r.value if r else '' }}"></td>
-   <td class="source">{{ r.source if r else "" }}</td>
+   <th scope="row"><label for="f-{{ name }}">{{ labels.get(name, name) }}</label></th>
+   <td>
+    {% if name == "rating" %}
+     <select id="f-{{ name }}" name="rating">
+      <option value="">–</option>
+      {% for stars in range(1, 6) %}<option value="{{ stars }}" {% if r and r.value == stars | string %}selected{% endif %}>{{ "★" * stars }}{{ "☆" * (5 - stars) }}</option>{% endfor %}
+     </select>
+    {% else %}
+     <input id="f-{{ name }}" name="{{ name }}" value="{{ r.value if r else '' }}">
+    {% endif %}
+   </td>
+   <td class="source">{{ r.source if r else "" }}{% if name in unwritten %} <span class="flag" title="Not yet written to the file">not in file</span>{% endif %}</td>
    <td class="others">
     {% if r %}{% for source, value in r.candidates.items() if source != r.source %}
      <span class="{% if value != r.value %}differs{% endif %}">{{ source }}: {{ value }}</span>
@@ -35,16 +72,50 @@
    </td>
   </tr>
  {% endfor %}
+ </tbody>
+</table>
+{% if title.startswith("Loudness") and on_disk %}
+<p><button form="replaygain">Measure ReplayGain</button>
+<span class="hint">Measures this track's loudness (track gain and peak). Album gain needs the whole album and comes with batch measuring.</span></p>
+{% endif %}
+{% endfor %}
+{% if extra %}
+<h2>Other</h2>
+<table class="fields"><tbody>
  {% for name in extra %}
   <tr><th scope="row">{{ name }}</th><td>{{ resolved[name].value }}</td><td class="source">{{ resolved[name].source }}</td><td></td></tr>
  {% endfor %}
- </tbody>
-</table>
+</tbody></table>
+{% endif %}
 <p class="hint">Changed fields are saved as your edits and proposed as a change to the
 file's tags, which you review before it is applied. Emptying a field you edited earlier
 drops your edit.</p>
-<button>Save</button>
+<p>
+ {% if id3_version %}<label>Write as <select name="id3_version">
+  <option value="">ID3v2.{{ id3_version }}, as now</option>
+  <option value="3">ID3v2.3</option><option value="4">ID3v2.4</option>
+ </select></label>{% endif %}
+ <button class="primary">Save</button>
+</p>
 </form>
+
+<h2>Cover</h2>
+<div class="covers">
+ <figure>
+  {% if has_cover %}<img src="/tracks/{{ file.id }}/cover" alt="Cover embedded in the file" width="160">{% else %}<div class="no-cover">No cover in the file</div>{% endif %}
+  <figcaption>In the file</figcaption>
+ </figure>
+ <figure>
+  {% if folder_cover %}<img src="/tracks/{{ file.id }}/cover?folder=1" alt="Cover image in the folder" width="160">{% else %}<div class="no-cover">No cover image</div>{% endif %}
+  <figcaption>In the folder{% if folder_cover %}: {{ folder_cover }}{% endif %}</figcaption>
+ </figure>
+</div>
+{% if folder_cover and not has_cover %}
+<form method="post" action="/tracks/{{ file.id }}/cover">
+ <button>Embed the folder's cover in the file…</button>
+ <span class="hint">You review the change before it is applied; undo removes it again.</span>
+</form>
+{% endif %}
 
 {% if copies %}
 <h2>Identical audio</h2>

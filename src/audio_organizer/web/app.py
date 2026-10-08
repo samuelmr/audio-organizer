@@ -14,7 +14,13 @@ from typing import Annotated
 from urllib.parse import urlencode, urlsplit
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    Response,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import String, func, or_, select
@@ -23,6 +29,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from .. import album_merge as am
 from .. import artists as art
 from .. import changes as ch
+from .. import covers, loudness, tags
 from .. import duplicates as du
 from .. import layout as lo
 from .. import playlists as pl
@@ -42,6 +49,18 @@ from ..tags import FIELDS
 from ..tracks import present
 
 HERE = Path(__file__).parent
+# The track page's sections, in the order shown; every tag field is in one of them
+FIELD_GROUPS = (
+    ("Track", ("title", "artist", "album", "albumartist", "tracknumber", "tracktotal",
+               "discnumber", "disctotal", "date", "originaldate", "genre", "compilation")),
+    ("Sorting", ("albumartistsort", "artistsort")),
+    ("Credits", ("composer", "conductor", "grouping", "subtitle", "language")),
+    ("Mood and rating", ("mood", "rating", "tempo", "situation", "preference")),
+    ("Loudness (ReplayGain)", ("replaygain_track_gain", "replaygain_track_peak",
+                               "replaygain_album_gain", "replaygain_album_peak")),
+    ("Identification", ("discid",)),
+)  # fmt: skip
+assert sorted(f for _, names in FIELD_GROUPS for f in names) == sorted(FIELDS)
 PAGE_SIZE = 50
 M = EffectiveMetadata
 SORTS = {
@@ -224,10 +243,78 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         )
         manual = {fv.field: fv.value for fv in file.values if fv.source == "manual"}
         extra = sorted(set(resolved) - set(FIELDS))
+        path = Path(file.library.root) / file.path
+        on_disk = path.is_file()
+        folder_cover = sy.find_cover(path.parent) if on_disk else None
         return render(
-            request, "track.html", file=file, resolved=resolved, fields=FIELDS, extra=extra,
-            manual=manual, copies=copies, snapshot=snapshot,
+            request, "track.html", file=file, resolved=resolved, groups=FIELD_GROUPS,
+            extra=extra, manual=manual, copies=copies, snapshot=snapshot,
+            unwritten=ch.unwritten(file), on_disk=on_disk,
+            has_cover=on_disk and covers.embedded(path) is not None,
+            folder_cover=folder_cover.name if folder_cover else None,
+            id3_version=tags.id3_version(path) if on_disk else None,
         )  # fmt: skip
+
+    def _id3_version(form) -> int | None:
+        value = str(form.get("id3_version", ""))
+        return int(value) if value in ("3", "4") else None
+
+    @app.post("/tracks/{file_id}/write")
+    async def write_track(request: Request, file_id: int, session: Session = SessionDep):
+        """Propose writing the values not yet in the file (edits, measurements, lookups)."""
+        file = _file(session, file_id)
+        form = await request.form()
+        changeset = ch.new_changeset(session, f"Write tags of {file.path}")
+        change = ch.propose_tag_sync(changeset, file, _id3_version(form))
+        if change is None:
+            session.expunge(changeset)
+            return _redirect(f"/tracks/{file.id}", "The file already has these values")
+        session.commit()
+        return _redirect(f"/changes/{changeset.id}", "Review the change to the file")
+
+    @app.post("/tracks/{file_id}/replaygain")
+    def measure_replaygain(file_id: int, session: Session = SessionDep):
+        file = _file(session, file_id)
+        try:
+            values = loudness.measure_file(session, file)
+        except loudness.LoudnessError as e:
+            return _redirect(f"/tracks/{file.id}", str(e))
+        session.commit()
+        return _redirect(
+            f"/tracks/{file.id}",
+            f"Measured: gain {values['replaygain_track_gain']}, peak "
+            f"{values['replaygain_track_peak']}; not yet in the file",
+        )
+
+    @app.get("/tracks/{file_id}/cover")
+    def track_cover(file_id: int, folder: bool = False, session: Session = SessionDep):
+        """The file's embedded cover, or with folder=1 the cover image in its folder."""
+        file = _file(session, file_id)
+        path = Path(file.library.root) / file.path
+        if folder:
+            image = sy.find_cover(path.parent)
+            if image is None:
+                raise HTTPException(404, "No cover image in the folder")
+            return FileResponse(image, media_type=covers.IMAGE_TYPES[image.suffix.lower()])
+        found = covers.embedded(path) if path.is_file() else None
+        if found is None:
+            raise HTTPException(404, "No embedded cover")
+        mime, data = found
+        return Response(data, media_type=mime)
+
+    @app.post("/tracks/{file_id}/cover")
+    def embed_cover(file_id: int, session: Session = SessionDep):
+        """Propose embedding the folder's cover image into the file."""
+        file = _file(session, file_id)
+        path = Path(file.library.root) / file.path
+        image = sy.find_cover(path.parent)
+        if image is None:
+            return _redirect(f"/tracks/{file.id}", "There is no cover image in the folder")
+        changeset = ch.new_changeset(session, f"Embed the cover of {file.path}")
+        relative = image.relative_to(file.library.root).as_posix()
+        ch.propose_embed_cover(changeset, file, relative)
+        session.commit()
+        return _redirect(f"/changes/{changeset.id}", "Review the change to the file")
 
     @app.get("/tracks/{file_id}/audio")
     def track_audio(file_id: int, session: Session = SessionDep):
@@ -269,7 +356,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         if not values:
             return _redirect(f"/tracks/{file.id}", "Nothing changed")
         changeset = ch.new_changeset(session, f"Manual edit of {file.path}")
-        change = ch.propose_manual_edit(session, changeset, file, values)
+        change = ch.propose_manual_edit(session, changeset, file, values, _id3_version(form))
         if change is None:
             session.expunge(changeset)
             session.commit()

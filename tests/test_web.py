@@ -253,6 +253,52 @@ def test_audio(web, Session):
     assert web.get("/tracks/99999/audio").status_code == 404
 
 
+def test_track_page_sections(web, Session):
+    file_id = _file_id(Session, "Texas/Greatest Hits/11 Halo.mp3")
+    page = web.get(f"/tracks/{file_id}").text
+    for heading in ("Sorting", "Credits", "Mood and rating", "Loudness (ReplayGain)"):
+        assert f"<h2>{heading}</h2>" in page
+    assert "ID3v2.3 tag" in page and 'name="rating"' in page
+    assert "not yet in the file" not in page
+
+
+def test_measure_and_write_replaygain(web, Session):
+    file_id = _file_id(Session, "Texas/Greatest Hits/11 Halo.mp3")
+    page = web.post(f"/tracks/{file_id}/replaygain").text
+    assert "Measured: gain" in page and "not in file" in page
+    assert "2 values not yet in the file" in page
+
+    response = web.post(f"/tracks/{file_id}/write", data={"id3_version": "4"})
+    assert re.fullmatch(r"/changes/\d+", response.url.path)
+    assert "will be retagged as ID3v2.4" in response.text
+    changeset_path = response.url.path
+    web.post(f"{changeset_path}/status", data={"action": "approve-all"})
+    web.post(f"{changeset_path}/apply", data={})
+    path = web.root / "Texas/Greatest Hits/11 Halo.mp3"
+    assert tags.id3_version(path) == 4
+    assert tags.read(path).fields["replaygain_track_gain"].endswith(" dB")
+    assert "not yet in the file" not in web.get(f"/tracks/{file_id}").text
+
+
+def test_embed_folder_cover(web, Session):
+    folder = web.root / "Texas/Greatest Hits"
+    (folder / "Folder.jpg").write_bytes(b"\xff\xd8\xff\xe0 cover")
+    file_id = _file_id(Session, "Texas/Greatest Hits/11 Halo.mp3")
+    page = web.get(f"/tracks/{file_id}").text
+    assert "No cover in the file" in page and "Folder.jpg" in page
+    assert web.get(f"/tracks/{file_id}/cover?folder=1").content.startswith(b"\xff\xd8")
+    assert web.get(f"/tracks/{file_id}/cover").status_code == 404
+
+    response = web.post(f"/tracks/{file_id}/cover")
+    assert "will get the cover image" in response.text
+    changeset_path = response.url.path
+    web.post(f"{changeset_path}/status", data={"action": "approve-all"})
+    web.post(f"{changeset_path}/apply", data={})
+    assert web.get(f"/tracks/{file_id}/cover").content == (folder / "Folder.jpg").read_bytes()
+    web.post(f"{changeset_path}/undo")
+    assert web.get(f"/tracks/{file_id}/cover").status_code == 404
+
+
 def test_artists_page(web):
     page = web.get("/libraries/music/artists", params={"show": "all"}).text
     assert "2 artists" in page and "P!nk" in page
