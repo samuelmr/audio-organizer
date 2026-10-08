@@ -8,10 +8,17 @@ file anywhere below it is a candidate, and its files are proposed for the trash.
 files known to be litter are proposed by default; anything else (a PDF booklet, a text
 file) is listed for a look, and proposed only on request. The folders themselves
 disappear when the last file leaves them.
+
+A playlist (.m3u, .html, ...) that names tracks is not litter, whatever its extension:
+only one without any track in it is. The other way round, an album folder that has no
+cover.jpg or cover.png but another image (AlbumArtSmall.jpg, Folder.jpg) gets a proposal
+to rename the biggest of them to cover.jpg or cover.png, the name sync and the players
+look for.
 """
 
 import fnmatch
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
@@ -20,6 +27,7 @@ from sqlalchemy.orm import Session
 from . import changes as ch
 from .models import Library
 from .scanner import AUDIO_EXTENSIONS
+from .sync import COVER_NAMES, IMAGE_EXTENSIONS
 
 # Names (case-insensitive patterns) of files that are safe to trash once the music is gone.
 LITTER = (
@@ -29,10 +37,45 @@ LITTER = (
     "*.md5", "*.nfo", "*.url",
 )  # fmt: skip
 
+PLAYLIST_EXTENSIONS = (".m3u", ".m3u8", ".pls", ".wpl", ".html", ".htm", ".json")
+PLAYLIST_READ = 2_000_000  # bytes; generated playlists are small
+_TRACK = re.compile(
+    "|".join(re.escape(e) + r"\b" for e in sorted(AUDIO_EXTENSIONS)) + "|MusicRecording",
+    re.IGNORECASE,
+)
+
 
 def is_litter(name: str) -> bool:
     name = name.lower()
     return name.startswith("._") or any(fnmatch.fnmatchcase(name, p) for p in LITTER)
+
+
+def names_tracks(path: Path) -> bool:
+    """Whether a playlist-like file names tracks (an audio file name, or a schema.org
+    MusicRecording), which makes it a playlist worth keeping. Unreadable counts as yes."""
+    if path.suffix.lower() not in PLAYLIST_EXTENSIONS:
+        return False
+    try:
+        with open(path, "rb") as f:
+            return _TRACK.search(f.read(PLAYLIST_READ).decode("utf-8", "ignore")) is not None
+    except OSError:
+        return True
+
+
+def cover_rename(directory: Path, names: list[str]) -> tuple[str, str] | None:
+    """For an album folder's non-audio files: (image, new name) when the folder has no
+    cover.jpg/.jpeg/.png but another image. The biggest image becomes cover.jpg or
+    cover.png, following its format. None if the folder has a cover or no image."""
+    images = [n for n in names if not n.startswith("._") and n.lower().endswith(IMAGE_EXTENSIONS)]
+    stems = {os.path.splitext(n)[0].lower() for n in images}
+    if not images or COVER_NAMES[0] in stems:
+        return None
+    try:
+        best = max(images, key=lambda n: (os.stat(directory / n).st_size, n))
+    except OSError:
+        return None
+    extension = ".png" if best.lower().endswith(".png") else ".jpg"
+    return best, COVER_NAMES[0] + extension
 
 
 @dataclass
@@ -45,6 +88,7 @@ class Folder:
 @dataclass
 class Survey:
     folders: list[Folder] = field(default_factory=list)
+    renames: list[tuple[str, str]] = field(default_factory=list)  # library paths (from, to)
 
     @property
     def litter(self) -> int:
@@ -57,14 +101,16 @@ class Survey:
 
 def survey(library: Library, path_prefix: str | None = None) -> Survey:
     """Folders under the library root (optionally only under path_prefix) without any audio
-    file below them, that still hold files. Hidden and system folders ('.', '@' prefixes,
-    including the trash) are not looked into, nor are folders inside one that holds
-    audio (an album's Scans or Artwork folder)."""
+    file below them, that still hold files, and album folders lacking a cover image.
+    Hidden and system folders ('.', '@' prefixes, including the trash) are not looked
+    into, nor are folders inside one that holds audio (an album's Scans or Artwork
+    folder)."""
     root = Path(library.root)
     start = root / path_prefix if path_prefix else root
     found = Survey()
     _walk(root, start, found)
     found.folders.sort(key=lambda f: f.path)
+    found.renames.sort()
     return found
 
 
@@ -89,28 +135,42 @@ def _walk(root: Path, directory: Path, found: Survey) -> bool:
             files.append(entry.name)
         else:
             has_audio = beside = True
+    relative = PurePosixPath(*directory.relative_to(root).parts)
     if beside:  # folders inside an album folder (Scans, Artwork) belong to the album
         del found.folders[before:]
+        rename = cover_rename(directory, files)
+        if rename and directory != root:
+            found.renames.append((str(relative / rename[0]), str(relative / rename[1])))
     if has_audio:
         return True
     if files and directory != root:
-        relative = PurePosixPath(*directory.relative_to(root).parts)
         folder = Folder(str(relative))
         for name in files:
-            (folder.litter if is_litter(name) else folder.other).append(str(relative / name))
+            litter = is_litter(name) and not names_tracks(directory / name)
+            (folder.litter if litter else folder.other).append(str(relative / name))
         found.folders.append(folder)
     return False
 
 
 def propose(
-    session: Session, library: Library, found: Survey, description: str, *, everything: bool = False
+    session: Session,
+    library: Library,
+    found: Survey,
+    description: str,
+    *,
+    everything: bool = False,
+    covers: bool = True,
 ) -> ch.Changeset | None:
     """Propose trashing the litter of the surveyed folders (all their files with
-    everything). None if there is nothing to trash."""
+    everything) and renaming images to cover images (unless covers is off). None if
+    there is nothing to do."""
     paths = [p for f in found.folders for p in (f.litter + (f.other if everything else []))]
-    if not paths:
+    renames = found.renames if covers else []
+    if not paths and not renames:
         return None
     changeset = ch.new_changeset(session, description, "leftovers")
+    for source, target in renames:
+        ch.propose_rename_file(changeset, library, source, target)
     for path in paths:
         ch.propose_trash_leftover(changeset, library, path)
     session.commit()

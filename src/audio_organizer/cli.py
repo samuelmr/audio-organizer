@@ -1222,15 +1222,19 @@ def leftovers(
     Merging albums and trashing duplicates leave Folder.jpg, desktop.ini and old
     generated playlists behind, which keeps their folders from being removed. Looks at the
     disk, not the catalog. Only files known as litter are proposed (images such as
-    Folder.jpg, playlists, logs, system files); other files are listed, and proposed with
-    --all. A folder is removed when its last file is trashed.
+    Folder.jpg, playlists that name no tracks, logs, system files); other files are listed,
+    and proposed with --all. A folder is removed when its last file is trashed.
+
+    An album folder with no cover.jpg or cover.png but another image (AlbumArtSmall.jpg)
+    gets a proposal to rename its biggest image to cover.jpg or cover.png.
     """
     with _session(ctx) as session:
         lib = _library(session, library)
         found = lf.survey(lib, path.strip("/") if path else None)
         typer.echo(
             f"{len(found.folders)} folders without music hold {found.litter} litter files "
-            f"and {found.other} other files."
+            f"and {found.other} other files; {len(found.renames)} album folders have an "
+            f"image to rename to cover."
         )
         for folder in found.folders:
             typer.echo(f"  {folder.path}/")
@@ -1238,6 +1242,8 @@ def leftovers(
                 typer.echo(f"    litter  {PurePosixPath(name).name}")
             for name in folder.other:
                 typer.echo(f"    other   {PurePosixPath(name).name}")
+        for source, target in found.renames:
+            typer.echo(f"  rename {source} -> {PurePosixPath(target).name}")
         if not propose:
             return
         changeset = lf.propose(
@@ -1248,7 +1254,7 @@ def leftovers(
             typer.echo("Nothing to trash.")
             return
         typer.echo(
-            f"Changeset {changeset.id}: {len(changeset.changes)} files. "
+            f"Changeset {changeset.id}: {len(changeset.changes)} changes. "
             f"Review with `aorg changes show {changeset.id}`."
         )
 

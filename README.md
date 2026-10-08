@@ -299,8 +299,13 @@ removed. `aorg leftovers` looks at the disk for folders without any music below 
     aorg leftovers --path Texas --propose --all   # also files that are not known litter
 
 Only known litter is proposed (folder images, playlists, logs, system files); other
-files, such as a PDF booklet, are listed and only proposed with `--all`. A folder goes
-when its last file is trashed, and undoing the changeset brings both back.
+files, such as a PDF booklet, are listed and only proposed with `--all`. A playlist
+(.m3u, .html, .json, ...) that names tracks is a playlist, not litter, and is kept. A
+folder goes when its last file is trashed, and undoing the changeset brings both back.
+
+The same run looks at album folders: one without a cover.jpg or cover.png, but with
+another image (AlbumArtSmall.jpg, Folder.jpg), gets a proposal to rename the biggest
+image to cover.jpg (or cover.png for a PNG), the name sync and the players look for.
 
 ### Folder layout
 

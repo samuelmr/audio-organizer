@@ -40,6 +40,10 @@
     {% elif change.kind == "leftover" %}
      <div class="file"><span class="path">{{ change.payload.path }}</span>
       <span class="verdict trash">{{ "was trashed" if done else ("was restored" if change.status == "undone" else "will be trashed") }}</span></div>
+    {% elif change.kind == "rename" %}
+     <div class="file"><span class="path">{{ change.payload.path }}</span>
+      <span class="verdict">{{ "was renamed to" if done else ("was renamed back" if change.status == "undone" else "will be renamed to") }}</span></div>
+     <div class="file indent"><span class="path">{{ change.payload.to }}</span></div>
     {% elif change.kind == "cover" %}
      <div class="file">{{ play(change.file.id, change.file.path) }} <span class="path">{{ change.file.path }}</span>
       <span class="verdict">{% if change.payload.replace %}{{ "had its thumbnail cover replaced by" if done else "will have its thumbnail cover replaced by" }}{% else %}{{ "got" if done else "will get" }}{% endif %} the cover image</span></div>

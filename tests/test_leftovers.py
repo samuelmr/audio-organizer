@@ -15,6 +15,9 @@ def library(Session, tmp_path):
         "Texas/Greatest Hits/desktop.ini": b"ini",
         "Texas/Greatest Hits/Booklet.pdf": b"pdf",
         "Texas/Greatest Hits/._Folder.jpg": b"apple",
+        "Texas/Greatest Hits/halo.m3u": b"#EXTM3U\n../The Greatest Hits/01 Halo.mp3\n",
+        "Texas/The Greatest Hits/AlbumArtSmall.jpg": b"small",
+        "Texas/The Greatest Hits/Folder.jpg": b"bigger image",
         "Playlists/Old/best.m3u": b"#EXTM3U",
         "Playlists/Old/best.html": b"<html>",
         ".aorg-trash/1/Gone/Folder.jpg": b"trashed",
@@ -41,10 +44,13 @@ def test_survey_finds_folders_without_music(library):
     found = lo.survey(lib)
 
     assert {f.path: (len(f.litter), len(f.other)) for f in found.folders} == {
-        "Texas/Greatest Hits": (3, 1),
+        "Texas/Greatest Hits": (3, 2),  # a playlist naming tracks is not litter
         "Playlists/Old": (2, 0),
     }
-    assert (found.litter, found.other) == (5, 1)
+    assert (found.litter, found.other) == (5, 2)
+    assert found.renames == [
+        ("Texas/The Greatest Hits/Folder.jpg", "Texas/The Greatest Hits/cover.jpg")
+    ]
 
 
 def test_survey_limited_to_a_path(library):
@@ -63,7 +69,12 @@ def test_propose_leaves_other_files_unless_asked(library):
     assert all(o.ok for o in outcomes), [o.message for o in outcomes]
     assert changeset.source == "leftovers"
     assert not (root / "Playlists").exists()  # emptied folders go
-    assert [p.name for p in (root / "Texas/Greatest Hits").iterdir()] == ["Booklet.pdf"]
+    assert sorted(p.name for p in (root / "Texas/Greatest Hits").iterdir()) == [
+        "Booklet.pdf",
+        "halo.m3u",
+    ]
+    assert (root / "Texas/The Greatest Hits/cover.jpg").read_bytes() == b"bigger image"
+    assert not (root / "Texas/The Greatest Hits/Folder.jpg").exists()
     assert (root / ".aorg-trash" / str(changeset.id) / "Playlists/Old/best.m3u").is_file()
 
 
@@ -74,7 +85,7 @@ def test_everything_takes_other_files_too(library):
     _approve_all(changeset)
     ch.apply(session, changeset)
 
-    assert not (root / "Texas/Greatest Hits").exists()
+    assert not (root / "Texas/Greatest Hits").exists()  # even the playlist, when asked
     assert (root / "Texas/The Greatest Hits/Scans/folder.jpg").is_file()
 
 
@@ -89,6 +100,8 @@ def test_undo_restores_files_and_folders(library):
     assert all(o.ok for o in outcomes), [o.message for o in outcomes]
     assert (root / "Playlists/Old/best.m3u").read_bytes() == b"#EXTM3U"
     assert (root / "Texas/Greatest Hits/Folder.jpg").is_file()
+    assert (root / "Texas/The Greatest Hits/Folder.jpg").is_file()
+    assert not (root / "Texas/The Greatest Hits/cover.jpg").exists()
     assert {c.status for c in changeset.changes} == {"undone"}
 
 
@@ -107,4 +120,21 @@ def test_a_changed_file_is_left_alone(library):
 def test_nothing_to_propose(library):
     session, lib, _ = library
 
-    assert lo.propose(session, lib, lo.survey(lib, "Texas/The Greatest Hits"), "x") is None
+    found = lo.survey(lib, "Texas/The Greatest Hits")
+
+    assert lo.propose(session, lib, found, "x", covers=False) is None
+
+
+def test_a_folder_with_a_cover_is_left_alone(tmp_path):
+    album = tmp_path / "Album"
+    album.mkdir()
+    for name in ("Cover.JPG", "Folder.png"):
+        (album / name).write_bytes(b"x")
+
+    assert lo.cover_rename(album, ["Cover.JPG", "Folder.png"]) is None
+
+
+def test_the_cover_keeps_the_images_format(tmp_path):
+    (tmp_path / "AlbumArtSmall.png").write_bytes(b"x")
+
+    assert lo.cover_rename(tmp_path, ["AlbumArtSmall.png"]) == ("AlbumArtSmall.png", "cover.png")

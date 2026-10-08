@@ -170,6 +170,8 @@ class Change(Base):
                   file (a folder's cover.jpg); "replace": true to overwrite a thumbnail
     kind "leftover": payload {"library_id", "path", "size", "mtime_ns"}: trash a file the
                   catalog does not know (litter in a folder without music); has no file
+    kind "rename": payload {"library_id", "path", "to", "size", "mtime_ns"}: rename a file
+                  the catalog does not know (an album's image to cover.jpg); has no file
     status: proposed -> approved | rejected; approved -> applied | failed; applied -> undone
     """
 

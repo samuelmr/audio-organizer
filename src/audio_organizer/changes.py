@@ -127,6 +127,26 @@ def propose_trash_leftover(changeset: Changeset, library: Library, path: str) ->
     return change
 
 
+def propose_rename_file(changeset: Changeset, library: Library, path: str, to: str) -> Change:
+    """Propose renaming a file the catalog does not know (an album's image to cover.jpg),
+    within its folder. Size and modification time are recorded, as for a leftover."""
+    st = (Path(library.root) / path).stat()
+    change = Change(
+        file=None,
+        kind="rename",
+        payload={
+            "library_id": library.id,
+            "path": path,
+            "to": to,
+            "size": st.st_size,
+            "mtime_ns": st.st_mtime_ns,
+        },
+        status="proposed",
+    )
+    changeset.changes.append(change)
+    return change
+
+
 def propose_embed_cover(
     changeset: Changeset,
     file: AudioFile,
@@ -241,6 +261,8 @@ def describe(change: Change) -> str:
         if change.payload.get("replace"):
             return f"replace {change.payload['to']} with {change.payload['label']}"
         return f"save {change.payload['label']} as {change.payload['to']}"
+    if change.kind == "rename":
+        return f"rename {change.payload['path']} -> {change.payload['to']}"
     if change.kind == "leftover":
         return f"trash {change.payload['path']} (not music)"
     if change.kind == "trash":
@@ -277,7 +299,7 @@ def apply(session: Session, changeset: Changeset, *, dry_run: bool = False) -> l
             outcomes.append(Outcome(change, True, "would " + describe(change)))
             continue
         try:
-            if change.kind not in ("image", "leftover"):  # which have no track to protect
+            if change.kind not in ("image", "leftover", "rename"):  # which have no track to protect
                 _check_unchanged(change.file)
             if change.kind == "retag":
                 change.undo = _retag(
@@ -292,6 +314,8 @@ def apply(session: Session, changeset: Changeset, *, dry_run: bool = False) -> l
                 change.undo = _trash(session, change)
             elif change.kind == "leftover":
                 change.undo = _trash_leftover(session, change)
+            elif change.kind == "rename":
+                change.undo = _rename_file(session, change)
             elif change.kind == "cover":
                 change.undo = _embed_cover(session, change)
             elif change.kind == "image":
@@ -321,6 +345,8 @@ def undo(session: Session, changeset: Changeset, *, dry_run: bool = False) -> li
                 _untrash(session, change)
             elif change.kind == "leftover":
                 _untrash_leftover(session, change)
+            elif change.kind == "rename":
+                _unrename_file(session, change)
             elif change.kind != "image":
                 _check_unchanged(change.file)
             if change.kind == "retag":
@@ -534,6 +560,31 @@ def _trash_leftover(session: Session, change: Change) -> dict:
     shutil.move(source, target)
     _remove_empty_dirs(source.parent, root)
     return {"trash": trash_path}
+
+
+def _rename_file(session: Session, change: Change) -> dict:
+    root = Path(session.get(Library, change.payload["library_id"]).root)
+    path, to = change.payload["path"], change.payload["to"]
+    try:
+        st = (root / path).stat()
+    except FileNotFoundError:
+        raise ChangeError(f"{path} no longer exists") from None
+    if (st.st_size, st.st_mtime_ns) != (change.payload["size"], change.payload["mtime_ns"]):
+        raise ChangeError(f"{path} has changed since it was proposed")
+    if (root / to).exists():
+        raise ChangeError(f"{to} already exists")
+    os.rename(root / path, root / to)
+    return {}
+
+
+def _unrename_file(session: Session, change: Change) -> None:
+    root = Path(session.get(Library, change.payload["library_id"]).root)
+    path, to = change.payload["path"], change.payload["to"]
+    if not (root / to).is_file():
+        raise ChangeError(f"{to} no longer exists")
+    if (root / path).exists():
+        raise ChangeError(f"{path} exists again; move it away first")
+    os.rename(root / to, root / path)
 
 
 def _untrash_leftover(session: Session, change: Change) -> None:
