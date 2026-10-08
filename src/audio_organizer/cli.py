@@ -519,6 +519,10 @@ def target_add(
 ) -> None:
     """Add a bucket to sync a library to. Credentials come from the AWS environment
     variables, ~/.aws or --profile; they are not stored in the catalog."""
+    try:
+        sy.check_target_name(name)
+    except ValueError as e:
+        raise typer.BadParameter(str(e)) from None
     with _session(ctx) as session:
         lib = _library(session, library)
         session.add(SyncTarget(
@@ -531,13 +535,57 @@ def target_add(
 
 @target_app.command("list")
 def target_list(ctx: typer.Context) -> None:
+    """The sync targets: name, library, bucket and prefix, and how much of the bucket
+    this catalog knows (see `aorg target show` for the layout)."""
     with _session(ctx) as session:
         for target in session.scalars(select(SyncTarget).order_by(SyncTarget.name)):
-            endpoint = f" at {target.endpoint_url}" if target.endpoint_url else ""
-            typer.echo(
-                f"{target.name}\t{target.library.name} -> "
-                f"s3://{target.bucket}/{target.prefix}{endpoint}"
-            )
+            typer.echo(_target_line(session, target))
+
+
+def _target_line(session: Session, target: SyncTarget) -> str:
+    where = f"s3://{target.bucket}/{target.prefix}"
+    extras = [
+        f"{label} {value}"
+        for label, value in (
+            ("endpoint", target.endpoint_url),
+            ("region", target.region),
+            ("profile", target.profile),
+        )
+        if value
+    ]
+    objects, last = sy.remote_summary(session, target)
+    state = f"{objects} objects, last synced {last:%Y-%m-%d %H:%M}" if objects else "never synced"
+    return f"{target.name}\t{target.library.name} -> {where}\t{state}" + "".join(
+        f"\t{e}" for e in extras
+    )
+
+
+@target_app.command("show")
+def target_show(ctx: typer.Context, name: str) -> None:
+    """One target, and where its tracks, covers and playlists go in the bucket."""
+    with _session(ctx) as session:
+        target = _target(session, name)
+        typer.echo(_target_line(session, target))
+        typer.echo("")
+        typer.echo("Layout:")
+        for line in sy.bucket_layout(target):
+            typer.echo(f"  {line}")
+
+
+@target_app.command("rename")
+def target_rename(ctx: typer.Context, name: str, new_name: str) -> None:
+    """Rename a target (what is in the bucket is not touched)."""
+    try:
+        sy.check_target_name(new_name)
+    except ValueError as e:
+        raise typer.BadParameter(str(e)) from None
+    with _session(ctx) as session:
+        target = _target(session, name)
+        if session.scalar(select(SyncTarget).where(SyncTarget.name == new_name)):
+            raise typer.BadParameter(f"There is already a target named {new_name!r}")
+        target.name = new_name
+        session.commit()
+    typer.echo(f"Renamed {name} to {new_name}")
 
 
 @target_app.command("reconcile")

@@ -194,6 +194,34 @@ def test_sync_preview(web, Session):
     assert web.get("/sync/nothing").status_code == 404
 
 
+def test_sync_target_with_slash_in_legacy_name_is_reachable(web, Session):
+    with Session() as session:
+        library = session.scalar(select(Library))
+        session.add(SyncTarget(name="old/backup", library=library, bucket="music"))
+        session.commit()
+    page = web.get("/sync").text
+    assert 'href="/sync/old/backup"' in page
+    assert "3 upload" in web.get("/sync/old/backup").text
+
+
+def test_sync_target_form(web, Session):
+    form = {"name": "nas", "library": "music", "bucket": "tunes", "prefix": "/mp3/",
+            "endpoint_url": "https://s3.example.com", "region": "", "profile": "home"}  # fmt: skip
+    assert "Add a sync target" in web.get("/sync/targets/new").text
+    bad = web.post("/sync/targets", data={**form, "name": "a/b"})
+    assert bad.status_code == 400 and "Invalid target name" in bad.text
+    assert web.post("/sync/targets", data={**form, "bucket": ""}).status_code == 400
+    assert web.post("/sync/targets", data=form, follow_redirects=False).status_code == 303
+    with Session() as session:
+        target = session.scalar(select(SyncTarget))
+        assert (target.name, target.bucket, target.prefix, target.profile, target.region) == (
+            "nas", "tunes", "mp3", "home", None)  # fmt: skip
+        target_id = target.id
+    assert "s3://tunes/mp3/Artist/Album/01 Title.mp3" in web.get(f"/sync/targets/{target_id}").text
+    assert web.post(f"/sync/targets/{target_id}", data={**form, "name": "nas2"}).status_code == 200
+    assert web.post("/sync/targets", data={**form, "name": "nas2"}).status_code == 400  # taken
+
+
 def _keep_choices(page: str) -> dict[str, list[str]]:
     """The keep radio buttons of the duplicates page: name -> values, checked first."""
     choices: dict[str, list[str]] = {}

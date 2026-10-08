@@ -25,9 +25,24 @@
 {% if targets %}
 <p>Choose a target to see what a sync would do. Planning checks every album folder for a
 cover image, which can take a while on a network share.</p>
-<ul>{% for t in targets %}<li><a href="/sync/{{ t.name }}">{{ t.name }}</a> – {{ t.library.name }} → s3://{{ t.bucket }}/{{ t.prefix }}</li>{% endfor %}</ul>
+<table>
+ <thead><tr><th>Target</th><th>Library</th><th>Bucket</th><th>Known in bucket</th><th></th></tr></thead>
+ <tbody>
+ {% for t in targets %}
+  {% set objects, last = summaries[t.id] %}
+  <tr>
+   <td><a href="/sync/{{ t.name | urlencode }}">{{ t.name }}</a></td>
+   <td>{{ t.library.name }}</td>
+   <td class="path">s3://{{ t.bucket }}/{{ t.prefix }}{% if t.endpoint_url %} at {{ t.endpoint_url }}{% endif %}</td>
+   <td>{% if objects %}{{ objects }} objects, last synced {{ last.strftime("%Y-%m-%d %H:%M") }}{% else %}never synced{% endif %}</td>
+   <td><a href="/sync/targets/{{ t.id }}">Edit</a></td>
+  </tr>
+ {% endfor %}
+ </tbody>
+</table>
 {% else %}
-<p>No sync targets. Add one with <code>aorg target add NAME --bucket BUCKET</code>.</p>
+<p>No sync targets yet. A target is a bucket (and optional folder inside it) that a library is copied to.</p>
 {% endif %}
+<p><a href="/sync/targets/new">Add a target</a></p>
 {% endif %}
 {% endblock %}

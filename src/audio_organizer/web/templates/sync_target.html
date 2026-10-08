@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}{{ "Edit target" if target else "Add target" }} – audio-organizer{% endblock %}
+{% block content %}
+<h1>{{ "Sync target " ~ target.name if target else "Add a sync target" }}</h1>
+<p>A target says where a library goes: a bucket on AWS S3 or an S3-compatible service
+(MinIO, Backblaze, Wasabi…), and optionally a folder (prefix) inside it. Tracks keep their
+library paths below the prefix, with their metadata as object metadata; playlists go to
+<code>playlists/</code>. Credentials are never stored here: they come from the AWS
+environment variables or <code>~/.aws</code>, or from the named profile.</p>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% set v = values or {} %}
+<form method="post" action="{{ '/sync/targets/' ~ target.id if target else '/sync/targets' }}">
+ <p><label>Name <input name="name" required pattern="[A-Za-z0-9][A-Za-z0-9._\-]*" value="{{ v.get('name', target.name if target else '') }}"></label>
+  <span class="hint">letters, digits, . _ -</span></p>
+ <p><label>Library
+  <select name="library">
+   {% for lib in libraries %}<option value="{{ lib.name }}" {% if lib.name == v.get('library', target.library.name if target else '') %}selected{% endif %}>{{ lib.name }}</option>{% endfor %}
+  </select></label></p>
+ <p><label>Bucket <input name="bucket" required value="{{ v.get('bucket', target.bucket if target else '') }}"></label></p>
+ <p><label>Prefix <input name="prefix" value="{{ v.get('prefix', target.prefix if target else '') }}"></label>
+  <span class="hint">folder inside the bucket; empty for the bucket's root</span></p>
+ <p><label>Endpoint URL <input name="endpoint_url" size="40" value="{{ v.get('endpoint_url', (target.endpoint_url or '') if target else '') }}"></label>
+  <span class="hint">only for S3-compatible services other than AWS</span></p>
+ <p><label>Region <input name="region" value="{{ v.get('region', (target.region or '') if target else '') }}"></label></p>
+ <p><label>AWS profile <input name="profile" value="{{ v.get('profile', (target.profile or '') if target else '') }}"></label>
+  <span class="hint">a profile in ~/.aws; empty for the default credentials</span></p>
+ <p><button type="submit">Save</button> <a href="/sync">Cancel</a></p>
+</form>
+{% if layout %}
+<h2>What goes where</h2>
+<pre>{% for line in layout %}{{ line }}
+{% endfor %}</pre>
+<p class="hint">If the bucket already holds your music, run <code>aorg target reconcile {{ target.name }}</code> once before the first sync.</p>
+{% endif %}
+{% endblock %}

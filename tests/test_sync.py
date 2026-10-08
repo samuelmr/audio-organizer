@@ -168,6 +168,24 @@ def test_metadata_numbers_are_plain_integers():
             "disctotal": None, "year": "2017", "length": "200400"}  # fmt: skip
 
 
+def test_metadata_player_fields():
+    fields = {
+        "originaldate": "1996-05-01T00:00:00Z", "composer": "Elfman", "rating": "4",
+        "mood": "Upbeat; Happy", "replaygain_track_gain": "-7.23 dB",
+        "replaygain_album_gain": "+3.00 dB", "replaygain_track_peak": "0.988000",
+        "replaygain_album_peak": "x", "artistsort": "Texas", "albumartistsort": "Texas",
+    }  # fmt: skip
+    meta = sy.track_metadata(100, fields, "Music/Texas/cover.jpg")
+    assert meta == {
+        "originaldate": "1996-05-01", "composer": "Elfman", "rating": "4",
+        "mood": "Upbeat%2CHappy", "replaygaintrackgain": "-7.23",
+        "replaygainalbumgain": "3.00", "replaygaintrackpeak": "0.988000",
+        "artistsort": "Texas", "albumartistsort": "Texas", "length": "100000",
+        "image": "Music%2FTexas%2Fcover.jpg",
+    }  # fmt: skip
+    assert "rating" not in sy.track_metadata(100, {"rating": "7"}, None)
+
+
 def test_playlists_are_synced(setup, s3):
     session, root, target, store = setup
     session.add(Playlist(library=target.library, name="Texas: hits", rule="artist=texas",
@@ -190,3 +208,20 @@ def test_playlists_are_synced(setup, s3):
     plan = sy.plan(session, target)
     assert plan.counts() == {"upload": 3}
     assert sorted(plan.stale) == playlist_keys
+
+
+def test_target_commands(setup, tmp_path):
+    from typer.testing import CliRunner
+
+    from audio_organizer.cli import app
+
+    session, root, target, store = setup
+    db = ["--db", str(session.get_bind().url.database)]
+    runner = CliRunner()
+    bad = runner.invoke(app, [*db, "target", "add", "a/b", "--bucket", "x"])
+    assert bad.exit_code != 0 and "Invalid target name" in bad.output
+    result = runner.invoke(app, [*db, "target", "show", target.name])
+    assert result.exit_code == 0, result.output
+    assert "never synced" in result.output and "playlists/" in result.output
+    assert runner.invoke(app, [*db, "target", "rename", target.name, "nas"]).exit_code == 0
+    assert "nas" in runner.invoke(app, [*db, "target", "list"]).output

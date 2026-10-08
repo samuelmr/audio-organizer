@@ -2,9 +2,11 @@
 
 Objects are stored under the target's prefix at the file's library path, with the
 track's resolved metadata (not its raw tags) as object metadata: artist, albumartist,
-album, title, tracknumber, tracktotal, discnumber, disctotal, year, genre, length (ms)
-and image (the key of the album's cover image), percent-encoded; numbers as plain
-integers.
+album, title, genre, composer, tracknumber, tracktotal, discnumber, disctotal, year,
+originaldate, length (ms), image (the full key of the album's cover image), rating (1-5),
+mood (comma-separated), replaygaintrackgain / replaygainalbumgain (signed dB, no unit),
+replaygaintrackpeak / replaygainalbumpeak (linear) and artistsort, albumartistsort,
+percent-encoded; numbers as plain integers. The player reads these; keep them in step.
 
 Sync is planned first and only does what is needed, to save bandwidth:
 - unchanged files are skipped
@@ -20,14 +22,16 @@ import hashlib
 import json
 import os
 import posixpath
+import re
 import unicodedata
 from collections.abc import Callable, Iterable
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from .models import AudioFile, RemoteObject, SyncTarget, utcnow
@@ -100,12 +104,78 @@ def store_for(target: SyncTarget) -> ObjectStore:
     )
 
 
+_TARGET_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+
+def check_target_name(name: str) -> str:
+    """The name, if it can be typed on a command line and used in a URL; else ValueError.
+    Letters, digits, '.', '_' and '-': a '/' would make the target unreachable on the web."""
+    if not _TARGET_NAME.fullmatch(name):
+        raise ValueError(
+            f"Invalid target name {name!r}: use letters, digits, '.', '_' and '-', "
+            "starting with a letter or digit"
+        )
+    return name
+
+
+def remote_summary(session: Session, target: SyncTarget) -> tuple[int, datetime | None]:
+    """How many objects this catalog knows in the bucket, and when it last synced one."""
+    count, last = session.execute(
+        select(func.count(RemoteObject.id), func.max(RemoteObject.synced_at)).where(
+            RemoteObject.target_id == target.id
+        )
+    ).one()
+    return count, last
+
+
+def bucket_layout(target: SyncTarget, example: str = "Artist/Album/01 Title.mp3") -> list[str]:
+    """Where a target puts things, as s3 URLs: for explaining the bucket to the user."""
+    base = f"s3://{target.bucket}/{target.prefix.strip('/')}".rstrip("/")
+    folder = posixpath.dirname(example)
+    return [
+        f"{base}/{example}  (tracks: the library path)",
+        f"{base}/{folder}/cover.jpg  (the album's cover, from the track's `image` metadata)",
+        f"{base}/playlists/<name>.m3u, .json, .html  (playlists, with relative entries)",
+    ]
+
+
 def object_key(target: SyncTarget, relpath: str) -> str:
     """The key of a library path. NFC, so that the key does not depend on whether the
     file system reported the name decomposed (as macOS often does)."""
     prefix = target.prefix.strip("/")
     key = f"{prefix}/{relpath}" if prefix else relpath
     return unicodedata.normalize("NFC", key)
+
+
+_ORIGINAL_DATE = re.compile(r"\s*(\d{4}(?:-\d{2}(?:-\d{2})?)?)(?:\D.*)?", re.DOTALL)
+_DECIMAL = re.compile(r"\s*([+-]?\d+(?:\.\d+)?)\s*(?:dB)?\s*", re.IGNORECASE)
+
+
+def _original_date(value: str | None) -> str | None:
+    """YYYY, YYYY-MM or YYYY-MM-DD, whatever longer timestamp the tag held."""
+    match = _ORIGINAL_DATE.fullmatch(value or "")
+    return match.group(1) if match else None
+
+
+def _decimal(value: str | None) -> str | None:
+    """A ReplayGain value as a plain decimal: "-7.23 dB" -> "-7.23", "+3.00 dB" -> "3.00"
+    (no unit, no plus sign); None for anything that is not a number."""
+    match = _DECIMAL.fullmatch(value or "")
+    if not match:
+        return None
+    text = match.group(1)
+    return text.removeprefix("+")
+
+
+def _rating(value: str | None) -> str | None:
+    number = parse_number(value)
+    return str(number) if number and 1 <= number <= 5 else None
+
+
+def _mood(value: str | None) -> str | None:
+    """Moods as a comma-separated list; files separate them with ; or ,."""
+    parts = [p.strip() for p in re.split(r"[;,]", value or "") if p.strip()]
+    return ",".join(parts) or None
 
 
 def track_metadata(
@@ -125,7 +195,17 @@ def track_metadata(
         "discnumber": number(parse_number(fields.get("discnumber"))),
         "disctotal": number(parse_number(fields.get("disctotal"))),
         "year": number(parse_year(fields.get("date"))),
+        "originaldate": _original_date(fields.get("originaldate")),
         "genre": fields.get("genre"),
+        "composer": fields.get("composer"),
+        "rating": _rating(fields.get("rating")),
+        "mood": _mood(fields.get("mood")),
+        "replaygaintrackgain": _decimal(fields.get("replaygain_track_gain")),
+        "replaygainalbumgain": _decimal(fields.get("replaygain_album_gain")),
+        "replaygaintrackpeak": _decimal(fields.get("replaygain_track_peak")),
+        "replaygainalbumpeak": _decimal(fields.get("replaygain_album_peak")),
+        "artistsort": fields.get("artistsort"),
+        "albumartistsort": fields.get("albumartistsort"),
         "length": str(round(duration * 1000)) if duration else None,
         "image": cover_key,
     }

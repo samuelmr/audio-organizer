@@ -895,9 +895,67 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
     @app.get("/sync", response_class=HTMLResponse)
     def sync_targets(request: Request, session: Session = SessionDep):
         targets = session.scalars(select(SyncTarget).order_by(SyncTarget.name)).all()
-        return render(request, "sync.html", targets=targets, target=None, plan=None)
+        summaries = {t.id: sy.remote_summary(session, t) for t in targets}
+        return render(
+            request, "sync.html", targets=targets, target=None, plan=None, summaries=summaries
+        )
 
-    @app.get("/sync/{name}", response_class=HTMLResponse)
+    @app.get("/sync/targets/new", response_class=HTMLResponse)
+    def new_sync_target(request: Request, session: Session = SessionDep):
+        libraries = session.scalars(select(Library).order_by(Library.name)).all()
+        return render(
+            request, "sync_target.html", target=None, libraries=libraries, layout=[], values={}
+        )
+
+    @app.get("/sync/targets/{target_id:int}", response_class=HTMLResponse)
+    def edit_sync_target(request: Request, target_id: int, session: Session = SessionDep):
+        target = _sync_target(session, target_id)
+        libraries = session.scalars(select(Library).order_by(Library.name)).all()
+        return render(
+            request, "sync_target.html", target=target, libraries=libraries,
+            layout=sy.bucket_layout(target), values={},
+        )  # fmt: skip
+
+    @app.post("/sync/targets")
+    @app.post("/sync/targets/{target_id:int}")
+    async def save_sync_target(
+        request: Request, target_id: int | None = None, session: Session = SessionDep
+    ):
+        """Add a target, or change one. Credentials are not stored: only the name of an
+        AWS profile, if one is wanted."""
+        form = await request.form()
+        values = {k: str(form.get(k, "")).strip() for k in (
+            "name", "library", "bucket", "prefix", "endpoint_url", "region", "profile"
+        )}  # fmt: skip
+        target = _sync_target(session, target_id) if target_id else None
+        libraries = session.scalars(select(Library).order_by(Library.name)).all()
+        library = next((lib for lib in libraries if lib.name == values["library"]), None)
+        try:
+            sy.check_target_name(values["name"])
+            if library is None:
+                raise ValueError("Choose a library")
+            if not values["bucket"]:
+                raise ValueError("A bucket name is needed")
+            other = session.scalar(select(SyncTarget).where(SyncTarget.name == values["name"]))
+            if other is not None and other is not target:
+                raise ValueError(f"There is already a target named {values['name']}")
+        except ValueError as e:
+            return render(
+                request, "sync_target.html", status_code=400, target=target,
+                libraries=libraries, layout=[], values=values, error=str(e),
+            )  # fmt: skip
+        if target is None:
+            target = SyncTarget(name=values["name"], library=library, bucket=values["bucket"])
+            session.add(target)
+        target.name, target.library, target.bucket = values["name"], library, values["bucket"]
+        target.prefix = values["prefix"].strip("/")
+        target.endpoint_url = values["endpoint_url"] or None
+        target.region = values["region"] or None
+        target.profile = values["profile"] or None
+        session.commit()
+        return _redirect("/sync", f"Saved target {target.name}")
+
+    @app.get("/sync/{name:path}", response_class=HTMLResponse)
     def sync_plan(request: Request, name: str, session: Session = SessionDep):
         """What a sync would do. Planning looks for album covers in every folder, which
         takes a while on a network share; running the sync is left to `aorg sync`."""
@@ -918,6 +976,13 @@ def _library(session: Session, name: str) -> Library:
     if library is None:
         raise HTTPException(404, f"No library named {name}")
     return library
+
+
+def _sync_target(session: Session, target_id: int) -> SyncTarget:
+    target = session.get(SyncTarget, target_id)
+    if target is None:
+        raise HTTPException(404, "No such sync target")
+    return target
 
 
 def _file(session: Session, file_id: int) -> AudioFile:

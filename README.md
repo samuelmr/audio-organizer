@@ -26,13 +26,19 @@ database URL.
 
     aorg library add music /Volumes/Multimedia/Music
 
-**Object storage.** Add a sync target for a bucket. The endpoint is needed for
-S3-compatible services other than AWS. Credentials are not stored by `aorg`: they come
-from the `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` environment variables,
-`~/.aws/credentials`, or a named profile (`--profile`).
+**Object storage.** A sync target says where a library is copied to: a bucket, and
+optionally a folder inside it (`--prefix`). Names use letters, digits, `.`, `_` and `-`.
+The endpoint is needed for S3-compatible services other than AWS. Credentials are not
+stored by `aorg`: they come from the `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`
+environment variables, `~/.aws/credentials`, or a named profile (`--profile`).
 
-    aorg target add backup --bucket music --endpoint-url https://s3.example.com
-    aorg target list
+    aorg target add aws --bucket my-music --prefix mp3 --region eu-north-1
+    aorg target add nas --bucket music --endpoint-url https://s3.example.com
+    aorg target list                  # bucket, prefix, objects known, last sync
+    aorg target show nas              # and where tracks, covers and playlists go
+    aorg target rename nas home
+
+Targets can also be added and edited on the web UI's Sync page.
 
 ## Usage
 
@@ -316,13 +322,33 @@ HTML page.
     aorg sync backup --dry-run
     aorg sync backup
 
-Tracks are stored at their path in the library (under the target's `--prefix`, if
-given), with these object metadata, percent-encoded: `artist`, `albumartist`, `album`,
-`title`, `tracknumber`, `tracktotal`, `discnumber`, `disctotal`, `year`, `genre`,
-`length` (milliseconds) and `image` (the key of the album's cover image, which is
-uploaded too). Numbers are plain integers: a track number tagged "02." or "2/12" is
-stored as `2`. The values are the catalog's, so your edits are synced even before they
-are written into the files.
+The bucket looks like this (below the target's prefix, if any):
+
+    Artist/Album/01 Title.mp3        tracks, at their library paths
+    Artist/Album/cover.jpg           the album's cover image
+    playlists/Best Of Upbeat.m3u     playlists as .m3u, .json and .html
+
+Tracks carry these object metadata (`x-amz-meta-*`), all optional, lowercase,
+percent-encoded UTF-8, and left out when empty:
+
+| Key | Value |
+|---|---|
+| `artist`, `albumartist`, `album`, `title`, `genre`, `composer` | text |
+| `artistsort`, `albumartistsort` | text |
+| `tracknumber`, `tracktotal`, `discnumber`, `disctotal` | plain integers: "02." or "2/12" is `2` |
+| `year` | four digits |
+| `originaldate` | `YYYY`, `YYYY-MM` or `YYYY-MM-DD` |
+| `length` | milliseconds |
+| `image` | the full bucket key of the album's cover image, which is uploaded too |
+| `rating` | integer 1–5 |
+| `mood` | comma-separated |
+| `replaygaintrackgain`, `replaygainalbumgain` | signed decimal dB without unit, e.g. `-7.23` |
+| `replaygaintrackpeak`, `replaygainalbumpeak` | linear float, e.g. `0.988` |
+
+The values are the catalog's, so your edits are synced even before they are written
+into the files. The size limit of S3 user metadata is 2 KB; the longest values are cut
+first. Adding keys to the list changes the metadata of already synced tracks: the next
+sync updates them with server-side copies, without uploading the audio.
 
 All playlists of the library are synced too, as `.m3u`, `.json` and `.html` files in
 `playlists/` (under the prefix), referring to the tracks by relative paths
