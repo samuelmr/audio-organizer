@@ -109,7 +109,7 @@ def _quote(text: str) -> str:
     return '"' + re.sub(r'(["\\])', r"\\\1", text) + '"'
 
 
-def _comparable(title: str) -> str:
+def comparable_title(title: str) -> str:
     """A title without what editions add: "(Remastered)", "[Disc 2]", "CD1"."""
     title = re.sub(r"[(\[{][^)\]}]*[)\]}]", " ", title)
     title = re.sub(r"\b(disc|disk|cd)\s*\d+\s*$", " ", title, flags=re.IGNORECASE)
@@ -119,11 +119,11 @@ def _comparable(title: str) -> str:
 def candidates(release_groups: list[dict], album: str) -> list[str]:
     """MusicBrainz ids of the release groups that are the album: a good search score and
     the same title once editions' additions are left out."""
-    wanted = _comparable(album)
+    wanted = comparable_title(album)
     return [
         rg["id"]
         for rg in release_groups
-        if int(rg.get("score", 0)) >= MIN_SCORE and _comparable(rg.get("title", "")) == wanted
+        if int(rg.get("score", 0)) >= MIN_SCORE and comparable_title(rg.get("title", "")) == wanted
     ]
 
 

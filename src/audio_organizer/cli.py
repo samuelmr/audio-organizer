@@ -9,7 +9,7 @@ import typer
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from . import __version__, coverart, loudness
+from . import __version__, coverart, gnudb, loudness
 from . import album_merge as am
 from . import artists as art
 from . import changes as ch
@@ -168,7 +168,8 @@ def scan_command(
         bool,
         typer.Option(
             "--deep",
-            help="Also measure loudness (ReplayGain) and look up missing covers online",
+            help="Also measure loudness (ReplayGain), look up albums in gnudb and missing "
+            "covers online",
         ),
     ] = False,
     deep_limit: Annotated[
@@ -186,7 +187,9 @@ def scan_command(
     measured. Albums whose tracks have no cover, or one smaller than --min-pixels on a
     side, and no big enough image in their folder, are looked up in MusicBrainz and the
     Cover Art Archive. The results are kept in the catalog, not written into the files
-    (see `aorg write-tags` and `aorg covers`). It takes long; it continues where an
+    (see `aorg write-tags` and `aorg covers`). Complete single-disc album folders are
+    looked up in gnudb (needs AORG_GNUDB_EMAIL, the address the application is registered
+    with) for the album's title, year, genre and track titles. It takes long; it continues where an
     interrupted run stopped, and --deep-limit splits it into parts.
     """
     started = time.monotonic()
@@ -218,6 +221,7 @@ def scan_command(
         typer.echo(f"  ... and {len(stats.errors) - 20} more")
     if deep:
         _deep_scan(ctx, library, deep_limit)
+        _deep_gnudb(ctx, library, deep_limit)
         _deep_covers(ctx, library, deep_limit, min_pixels)
 
 
@@ -249,6 +253,32 @@ def _deep_scan(ctx: typer.Context, library: str | None, limit: int | None) -> No
         f"Measured {stats.measured} files, {len(stats.errors)} errors; album gain for "
         f"{stats.albums} albums ({time.monotonic() - started:.0f} s)"
     )
+
+
+def _deep_gnudb(ctx: typer.Context, library: str | None, limit: int | None) -> None:
+    started = time.monotonic()
+
+    def progress(done: int, total: int, album: str, error: str | None) -> None:
+        if error:
+            typer.echo(f"  ! {error}", err=True)
+        if done % 10 == 0 or done == total:
+            typer.echo(f"  looked up {done}/{total}: {album}", err=True)
+
+    try:
+        gnudb.email()
+    except gnudb.GnudbRefused as e:
+        typer.echo(f"Skipping gnudb: {e}")
+        return
+    with _session(ctx) as session:
+        lib = _library(session, library)
+        typer.echo("Looking up albums in gnudb")
+        stats = gnudb.lookup_library(session, lib, limit=limit, progress=progress)
+    typer.echo(
+        f"gnudb: {stats.found} found, {stats.not_found} not found, {len(stats.errors)} "
+        f"errors, of {stats.albums} albums to look up ({time.monotonic() - started:.0f} s)"
+    )
+    if stats.stopped:
+        typer.echo(f"Stopped: {stats.stopped}")
 
 
 def _deep_covers(ctx: typer.Context, library: str | None, limit: int | None, min_pixels: int):

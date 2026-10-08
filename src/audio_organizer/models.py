@@ -380,3 +380,22 @@ class CoverLookup(Base):
     looked_up_at: Mapped[datetime] = mapped_column(default=utcnow)
 
     image: Mapped[CoverImage | None] = relationship()
+
+
+class GnudbLookup(Base):
+    """The outcome of looking up an album folder in gnudb, so that the deep scan asks only
+    once. Keyed by folder and album title; a folder whose track count changed is looked
+    up again."""
+
+    __tablename__ = "gnudb_lookup"
+
+    library_id: Mapped[int] = mapped_column(
+        ForeignKey("library.id", ondelete="CASCADE"), primary_key=True
+    )
+    folder: Mapped[str] = mapped_column(Text, primary_key=True)
+    key: Mapped[str] = mapped_column(Text, primary_key=True)  # covers.album_key
+    tracks: Mapped[int]
+    status: Mapped[str] = mapped_column(String(20))  # found | not_found
+    category: Mapped[str | None] = mapped_column(String(20))  # gnudb's genre category
+    discid: Mapped[str | None] = mapped_column(String(8))  # of the entry that matched
+    looked_up_at: Mapped[datetime] = mapped_column(default=utcnow)

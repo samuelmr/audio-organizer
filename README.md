@@ -59,7 +59,7 @@ After updating `aorg`, `aorg scan --reread` reads every file again once, so that
 newer version reads (such as ratings, sort names or embedded covers) are in the catalog.
 
 A *deep* scan also measures the loudness of every file not measured yet, for ReplayGain,
-and looks up missing album covers online:
+looks up album folders in gnudb, and looks up missing album covers online:
 
     aorg scan --deep                  # continues where an interrupted run stopped
     aorg scan --deep --deep-limit 500 # or in parts
@@ -83,6 +83,17 @@ kept in the catalog until you embed them and save them in their folders (see
 [Covers](#covers)); each album is looked up once, and again only for a larger
 `--min-pixels`. MusicBrainz asks for a contact address in every request: `aorg` sends
 the one in `AORG_CONTACT`, else the package author's.
+
+Complete single-disc album folders (all tracks present, numbered 1..n or not at all, with
+a known album artist and title) are looked up in [gnudb](https://gnudb.org), the free
+CDDB database, by a table of contents made from the tracks' durations. A gnudb entry is
+accepted only when its artist, album title and track count agree with the folder's and
+most of its track titles with the tracks'. Its album, year, genre and track titles are
+kept in the catalog as `gnudb` values, which rank above tags in the effective values (and
+show as disputed where they differ), until you write them into the files. gnudb answers
+only registered applications: set `AORG_GNUDB_EMAIL` to the address `aorg` is registered
+with, or the lookups are skipped. Each folder is looked up once, and again when its track
+count changes.
 
 `aorg show` lists each field with where its value comes from: the file's tags (`tag`),
 its folder and file name (`path`) or your edit (`manual`), and the other candidates when
@@ -499,6 +510,7 @@ Design principles:
 | `artists.py` | Artists' sort names and suggestions for them |
 | `loudness.py` | ReplayGain 2.0: measuring tracks with ffmpeg, album gains, deep scan |
 | `covers.py` | Embedded cover images: reading, embedding, replacing thumbnails; which tracks get which cover |
+| `gnudb.py` | Looking up album folders in gnudb (cddbp, pseudo-TOC from durations) in the deep scan |
 | `coverart.py` | Looking up album covers online (MusicBrainz, Cover Art Archive) in the deep scan |
 | `images.py` | Size and type of JPEG and PNG images from their headers |
 | `writing.py` | Writing values not yet in the files, in batches |

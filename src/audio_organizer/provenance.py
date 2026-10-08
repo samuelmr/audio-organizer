@@ -86,7 +86,7 @@ def refresh_effective(session: Session, file_ids: list[int]) -> None:
         resolved = {k: r for k, r in resolve(values).items() if k in FIELDS}
         # A field the user has decided (a manual value) is no longer disputed
         disputed = any(
-            r.source != "manual" and len({_comparable(name, v) for v in r.candidates.values()}) > 1
+            r.source != "manual" and len({comparable(name, v) for v in r.candidates.values()}) > 1
             for name, r in resolved.items()
         )
         effective: dict[str, object] = {
@@ -100,7 +100,7 @@ def refresh_effective(session: Session, file_ids: list[int]) -> None:
         session.merge(EffectiveMetadata(file_id=file_id, disputed=disputed, **effective))
 
 
-def _comparable(field: str, value: str) -> object:
+def comparable(field: str, value: str) -> object:
     """What has to differ between two values of a field for them to disagree: the number
     of track and disc numbers ('02.' and '2' agree), the year of dates, and otherwise the
     name, ignoring case, accents, punctuation and a leading 'The'."""
