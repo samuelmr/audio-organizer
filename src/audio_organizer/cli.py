@@ -16,6 +16,7 @@ from . import changes as ch
 from . import covers as cv
 from . import duplicates as du
 from . import layout as lo
+from . import neighbours as nb
 from . import playlists as pl
 from . import ratings as rt
 from . import recordings as rec
@@ -1144,6 +1145,63 @@ def merge_albums(
             for merge in others:
                 for line in _describe_merge(merge):
                     typer.echo(line)
+
+
+@app.command("neighbours")
+def neighbours(
+    ctx: typer.Context,
+    path: Annotated[
+        str | None, typer.Option(help="Only loose tracks under this path, e.g. an artist folder")
+    ] = None,
+    limit: Annotated[int, typer.Option(help="Tracks to include (whole albums)")] = 50,
+    propose: Annotated[bool, typer.Option("--propose", help="Create a changeset for them")] = False,
+    library: LibraryOption = None,
+) -> None:
+    """Put loose tracks back into their album folders.
+
+    A loose track (in an artist folder or "Unknown Album") joins an album folder when its
+    album tag names exactly one album folder of its artist, and its track number and
+    title are not there yet. It is named like the album's other tracks and gets the
+    album-wide tags they agree on (album artist, year, track total, ...). Run `aorg dupes`
+    and `aorg recordings` first: loose copies of tracks already in an album are theirs.
+    """
+    with _session(ctx) as session:
+        lib = _library(session, library)
+        found = nb.survey(session, lib, path_prefix=path)
+        typer.echo(
+            f"{found.loose} loose tracks: {found.move_count} fit into {len(found.albums)} album "
+            f"folders. Left alone: {found.duplicates} with identical copies in albums, "
+            f"{found.no_album_tag} without an album tag, {found.no_folder} whose album has no "
+            f"folder, {found.several_folders} matching several folders, {found.taken} whose "
+            f"number or title is taken, {found.no_number} without a track number, "
+            f"{found.conflicts} claiming the same number, {found.pending} with changes "
+            f"waiting for review."
+        )
+        chosen = nb.batch(found.albums, limit)
+        if not propose:
+            for album in chosen:
+                typer.echo(f"  {album.folder} ({album.tracks} tracks)")
+                for move in album.moves:
+                    typer.echo(f"      + {move.copy.file.path}")
+                    typer.echo(f"        -> {PurePosixPath(move.to).name}")
+                    if move.fill:
+                        fill = ", ".join(f"{k}={v}" for k, v in move.fill.items())
+                        typer.echo(f"        tags: {fill}")
+            if chosen:
+                count = sum(len(a.moves) for a in chosen)
+                typer.echo(f"Run with --propose to create a changeset for {count} tracks.")
+            return
+        if not chosen:
+            return
+        count = sum(len(a.moves) for a in chosen)
+        where = f" in {path}" if path else ""
+        changeset = nb.propose(
+            session, chosen, f"Put {count} loose tracks into {len(chosen)} albums{where}"
+        )
+        typer.echo(
+            f"Changeset {changeset.id}: {len(changeset.changes)} changes. Review with "
+            f"`aorg changes show {changeset.id}` or in the web UI."
+        )
 
 
 @app.command("write-tags")

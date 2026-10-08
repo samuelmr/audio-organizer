@@ -289,6 +289,11 @@ def _album_artists(rows) -> dict[int, str | None]:
     return result
 
 
+def file_name(value: str) -> str:
+    """A metadata value made safe as a file or folder name."""
+    return _tidy(_safe(value))
+
+
 def _safe(value: str) -> str:
     value = unicodedata.normalize("NFC", value)
     return UNSAFE.sub("_", value)

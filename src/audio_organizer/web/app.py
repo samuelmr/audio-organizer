@@ -32,6 +32,7 @@ from .. import changes as ch
 from .. import covers, loudness, tags
 from .. import duplicates as du
 from .. import layout as lo
+from .. import neighbours as nb
 from .. import playlists as pl
 from .. import ratings as rt
 from .. import recordings as rec
@@ -492,6 +493,36 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         where = f" in {path}" if path else ""
         changeset = rec.propose(
             session, batch, f"Keep the best encoding of {len(batch)} tracks{where}"
+        )
+        return _redirect(f"/changes/{changeset.id}", "Proposed; review and approve the changes")
+
+    # ---- loose tracks into their albums ---------------------------------------------------
+
+    @app.get("/libraries/{name}/neighbours", response_class=HTMLResponse)
+    def neighbours(
+        request: Request, name: str, path: str = "", limit: int = 50, session: Session = SessionDep
+    ):
+        lib = _library(session, name)
+        found = nb.survey(session, lib, path_prefix=path or None)
+        return render(
+            request, "neighbours.html", library=lib, found=found,
+            batch=nb.batch(found.albums, max(limit, 1)), path=path, limit=limit,
+        )  # fmt: skip
+
+    @app.post("/libraries/{name}/neighbours")
+    async def propose_neighbours(request: Request, name: str, session: Session = SessionDep):
+        """Propose the checked albums of the page (one "folder" field each)."""
+        lib = _library(session, name)
+        form = await request.form()
+        path = str(form.get("path", ""))
+        folders = set(form.getlist("folder"))
+        found = nb.survey(session, lib, path_prefix=path or None)
+        chosen = [a for a in found.albums if a.folder in folders]
+        if not chosen:
+            return _redirect(f"/libraries/{lib.name}/neighbours", "Nothing to propose")
+        count = sum(len(a.moves) for a in chosen)
+        changeset = nb.propose(
+            session, chosen, f"Put {count} loose tracks into {len(chosen)} albums"
         )
         return _redirect(f"/changes/{changeset.id}", "Proposed; review and approve the changes")
 

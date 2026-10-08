@@ -283,6 +283,21 @@ def test_recordings(web, Session):
     assert "1 with changes waiting" in web.get("/libraries/music/recordings").text
 
 
+def test_neighbours(web, Session):
+    make_audio(web.root / "Texas/Texas_Say What You Want.mp3", freq=350, artist="Texas",
+               album="Greatest Hits", title="Say What You Want", track="12")  # fmt: skip
+    with Session() as session:
+        scan(session, session.scalar(select(Library)))
+    page = web.get("/libraries/music/neighbours").text
+    assert "<strong>1</strong>" in page and "12 Say What You Want.mp3" in page
+    response = web.post(
+        "/libraries/music/neighbours", data={"folder": "Texas/Greatest Hits"}
+    )  # fmt: skip
+    assert re.fullmatch(r"/changes/\d+", response.url.path)
+    assert "Texas/Greatest Hits/12 Say What You Want.mp3" in response.text
+    assert "1 with changes waiting" in web.get("/libraries/music/neighbours").text
+
+
 def test_audio(web, Session):
     file_id = _file_id(Session, "Texas/Texas_Halo.mp3")
     response = web.get(f"/tracks/{file_id}/audio")

@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% from "_macros.html" import play %}
+{% block title %}Loose tracks – audio-organizer{% endblock %}
+{% block content %}
+{% set base = '/libraries/' ~ library.name %}
+<h1>Loose tracks</h1>
+<p>{{ found.loose }} tracks lie loose in artist folders or "Unknown Album".
+<strong>{{ found.move_count }}</strong> of them belong to one of {{ found.albums | length }}
+album folders: their album tag names the folder, and their track number and title are not
+there yet. They are named like the album's other tracks and get the album-wide tags those
+agree on.</p>
+<p class="hint">Left alone: {{ found.duplicates }} with identical copies in album folders (see
+Duplicates), {{ found.no_album_tag }} without an album tag, {{ found.no_folder }} whose album
+has no folder, {{ found.several_folders }} matching several folders, {{ found.taken }} whose
+number or title is already taken, {{ found.no_number }} without a track number,
+{{ found.conflicts }} claiming the same number, {{ found.pending }} with changes waiting for
+review.</p>
+
+<form class="search" method="get" action="{{ base }}/neighbours">
+ <input type="search" name="path" value="{{ path }}" placeholder="Only under a path, e.g. Williams, John" aria-label="Path">
+ <label>Batch of <input name="limit" inputmode="numeric" size="4" value="{{ limit }}"> tracks</label>
+ <button>Show</button>
+</form>
+
+{% if batch %}
+<form method="post" action="{{ base }}/neighbours">
+ <input type="hidden" name="path" value="{{ path }}">
+ <p class="hint">Uncheck an album to leave its tracks where they are; ▶ plays a track, ⓘ
+ opens its details.</p>
+ <p><button class="primary">Propose a changeset for the checked albums</button></p>
+ <table class="duplicates">
+  <thead><tr><th><span class="visually-hidden">Propose</span></th><th>Track</th><th>New name</th><th>Tags (as proposed)</th></tr></thead>
+  {% for album in batch %}
+  <tbody>
+   <tr>
+    <td><input type="checkbox" id="album-{{ loop.index }}" name="folder" value="{{ album.folder }}" checked></td>
+    <th colspan="3" class="path"><label for="album-{{ loop.index }}">{{ album.folder }}</label>
+     <span class="hint">({{ album.tracks }} tracks, {{ album.moves | length }} to add)</span></th>
+   </tr>
+   {% for m in album.moves %}
+   <tr>
+    <td></td>
+    <td class="path">{{ play(m.copy.file.id, m.copy.file.path) }} {{ m.copy.file.path }}
+     <a class="details" href="/tracks/{{ m.copy.file.id }}" title="Details" aria-label="Details of {{ m.copy.file.path }}">ⓘ</a></td>
+    <td class="path">{{ m.to.rsplit('/', 1)[1] }}</td>
+    <td>{% for k, v in m.fill.items() %}{{ k }}: {{ v }}{% if not loop.last %}<br>{% endif %}{% endfor %}</td>
+   </tr>
+   {% endfor %}
+  </tbody>
+  {% endfor %}
+ </table>
+</form>
+{% endif %}
+{% endblock %}

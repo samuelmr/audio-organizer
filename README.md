@@ -268,6 +268,25 @@ the same album name and no clashes; merge the others one by one in the direction
 choose, here or on the web UI's Album folders page. To go the other way after proposing
 a merge, reject its changeset (or undo it, if applied) and propose the other direction.
 
+### Loose tracks
+
+Old flat folders ("Williams, John/John Williams_Cantina Band.mp3") often hold tracks whose
+album folder exists, with a gap where they belong. `aorg neighbours` puts them back:
+
+    aorg neighbours                           # what would move
+    aorg neighbours --path "Williams, John" --propose
+    aorg neighbours --propose --limit 100     # whole albums, up to 100 tracks
+
+A loose track (in an artist folder or "Unknown Album") joins an album folder when its
+album tag names exactly one album folder of its artist (ignoring case, punctuation and a
+leading "The"), and its track number and title are not there yet. It is named like the
+album's other tracks ("07 Title.mp3", or "1-07 Title.mp3" on multi-disc albums), and
+gets the album tags those all agree on: album name, album artist, year, track and disc
+totals, and the genre if it has none. Two loose tracks claiming the same number are left
+alone, and so are tracks with no album tag or track number. Clean up duplicates and
+recordings first: loose copies of tracks an album already has are theirs. The web UI's
+Loose tracks page does the same, album by album.
+
 ### Folder layout
 
 The layout is a template of where files belong, filled in from their metadata. The
@@ -442,6 +461,7 @@ Design principles:
 | `duplicates.py` | Identical copies and what to keep |
 | `recordings.py` | One recording in several encodings, and which to keep |
 | `album_merge.py` | Album folders holding the same album, and merging them |
+| `neighbours.py` | Loose tracks that belong in an album folder, and moving them there |
 | `layout.py` | The folder layout template, and moving files into it |
 | `artists.py` | Artists' sort names and suggestions for them |
 | `loudness.py` | ReplayGain 2.0: measuring tracks with ffmpeg, album gains, deep scan |
