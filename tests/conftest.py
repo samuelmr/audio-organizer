@@ -10,15 +10,17 @@ from audio_organizer.db import make_sessionmaker
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")
 
 
-def make_audio(path: Path, *, freq: int = 440, seconds: float = 1.0, **tags: str) -> Path:
+def make_audio(
+    path: Path, *, freq: int = 440, seconds: float = 1.0, bitrate: str = "64k", **tags: str
+) -> Path:
     """Generate a short sine tone file with the given tags; format follows the suffix."""
     path.parent.mkdir(parents=True, exist_ok=True)
     cmd = ["ffmpeg", "-v", "error", "-y", "-f", "lavfi",
            "-i", f"sine=frequency={freq}:duration={seconds}"]  # fmt: skip
     if path.suffix == ".mp3":
-        cmd += ["-c:a", "libmp3lame", "-b:a", "64k", "-id3v2_version", "3"]
+        cmd += ["-c:a", "libmp3lame", "-b:a", bitrate, "-id3v2_version", "3"]
     else:
-        cmd += ["-c:a", "aac", "-b:a", "64k"]
+        cmd += ["-c:a", "aac", "-b:a", bitrate]
     for key, value in tags.items():
         cmd += ["-metadata", f"{key}={value}"]
     subprocess.run([*cmd, str(path)], check=True)

@@ -18,6 +18,7 @@ from . import duplicates as du
 from . import layout as lo
 from . import playlists as pl
 from . import ratings as rt
+from . import recordings as rec
 from . import sync as sy
 from . import writing as wr
 from .db import make_sessionmaker
@@ -977,6 +978,87 @@ def dupes(
             return
         where = f" in {path}" if path else ""
         changeset = du.propose(session, batch, f"Trash loose copies of {len(batch)} tracks{where}")
+        typer.echo(
+            f"Changeset {changeset.id}: {len(changeset.changes)} changes. Review with "
+            f"`aorg changes show {changeset.id}` or in the web UI."
+        )
+
+
+def _encoding(file: AudioFile) -> str:
+    return f"{file.format} {round((file.bitrate or 0) / 1000)} kbps, {file.duration or 0:.0f} s"
+
+
+@app.command("recordings")
+def recordings(
+    ctx: typer.Context,
+    path: Annotated[
+        str | None, typer.Option(help="Only copies under this path, e.g. an artist folder")
+    ] = None,
+    limit: Annotated[int, typer.Option(help="Tracks to include")] = 50,
+    propose: Annotated[bool, typer.Option("--propose", help="Create a changeset for them")] = False,
+    replace: Annotated[
+        bool,
+        typer.Option(
+            "--replace", help="Also where a loose copy would replace the album's (listen first)"
+        ),
+    ] = False,
+    include_compilations: Annotated[
+        bool,
+        typer.Option(
+            "--include-compilations",
+            help="Also loose copies whose album copy is only on a compilation",
+        ),
+    ] = False,
+    library: LibraryOption = None,
+) -> None:
+    """Find tracks encoded more than once and propose to keep the best encoding.
+
+    Files are one recording in different encodings when they are in one album folder
+    with the same title and number, or lie loose with the artist and title of a track
+    in one album folder, and their durations are within two seconds. The lossless or
+    highest-bitrate copy is kept (WMA last), in the place of the album's copy; the others
+    are proposed for the trash. Files whose durations differ are listed as versions.
+    Where a loose copy is the best, it replaces the album's copy only with --replace.
+    """
+    with _session(ctx) as session:
+        lib = _library(session, library)
+        found = rec.survey(
+            session, lib, path_prefix=path, include_compilations=include_compilations
+        )
+        typer.echo(
+            f"{found.groups} tracks in several encodings: {len(found.proposals)} can be "
+            f"cleaned up ({found.trash_count} files to trash; in "
+            f"{len(found.proposals) - len(found.batchable)} a loose copy would replace the "
+            f"album's). Left alone: {len(found.versions)} with different durations, "
+            f"{found.several_albums} loose copies matching several album folders, "
+            f"{found.compilations} only on a compilation besides the artist's folder, "
+            f"{found.pending} with changes waiting for review."
+        )
+        batch = rec.batch(found.proposals, limit, replace=replace)
+        for proposal in batch[:20] if not propose else []:
+            typer.echo(f"  keep  {proposal.keep.file.path} ({_encoding(proposal.keep.file)})")
+            for copy in proposal.trash:
+                typer.echo(f"  trash {copy.file.path} ({_encoding(copy.file)})")
+            if proposal.move_to:
+                typer.echo(f"        moved to {proposal.move_to}")
+            if proposal.fill:
+                typer.echo(f"        copying tags: {', '.join(proposal.fill)}")
+        if not propose:
+            if len(batch) > 20:
+                typer.echo(f"  ... and {len(batch) - 20} more in this batch")
+            for files in found.versions[:10]:
+                typer.echo("  versions, left alone:")
+                for file in files:
+                    typer.echo(f"        {file.path} ({_encoding(file)})")
+            if batch:
+                typer.echo(f"Run with --propose to create a changeset for {len(batch)} tracks.")
+            return
+        if not batch:
+            return
+        where = f" in {path}" if path else ""
+        changeset = rec.propose(
+            session, batch, f"Keep the best encoding of {len(batch)} tracks{where}"
+        )
         typer.echo(
             f"Changeset {changeset.id}: {len(changeset.changes)} changes. Review with "
             f"`aorg changes show {changeset.id}` or in the web UI."

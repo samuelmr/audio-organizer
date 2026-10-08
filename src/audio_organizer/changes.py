@@ -36,7 +36,10 @@ class Outcome:
 
 # Features that propose changesets, recorded in Changeset.source so that changesets can be
 # filtered by feature and rules can be scoped to one.
-SOURCES = ("writing", "layout", "duplicates", "album_merge", "covers", "manual")
+SOURCES = (
+    "writing", "layout", "duplicates", "recordings", "album_merge", "neighbours", "covers",
+    "manual",
+)  # fmt: skip
 
 
 def new_changeset(session: Session, description: str, source: str) -> Changeset:

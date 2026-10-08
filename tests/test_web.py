@@ -2,6 +2,7 @@ import re
 import subprocess
 
 import pytest
+from conftest import make_audio
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -265,6 +266,21 @@ def test_duplicates_keep_another_copy(web):
     assert "trash Texas/Greatest Hits/11 Halo.mp3 (same audio as Texas/Texas_Halo.mp3)" in (
         response.text
     )
+
+
+def test_recordings(web, Session):
+    make_audio(web.root / "P!nk/Funhouse/01 So What.mp3", freq=330, bitrate="128k",
+               title="So What", track="1")  # fmt: skip
+    with Session() as session:
+        scan(session, session.scalar(select(Library)))
+    page = web.get("/libraries/music/recordings").text
+    assert "<strong>1</strong>" in page and "mp3 128 kbps" in page
+    [(name, (proposed, other))] = _keep_choices(page).items()
+    assert proposed == str(_file_id(Session, "P!nk/Funhouse/01 So What.mp3"))
+    response = web.post("/libraries/music/recordings", data={name: other})
+    trash = "trash P!nk/Funhouse/01 So What.mp3"
+    assert f"{trash} (same recording as P!nk/Funhouse/01 So What.m4a)" in response.text
+    assert "1 with changes waiting" in web.get("/libraries/music/recordings").text
 
 
 def test_audio(web, Session):

@@ -34,6 +34,7 @@ from .. import duplicates as du
 from .. import layout as lo
 from .. import playlists as pl
 from .. import ratings as rt
+from .. import recordings as rec
 from .. import sync as sy
 from .. import writing as wr
 from ..models import (
@@ -444,6 +445,54 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             return _redirect(f"/libraries/{lib.name}/duplicates", "Nothing to propose")
         where = f" in {path}" if path else ""
         changeset = du.propose(session, batch, f"Trash loose copies of {len(batch)} tracks{where}")
+        return _redirect(f"/changes/{changeset.id}", "Proposed; review and approve the changes")
+
+    # ---- recordings in several encodings ------------------------------------------------
+
+    @app.get("/libraries/{name}/recordings", response_class=HTMLResponse)
+    def recordings(
+        request: Request,
+        name: str,
+        path: str = "",
+        limit: int = 50,
+        replace: bool = False,
+        compilations: bool = False,
+        session: Session = SessionDep,
+    ):
+        lib = _library(session, name)
+        found = rec.survey(
+            session, lib, path_prefix=path or None, include_compilations=compilations
+        )
+        return render(
+            request, "recordings.html", library=lib, found=found,
+            batch=rec.batch(found.proposals, max(limit, 1), replace=replace), path=path,
+            limit=limit, replace=replace, compilations=compilations,
+        )  # fmt: skip
+
+    @app.post("/libraries/{name}/recordings")
+    async def propose_recordings(request: Request, name: str, session: Session = SessionDep):
+        """Propose the tracks shown on the page (one "keep-<id kept by default>" field
+        each, the id of the file to keep), so the batch is what the user saw and chose."""
+        lib = _library(session, name)
+        form = await request.form()
+        path = str(form.get("path", ""))
+        keep_ids = {
+            key.removeprefix("keep-"): int(value)
+            for key, value in form.multi_items()
+            if key.startswith("keep-") and str(value).isdigit()
+        }
+        found = rec.survey(
+            session, lib, path_prefix=path or None,
+            include_compilations=form.get("compilations") == "true",
+        )  # fmt: skip
+        shown = [p for p in found.proposals if str(p.keep.file.id) in keep_ids]
+        batch = rec.choose(shown, keep_ids)
+        if not batch:
+            return _redirect(f"/libraries/{lib.name}/recordings", "Nothing to propose")
+        where = f" in {path}" if path else ""
+        changeset = rec.propose(
+            session, batch, f"Keep the best encoding of {len(batch)} tracks{where}"
+        )
         return _redirect(f"/changes/{changeset.id}", "Proposed; review and approve the changes")
 
     @app.get("/libraries/{name}/album-merges", response_class=HTMLResponse)

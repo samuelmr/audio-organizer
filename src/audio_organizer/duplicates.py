@@ -103,7 +103,7 @@ def survey(
     pending = set(
         session.scalars(select(Change.file_id).where(Change.status.in_(("proposed", "approved"))))
     )
-    copies = _load(session, files)
+    copies = load_copies(session, files)
     groups: dict[str, list[Copy]] = {}
     for copy in copies:
         groups.setdefault(copy.file.audio_hash, []).append(copy)
@@ -176,7 +176,8 @@ def propose(session: Session, proposals: list[Proposal], description: str) -> Ch
     return changeset
 
 
-def _load(session: Session, files: list[AudioFile]) -> list[Copy]:
+def load_copies(session: Session, files: list[AudioFile]) -> list[Copy]:
+    """The files with their tags, path evidence and effective values."""
     values: dict[int, list] = {}
     for start in range(0, len(files), BATCH):
         ids = [f.id for f in files[start : start + BATCH]]
