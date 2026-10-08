@@ -16,6 +16,7 @@ from . import changes as ch
 from . import covers as cv
 from . import duplicates as du
 from . import layout as lo
+from . import leftovers as lf
 from . import neighbours as nb
 from . import playlists as pl
 from . import ratings as rt
@@ -1201,6 +1202,54 @@ def neighbours(
         typer.echo(
             f"Changeset {changeset.id}: {len(changeset.changes)} changes. Review with "
             f"`aorg changes show {changeset.id}` or in the web UI."
+        )
+
+
+@app.command("leftovers")
+def leftovers(
+    ctx: typer.Context,
+    path: Annotated[str | None, typer.Option(help="Only folders under this path")] = None,
+    propose: Annotated[
+        bool, typer.Option("--propose", help="Create a changeset trashing the litter")
+    ] = False,
+    everything: Annotated[
+        bool, typer.Option("--all", help="Also propose files that are not known litter")
+    ] = False,
+    library: LibraryOption = None,
+) -> None:
+    """Find folders without music that still hold files, and trash the litter.
+
+    Merging albums and trashing duplicates leave Folder.jpg, desktop.ini and old
+    generated playlists behind, which keeps their folders from being removed. Looks at the
+    disk, not the catalog. Only files known as litter are proposed (images such as
+    Folder.jpg, playlists, logs, system files); other files are listed, and proposed with
+    --all. A folder is removed when its last file is trashed.
+    """
+    with _session(ctx) as session:
+        lib = _library(session, library)
+        found = lf.survey(lib, path.strip("/") if path else None)
+        typer.echo(
+            f"{len(found.folders)} folders without music hold {found.litter} litter files "
+            f"and {found.other} other files."
+        )
+        for folder in found.folders:
+            typer.echo(f"  {folder.path}/")
+            for name in folder.litter:
+                typer.echo(f"    litter  {PurePosixPath(name).name}")
+            for name in folder.other:
+                typer.echo(f"    other   {PurePosixPath(name).name}")
+        if not propose:
+            return
+        changeset = lf.propose(
+            session, lib, found, f"Trash leftover files in {len(found.folders)} folders",
+            everything=everything,
+        )  # fmt: skip
+        if changeset is None:
+            typer.echo("Nothing to trash.")
+            return
+        typer.echo(
+            f"Changeset {changeset.id}: {len(changeset.changes)} files. "
+            f"Review with `aorg changes show {changeset.id}`."
         )
 
 

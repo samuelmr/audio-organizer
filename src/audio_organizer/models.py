@@ -168,6 +168,8 @@ class Change(Base):
                   and "replace": true to replace a (too small) embedded cover
     kind "image": payload {"cover_image": sha1, "to": library path, "label"}: save an image
                   file (a folder's cover.jpg); "replace": true to overwrite a thumbnail
+    kind "leftover": payload {"library_id", "path", "size", "mtime_ns"}: trash a file the
+                  catalog does not know (litter in a folder without music); has no file
     status: proposed -> approved | rejected; approved -> applied | failed; applied -> undone
     """
 
@@ -177,7 +179,7 @@ class Change(Base):
     changeset_id: Mapped[int] = mapped_column(
         ForeignKey("changeset.id", ondelete="CASCADE"), index=True
     )
-    file_id: Mapped[int] = mapped_column(ForeignKey("audio_file.id"), index=True)
+    file_id: Mapped[int | None] = mapped_column(ForeignKey("audio_file.id"), index=True)
     kind: Mapped[str] = mapped_column(String(20))
     payload: Mapped[dict[str, Any]]
     status: Mapped[str] = mapped_column(String(20), default="proposed")
@@ -186,7 +188,7 @@ class Change(Base):
     applied_at: Mapped[datetime | None]
 
     changeset: Mapped[Changeset] = relationship(back_populates="changes")
-    file: Mapped[AudioFile] = relationship()
+    file: Mapped[AudioFile | None] = relationship()
 
 
 class SyncTarget(Base):

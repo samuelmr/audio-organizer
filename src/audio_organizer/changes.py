@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import covers, pathparse, tags
-from .models import AudioFile, Change, Changeset, CoverImage, PlaylistEntry, utcnow
+from .models import AudioFile, Change, Changeset, CoverImage, Library, PlaylistEntry, utcnow
 from .provenance import resolve, set_value, set_values
 
 # Trashed files are kept here, inside the library root, until `aorg trash empty`. The
@@ -38,7 +38,7 @@ class Outcome:
 # filtered by feature and rules can be scoped to one.
 SOURCES = (
     "writing", "layout", "duplicates", "recordings", "album_merge", "neighbours", "covers",
-    "manual",
+    "leftovers", "manual",
 )  # fmt: skip
 
 
@@ -103,6 +103,26 @@ def propose_trash(
     if same != "audio":
         payload["same"] = same
     change = Change(file=file, kind="trash", payload=payload, status="proposed")
+    changeset.changes.append(change)
+    return change
+
+
+def propose_trash_leftover(changeset: Changeset, library: Library, path: str) -> Change:
+    """Propose moving a file the catalog does not know (litter such as Folder.jpg or an old
+    playlist in a folder without music) to the trash. Its size and modification time are
+    recorded, so a file that changed in the meantime is left alone."""
+    st = (Path(library.root) / path).stat()
+    change = Change(
+        file=None,
+        kind="leftover",
+        payload={
+            "library_id": library.id,
+            "path": path,
+            "size": st.st_size,
+            "mtime_ns": st.st_mtime_ns,
+        },
+        status="proposed",
+    )
     changeset.changes.append(change)
     return change
 
@@ -221,6 +241,8 @@ def describe(change: Change) -> str:
         if change.payload.get("replace"):
             return f"replace {change.payload['to']} with {change.payload['label']}"
         return f"save {change.payload['label']} as {change.payload['to']}"
+    if change.kind == "leftover":
+        return f"trash {change.payload['path']} (not music)"
     if change.kind == "trash":
         keeper = change.payload.get("replacement_path")
         same = change.payload.get("same", "audio")
@@ -255,7 +277,7 @@ def apply(session: Session, changeset: Changeset, *, dry_run: bool = False) -> l
             outcomes.append(Outcome(change, True, "would " + describe(change)))
             continue
         try:
-            if change.kind != "image":  # which leaves its track alone
+            if change.kind not in ("image", "leftover"):  # which have no track to protect
                 _check_unchanged(change.file)
             if change.kind == "retag":
                 change.undo = _retag(
@@ -268,6 +290,8 @@ def apply(session: Session, changeset: Changeset, *, dry_run: bool = False) -> l
                 )
             elif change.kind == "trash":
                 change.undo = _trash(session, change)
+            elif change.kind == "leftover":
+                change.undo = _trash_leftover(session, change)
             elif change.kind == "cover":
                 change.undo = _embed_cover(session, change)
             elif change.kind == "image":
@@ -295,6 +319,8 @@ def undo(session: Session, changeset: Changeset, *, dry_run: bool = False) -> li
         try:
             if change.kind == "trash":
                 _untrash(session, change)
+            elif change.kind == "leftover":
+                _untrash_leftover(session, change)
             elif change.kind != "image":
                 _check_unchanged(change.file)
             if change.kind == "retag":
@@ -489,6 +515,39 @@ def _trash(session: Session, change: Change) -> dict:
     return {"trash": trash_path, "from": old_path, "entries": entries}
 
 
+def _trash_leftover(session: Session, change: Change) -> dict:
+    """Move a file outside the catalog into TRASH_DIR/<changeset id>/<its path>."""
+    library = session.get(Library, change.payload["library_id"])
+    root, path = Path(library.root), change.payload["path"]
+    source = root / path
+    try:
+        st = source.stat()
+    except FileNotFoundError:
+        raise ChangeError(f"{path} no longer exists") from None
+    if (st.st_size, st.st_mtime_ns) != (change.payload["size"], change.payload["mtime_ns"]):
+        raise ChangeError(f"{path} has changed since it was proposed")
+    trash_path = (PurePosixPath(TRASH_DIR) / str(change.changeset_id) / path).as_posix()
+    target = root / trash_path
+    if target.exists():
+        raise ChangeError(f"{trash_path} already exists")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(source, target)
+    _remove_empty_dirs(source.parent, root)
+    return {"trash": trash_path}
+
+
+def _untrash_leftover(session: Session, change: Change) -> None:
+    root = Path(session.get(Library, change.payload["library_id"]).root)
+    source, target = root / change.undo["trash"], root / change.payload["path"]
+    if not source.exists():
+        raise ChangeError(f"{change.undo['trash']} is no longer in the trash")
+    if target.exists():
+        raise ChangeError(f"{change.payload['path']} exists again; move it away first")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(source, target)
+    _remove_empty_dirs(source.parent, root)
+
+
 def _untrash(session: Session, change: Change) -> None:
     file = change.file
     root = Path(file.library.root)
@@ -521,6 +580,8 @@ def _remove_empty_dirs(directory: Path, root: Path) -> None:
     only holds macOS/Windows litter (.DS_Store, desktop.ini) counts as non-empty."""
     while directory != root and root in directory.parents:
         try:
+            if any(True for _ in os.scandir(directory)):
+                return  # macOS would rmdir a folder holding only AppleDouble ("._") files
             os.rmdir(directory)
         except OSError:
             return

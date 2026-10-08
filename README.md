@@ -287,6 +287,21 @@ alone, and so are tracks with no album tag or track number. Clean up duplicates 
 recordings first: loose copies of tracks an album already has are theirs. The web UI's
 Loose tracks page does the same, album by album.
 
+### Leftover files
+
+Merging albums and trashing duplicates empties folders, but Folder.jpg, desktop.ini and
+old generated playlists stay behind, and a folder that still holds a file is not
+removed. `aorg leftovers` looks at the disk for folders without any music below them
+(an album's own Scans or Artwork folder does not count) and lists their files:
+
+    aorg leftovers                            # folders and their files
+    aorg leftovers --propose                  # a changeset trashing the litter
+    aorg leftovers --path Texas --propose --all   # also files that are not known litter
+
+Only known litter is proposed (folder images, playlists, logs, system files); other
+files, such as a PDF booklet, are listed and only proposed with `--all`. A folder goes
+when its last file is trashed, and undoing the changeset brings both back.
+
 ### Folder layout
 
 The layout is a template of where files belong, filled in from their metadata. The
@@ -462,6 +477,7 @@ Design principles:
 | `recordings.py` | One recording in several encodings, and which to keep |
 | `album_merge.py` | Album folders holding the same album, and merging them |
 | `neighbours.py` | Loose tracks that belong in an album folder, and moving them there |
+| `leftovers.py` | Litter in folders without music, and trashing it |
 | `layout.py` | The folder layout template, and moving files into it |
 | `artists.py` | Artists' sort names and suggestions for them |
 | `loudness.py` | ReplayGain 2.0: measuring tracks with ffmpeg, album gains, deep scan |
