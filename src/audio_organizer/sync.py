@@ -282,7 +282,16 @@ def _digest(content_type: str, metadata: dict[str, str]) -> str:
     return hashlib.sha1(data).hexdigest()
 
 
-def plan(session: Session, target: SyncTarget, *, delete_stale: bool = False) -> Plan:
+def plan(
+    session: Session,
+    target: SyncTarget,
+    *,
+    delete_stale: bool = False,
+    progress: Callable[[int, int], None] | None = None,
+) -> Plan:
+    """What a sync would do. Looking for each folder's cover is slow on a network share,
+    so `progress(tracks_checked, tracks_total)` is called for every track, for a progress
+    bar; it should be cheap."""
     root = Path(target.library.root)
     result = Plan()
     remote = {obj.key: obj for obj in session.scalars(
@@ -297,7 +306,10 @@ def plan(session: Session, target: SyncTarget, *, delete_stale: bool = False) ->
     moved_from: set[str] = set()
     playlist_set = PlaylistSet(library_playlists(session, target.library))
 
-    for track in iter_tracks(session, target.library_id):
+    total = len(desired)
+    for checked, track in enumerate(iter_tracks(session, target.library_id), 1):
+        if progress:
+            progress(checked, total)
         playlist_set.feed(track)
         folder = str(PurePosixPath(track.path).parent)
         if folder not in covers:

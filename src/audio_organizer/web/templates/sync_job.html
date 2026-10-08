@@ -7,7 +7,7 @@
 <section class="sync-job" data-sync-job="/sync/jobs/{{ job.id }}" aria-live="polite">
  <p><strong class="status {{ state.status }}" data-field="label">{{ state.label }}</strong>
   <span data-field="message">{{ state.message or "" }}</span></p>
- <progress data-field="progress" max="{{ state.total or 1 }}" value="{{ state.done }}"{% if state.status == "planning" %} hidden{% endif %}></progress>
+ <progress data-field="progress" max="{{ state.total or 1 }}" value="{{ state.done }}"{% if state.status == "planning" and not state.total %} hidden{% endif %}></progress>
  <p data-field="counts">{{ state.counts }}</p>
  <p class="path hint" data-field="current">{{ state.current or "" }}</p>
  <p><small>Started from the {{ job.origin }} at {{ job.started_at.strftime("%Y-%m-%d %H:%M") }}</small></p>

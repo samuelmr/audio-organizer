@@ -7,6 +7,19 @@
 {% if active %}
 <p class="message" role="status">A sync of this target is under way, started from the
 {{ active.origin }}. <a href="/sync/jobs/{{ active.id }}">Show its progress</a></p>
+{% elif preview.status == "planning" %}
+<section data-sync-plan="/sync/{{ target.name | urlencode }}" aria-live="polite">
+ <p><strong class="status planning">Planning</strong>
+  Working out what a sync would do. Album covers are looked up in every folder, which can
+  take a few minutes on a network share.</p>
+ <progress data-field="progress" max="{{ state.total or 1 }}" value="{{ state.done }}"{% if not state.total %} hidden{% endif %}></progress>
+ <p data-field="counts">{{ state.counts }}</p>
+ <p><a href="/sync/{{ target.name | urlencode }}" data-field="refresh">Refresh</a></p>
+</section>
+<script src="{{ asset('sync.js') }}" defer></script>
+{% elif preview.status == "failed" %}
+<p class="message" role="alert">Planning failed: {{ preview.error }}</p>
+<form method="post" action="/sync/plans"><input type="hidden" name="target" value="{{ target.name }}"><button type="submit">Plan again</button></form>
 {% else %}
 {% set counts = plan.counts() %}
 <p>
@@ -32,6 +45,7 @@
 </table>
 {% if plan.actions | length > 500 %}<p>… and {{ plan.actions | length - 500 }} more.</p>{% endif %}
 {% endif %}
+<form method="post" action="/sync/plans"><input type="hidden" name="target" value="{{ target.name }}"><button type="submit">Plan again</button> <small>if the files changed since this plan was made</small></form>
 {% endif %}
 {% if recent %}
 <h2>Recent syncs</h2>

@@ -9,6 +9,11 @@ objects, so that SQLite never holds a write transaction for long. A job whose pr
 is gone (the server was stopped, the CLI was killed) counts as interrupted when it is
 next looked at; nothing is lost, as the catalog records each object as it is synced and
 the next sync carries on from there.
+
+Planning is slow on a network share (it looks for every folder's cover), so the web UI
+plans in the background too: a `Previews` cache per server holds the plan shown on a
+target's page, with its progress while it is made. Starting a sync reuses that plan, as
+what runs is then exactly what the user reviewed.
 """
 
 import os
@@ -32,6 +37,7 @@ HEARTBEAT = 1.0  # seconds between progress updates
 # A job of a process on another machine (a shared database) counts as interrupted when
 # it has not reported for this long; planning on a slow share reports nothing for minutes.
 STALE = timedelta(minutes=15)
+PREVIEW_AGE = 10 * 60  # seconds a shown plan can be started from; then it is made again
 
 _HOST = socket.gethostname()
 _running: set[int] = set()  # jobs run by this process
@@ -101,6 +107,95 @@ def recent_jobs(session: Session, target: SyncTarget, limit: int = 5) -> list[Sy
     ))  # fmt: skip
 
 
+def _throttled(report: Callable[[int, int], None]) -> Callable[[int, int], None]:
+    """`report`, called at most once per HEARTBEAT (and for the last item)."""
+    last = 0.0
+
+    def call(done: int, total: int) -> None:
+        nonlocal last
+        now = time.monotonic()
+        if done >= total or now - last >= HEARTBEAT:
+            last = now
+            report(done, total)
+
+    return call
+
+
+class Preview:
+    """A plan being made for a target's page, or ready to be shown and started."""
+
+    def __init__(self) -> None:
+        self.status = "planning"  # planning | ready | failed
+        self.done = 0  # tracks checked
+        self.total = 0
+        self.plan: sy.Plan | None = None
+        self.error: str | None = None
+        self.started = time.monotonic()
+        self.finished: float | None = None
+
+    def fresh(self) -> bool:
+        return self.status == "planning" or (
+            self.status == "ready"
+            and self.finished is not None
+            and time.monotonic() - self.finished < PREVIEW_AGE
+        )
+
+
+class Previews:
+    """The plans shown on the Sync page, made in background threads of this process, one
+    per target. Kept in memory: a plan is cheap to make again after a restart."""
+
+    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+        self._session_factory = session_factory
+        self._by_target: dict[int, Preview] = {}
+        self._lock = threading.Lock()
+
+    def get(self, target: SyncTarget, *, again: bool = False) -> Preview:
+        """The target's plan, started in the background if there is none, it is stale or
+        `again` is set. A plan being made is never started twice."""
+        with self._lock:
+            preview = self._by_target.get(target.id)
+            if preview is not None and (
+                preview.status == "planning" or (preview.fresh() and not again)
+            ):
+                return preview
+            preview = self._by_target[target.id] = Preview()
+        threading.Thread(
+            target=self._make, args=(target.id, preview), name=f"sync-plan-{target.id}",
+            daemon=True,
+        ).start()  # fmt: skip
+        return preview
+
+    def ready_plan(self, target: SyncTarget, expected: str | None) -> sy.Plan | None:
+        """The plan shown for the target, if it is still fresh and is the expected one."""
+        with self._lock:
+            preview = self._by_target.get(target.id)
+        if preview is None or preview.status != "ready" or not preview.fresh():
+            return None
+        if expected is None or preview.plan is None or preview.plan.fingerprint() != expected:
+            return None
+        return preview.plan
+
+    def forget(self, target: SyncTarget) -> None:
+        with self._lock:
+            self._by_target.pop(target.id, None)
+
+    def _make(self, target_id: int, preview: Preview) -> None:
+        def progress(done: int, total: int) -> None:
+            preview.done, preview.total = done, total
+
+        try:
+            with self._session_factory() as session:
+                target = session.get(SyncTarget, target_id)
+                preview.plan = sy.plan(session, target, progress=progress)
+            preview.status = "ready"
+        except Exception as e:
+            preview.error = f"{type(e).__name__}: {e}"
+            preview.status = "failed"
+        finally:
+            preview.finished = time.monotonic()
+
+
 def start(session: Session, target: SyncTarget, origin: str) -> SyncJob:
     """Claim the target for a sync by this process; SyncBusy if one is running."""
     busy = active_job(session, target)
@@ -137,7 +232,9 @@ def run(
         if job.stop_requested:
             _close(job, "stopped", "Stopped before anything was synced")
             return None
+        # total and done counted tracks while planning; now they count actions
         job.status, job.total, job.bytes_total = "running", len(plan.actions), plan.upload_bytes
+        job.done = 0
         session.commit()
         last = time.monotonic()
 
@@ -200,13 +297,15 @@ def start_in_background(
     target: SyncTarget,
     expected: str | None,
     *,
+    plan: sy.Plan | None = None,
     workers: int = 4,
     store_for: Callable[[SyncTarget], ObjectStore] = sy.store_for,
 ) -> SyncJob:
     """Start a sync of the target in a thread of this process and return its job at
-    once. The thread plans again (the files may have changed since the plan was shown)
-    and only runs a plan with the expected fingerprint, so that what runs is what the
-    user reviewed. SyncBusy if the target is being synced already."""
+    once. With the plan the user reviewed, that plan runs. Without it, the thread plans
+    again (showing its progress) and only runs a plan with the expected fingerprint, so
+    that what runs is what the user reviewed. SyncBusy if the target is being synced
+    already."""
     job = start(session, target, "web")
     job_id = job.id
 
@@ -214,13 +313,17 @@ def start_in_background(
         with session_factory() as worker:
             job = worker.get(SyncJob, job_id)
             try:
-                plan = sy.plan(worker, job.target)
-                if expected is not None and plan.fingerprint() != expected:
-                    fail(worker, job, "changed",
-                         "The plan changed since it was shown (files were scanned or edited); "
-                         "review it again")  # fmt: skip
-                    return
-                run(worker, job, plan, store_for(job.target), workers=workers)
+                to_run = plan
+                if to_run is None:
+                    to_run = sy.plan(worker, job.target, progress=_throttled(
+                        lambda done, total: _planned(worker, job, done, total)
+                    ))  # fmt: skip
+                    if expected is not None and to_run.fingerprint() != expected:
+                        fail(worker, job, "changed",
+                             "The plan changed since it was shown (files were scanned or "
+                             "edited); review it again")  # fmt: skip
+                        return
+                run(worker, job, to_run, store_for(job.target), workers=workers)
             except Exception as e:
                 if is_active(job):
                     worker.rollback()
@@ -228,6 +331,12 @@ def start_in_background(
 
     threading.Thread(target=work, name=f"sync-job-{job_id}", daemon=True).start()
     return job
+
+
+def _planned(session: Session, job: SyncJob, done: int, total: int) -> None:
+    """Record how far planning has come, which also shows that the job is alive."""
+    job.done, job.total, job.heartbeat_at = done, total, utcnow()
+    session.commit()
 
 
 def state(job: SyncJob) -> dict[str, Any]:

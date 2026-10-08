@@ -1,5 +1,6 @@
 import re
 import subprocess
+import threading
 import time
 
 import pytest
@@ -184,13 +185,24 @@ def test_menu_links_to_the_library_on_every_page(web):
         assert 'href="/libraries/music/playlists"' in page, path
 
 
+def _plan_page(web, name):
+    """The plan page once the background planning is done."""
+    url = f"/sync/{name}"
+    for _ in range(200):
+        state = web.get(url, headers={"Accept": "application/json"}).json()
+        if not state["active"]:
+            return web.get(url).text
+        time.sleep(0.05)
+    raise AssertionError(f"still planning: {state}")
+
+
 def test_sync_preview(web, Session):
     assert "No sync targets" in web.get("/sync").text
     with Session() as session:
         library = session.scalar(select(Library))
         session.add(SyncTarget(name="backup", library=library, bucket="music", prefix=""))
         session.commit()
-    page = web.get("/sync/backup").text
+    page = _plan_page(web, "backup")
     assert "3 upload" in page
     assert "Texas/Greatest Hits/11 Halo.mp3" in page
     assert web.get("/sync/nothing").status_code == 404
@@ -227,7 +239,7 @@ def test_start_sync_from_the_web(web, Session, s3):
         library = session.scalar(select(Library))
         session.add(SyncTarget(name="backup", library=library, bucket="music", prefix=""))
         session.commit()
-    page = web.get("/sync/backup").text
+    page = _plan_page(web, "backup")
     expected = re.search(r'name="expected" value="(\w+)"', page).group(1)
     response = web.post("/sync/jobs", data={"target": "backup", "expected": expected},
                         follow_redirects=False)  # fmt: skip
@@ -238,9 +250,84 @@ def test_start_sync_from_the_web(web, Session, s3):
     assert (state["status"], state["done"], state["total"], state["failed"]) == ("done", 3, 3, 0)
     keys = {o["Key"] for o in s3.list_objects_v2(Bucket="music")["Contents"]}
     assert "Texas/Greatest Hits/11 Halo.mp3" in keys
-    page = web.get("/sync/backup").text
+    page = _plan_page(web, "backup")
     assert "Nothing to do" in page and "Start sync" not in page and "Recent syncs" in page
     assert "Done" in web.get(job_url).text
+
+
+def test_plan_page_shows_progress_while_planning(web, Session, monkeypatch):
+    from audio_organizer import sync as sy
+
+    release = threading.Event()
+    real_plan = sy.plan
+    calls = []
+
+    def slow_plan(session, target, **kwargs):
+        calls.append(target.name)
+        kwargs["progress"](1, 3)
+        release.wait(5)
+        return real_plan(session, target, **kwargs)
+
+    monkeypatch.setattr(sy, "plan", slow_plan)
+    with Session() as session:
+        library = session.scalar(select(Library))
+        session.add(SyncTarget(name="backup", library=library, bucket="music", prefix=""))
+        session.commit()
+    page = web.get("/sync/backup").text  # returns at once
+    assert "data-sync-plan" in page and "Start sync" not in page
+    for _ in range(100):
+        state = web.get("/sync/backup", headers={"Accept": "application/json"}).json()
+        if state["done"]:
+            break
+        time.sleep(0.02)
+    assert state["active"] and (state["done"], state["total"]) == (1, 3)
+    assert "Checked 1 of 3 tracks" in state["counts"]
+    release.set()
+    assert "3 upload" in _plan_page(web, "backup")
+    assert calls == ["backup"]  # reloading the page did not plan again
+
+
+def test_starting_a_sync_runs_the_plan_that_was_shown(web, Session, s3, monkeypatch):
+    from audio_organizer import sync as sy
+
+    with Session() as session:
+        library = session.scalar(select(Library))
+        session.add(SyncTarget(name="backup", library=library, bucket="music", prefix=""))
+        session.commit()
+    expected = re.search(r'name="expected" value="(\w+)"', _plan_page(web, "backup")).group(1)
+    monkeypatch.setattr(sy, "plan", lambda *a, **k: pytest.fail("planned again"))
+    response = web.post("/sync/jobs", data={"target": "backup", "expected": expected})
+    state = _wait_for(web, str(response.url.path))
+    assert (state["status"], state["done"], state["total"]) == ("done", 3, 3)
+
+
+def test_web_sync_shows_planning_progress(web, Session, s3, monkeypatch):
+    from audio_organizer import sync as sy
+
+    release = threading.Event()
+    real_plan = sy.plan
+
+    def slow_plan(session, target, **kwargs):
+        kwargs["progress"](2, 3)
+        release.wait(5)
+        return real_plan(session, target, **kwargs)
+
+    monkeypatch.setattr(sy, "plan", slow_plan)
+    with Session() as session:
+        library = session.scalar(select(Library))
+        session.add(SyncTarget(name="backup", library=library, bucket="music", prefix=""))
+        session.commit()
+    response = web.post("/sync/jobs", data={"target": "backup", "expected": "x"})
+    job_url = str(response.url.path)
+    for _ in range(100):
+        state = web.get(job_url, headers={"Accept": "application/json"}).json()
+        if state["done"]:
+            break
+        time.sleep(0.02)
+    assert state["status"] == "planning" and (state["done"], state["total"]) == (2, 3)
+    assert "Checked 2 of 3 tracks" in state["counts"]
+    release.set()
+    assert _wait_for(web, job_url)["status"] == "changed"
 
 
 def test_web_sync_refuses_a_changed_plan(web, Session, s3):
@@ -282,7 +369,7 @@ def test_sync_target_with_slash_in_legacy_name_is_reachable(web, Session):
         session.commit()
     page = web.get("/sync").text
     assert 'href="/sync/old/backup"' in page
-    assert "3 upload" in web.get("/sync/old/backup").text
+    assert "3 upload" in _plan_page(web, "old/backup")
 
 
 def test_sync_target_form(web, Session):

@@ -11,7 +11,7 @@ from collections.abc import Iterator
 from math import ceil
 from pathlib import Path
 from typing import Annotated
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import (
@@ -89,6 +89,7 @@ FILTERS = {
 
 
 def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
+    previews = jobs.Previews(session_factory)
     app = FastAPI(title="audio-organizer", docs_url=None, redoc_url=None)
     templates = Jinja2Templates(directory=HERE / "templates")
     templates.env.filters["duration"] = _duration
@@ -1065,13 +1066,26 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         target = session.scalar(select(SyncTarget).where(SyncTarget.name == name))
         if target is None:
             raise HTTPException(404, f"No sync target named {name}")
+        expected = str(form.get("expected", "")) or None
         try:
             job = jobs.start_in_background(
-                session_factory, session, target, str(form.get("expected", "")) or None
-            )
+                session_factory, session, target, expected,
+                plan=previews.ready_plan(target, expected),
+            )  # fmt: skip
         except jobs.SyncBusy as e:
             return _redirect(f"/sync/jobs/{e.job.id}", str(e))
+        previews.forget(target)  # the sync changes what the next plan shows
         return _redirect(f"/sync/jobs/{job.id}")
+
+    @app.post("/sync/plans")
+    async def replan_sync(request: Request, session: Session = SessionDep):
+        """Make the plan of a target again, as the files may have changed."""
+        name = str((await request.form()).get("target", ""))
+        target = session.scalar(select(SyncTarget).where(SyncTarget.name == name))
+        if target is None:
+            raise HTTPException(404, f"No sync target named {name}")
+        previews.get(target, again=True)
+        return _redirect(f"/sync/{quote(target.name)}")
 
     @app.get("/sync/jobs/{job_id:int}")
     def sync_job(request: Request, job_id: int, session: Session = SessionDep):
@@ -1091,14 +1105,20 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
     @app.get("/sync/{name:path}", response_class=HTMLResponse)
     def sync_plan(request: Request, name: str, session: Session = SessionDep):
         """What a sync would do, with a button to start it. Planning looks for album
-        covers in every folder, which takes a while on a network share."""
+        covers in every folder, which takes a while on a network share, so it runs in the
+        background: the page shows its progress (JSON for the page's script) and then the
+        plan."""
         target = session.scalar(select(SyncTarget).where(SyncTarget.name == name))
         if target is None:
             raise HTTPException(404, f"No sync target named {name}")
         active = jobs.active_job(session, target)
-        plan = sy.plan(session, target) if active is None else None
+        preview = previews.get(target) if active is None else None
+        if preview is not None and "application/json" in request.headers.get("accept", ""):
+            return JSONResponse(_preview_state(preview))
         return render(
-            request, "sync.html", targets=None, target=target, plan=plan, active=active,
+            request, "sync.html", targets=None, target=target, active=active,
+            preview=preview, plan=preview.plan if preview else None,
+            state=_preview_state(preview) if preview else None,
             recent=jobs.recent_jobs(session, target),
         )  # fmt: skip
 
@@ -1126,6 +1146,22 @@ JOB_LABELS = {
 }
 
 
+def _preview_state(preview: jobs.Preview) -> dict:
+    """A plan being made, as the page and its script show it."""
+    planning = preview.status == "planning"
+    counts = ""
+    if planning:
+        counts = (
+            f"Checked {preview.done:,} of {preview.total:,} tracks and their album covers"
+            if preview.total
+            else "Reading the catalog"
+        )
+    return {
+        "status": preview.status, "active": planning, "done": preview.done,
+        "total": preview.total, "counts": counts, "error": preview.error,
+    }  # fmt: skip
+
+
 def _job_state(job: SyncJob) -> dict:
     """The job's state with the wording the page shows, so that the page's script and
     the server-rendered page say the same."""
@@ -1135,7 +1171,11 @@ def _job_state(job: SyncJob) -> dict:
         label = "Stopping"
     state["label"] = label
     if job.status == "planning":
-        state["counts"] = "Checking the library and album covers; this can take a few minutes."
+        state["counts"] = (
+            f"Checked {job.done:,} of {job.total:,} tracks and their album covers"
+            if job.total
+            else "Reading the catalog"
+        )
     else:
         failed = f", {job.failed} failed" if job.failed else ""
         state["counts"] = (

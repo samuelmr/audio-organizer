@@ -397,9 +397,12 @@ HTML page.
     aorg sync backup
 
 A sync can also be started from the web UI: open the target on the Sync page, review the
-plan and press Start sync. It runs in the background of `aorg web` and its page shows the
-progress; if the files changed after the plan was shown, it does not start and asks you
-to review the plan again. Only one sync of a target runs at a time, whether started from
+plan and press Start sync. The plan is made in the background (a progress bar shows how
+many tracks and album folders have been checked, which takes minutes on a network share)
+and Start sync runs that very plan; a plan older than ten minutes, or one made
+before a server restart, is made again first. The sync runs in the background of
+`aorg web` and its page shows the progress; if the files changed after the plan was
+shown, it does not start and asks you to review the plan again. Only one sync of a target runs at a time, whether started from
 the web UI or with `aorg sync`, and the web UI shows the progress of either. Stopping a
 sync, or stopping the server or the command, loses nothing: each object is recorded as
 it is synced, and the next sync carries on from there.

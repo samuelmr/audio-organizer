@@ -17,7 +17,7 @@
     field("counts").textContent = job.counts;
     field("current").textContent = job.current || "";
     const progress = field("progress");
-    progress.hidden = job.status === "planning";
+    progress.hidden = job.status === "planning" && !job.total;
     progress.max = job.total || 1;
     progress.value = job.done;
     const stop = field("stop");
@@ -73,4 +73,37 @@
   }
 
   if (wasActive) poll();
+})();
+
+// The plan page while the plan is made in the background: shows its progress, then loads
+// the page again to show the plan.
+(() => {
+  const root = document.querySelector("[data-sync-plan]");
+  if (!root) return;
+  const field = (name) => root.querySelector(`[data-field="${name}"]`);
+  const refresh = field("refresh");
+  if (refresh) refresh.hidden = true;
+
+  const poll = async () => {
+    let state;
+    try {
+      const response = await fetch(root.dataset.syncPlan, { headers: { Accept: "application/json" } });
+      if (!response.ok) throw new Error(response.statusText);
+      state = await response.json();
+    } catch {
+      setTimeout(poll, 5000);
+      return;
+    }
+    if (!state.active) {
+      location.reload();
+      return;
+    }
+    field("counts").textContent = state.counts;
+    const progress = field("progress");
+    progress.hidden = !state.total;
+    progress.max = state.total || 1;
+    progress.value = state.done;
+    setTimeout(poll, 1000);
+  };
+  poll();
 })();
