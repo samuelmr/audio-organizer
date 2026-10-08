@@ -220,6 +220,11 @@ def test_sync_target_form(web, Session):
     assert "s3://tunes/mp3/Artist/Album/01 Title.mp3" in web.get(f"/sync/targets/{target_id}").text
     assert web.post(f"/sync/targets/{target_id}", data={**form, "name": "nas2"}).status_code == 200
     assert web.post("/sync/targets", data={**form, "name": "nas2"}).status_code == 400  # taken
+    web.post(f"/sync/targets/{target_id}/remove", data={})  # not confirmed
+    with Session() as session:
+        assert session.scalar(select(SyncTarget)) is not None
+    page = web.post(f"/sync/targets/{target_id}/remove", data={"confirm": "1"}).text
+    assert "Removed target nas2" in page and "No sync targets" in page
 
 
 def _keep_choices(page: str) -> dict[str, list[str]]:

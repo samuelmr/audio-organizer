@@ -3,10 +3,11 @@
 Objects are stored under the target's prefix at the file's library path, with the
 track's resolved metadata (not its raw tags) as object metadata: artist, albumartist,
 album, title, genre, composer, tracknumber, tracktotal, discnumber, disctotal, year,
-originaldate, length (ms), image (the full key of the album's cover image), rating (1-5),
-mood (comma-separated), replaygaintrackgain / replaygainalbumgain (signed dB, no unit),
+originaldate, length (ms), image (the full key of the album's cover image), compilation
+(1), rating (1-5), mood, replaygaintrackgain / replaygainalbumgain (signed dB, no unit),
 replaygaintrackpeak / replaygainalbumpeak (linear) and artistsort, albumartistsort,
-percent-encoded; numbers as plain integers. The player reads these; keep them in step.
+percent-encoded; numbers as plain integers; several values separated by "; ";
+truncated lists the keys cut to fit 2 KB. The player reads these; keep them in step.
 
 Sync is planned first and only does what is needed, to save bandwidth:
 - unchanged files are skipped
@@ -128,6 +129,16 @@ def remote_summary(session: Session, target: SyncTarget) -> tuple[int, datetime 
     return count, last
 
 
+def remove_target(session: Session, target: SyncTarget) -> int:
+    """Forget a target and what was synced to it; the bucket itself is left alone.
+    Returns how many synced objects were forgotten."""
+    objects, _ = remote_summary(session, target)
+    session.execute(delete(RemoteObject).where(RemoteObject.target_id == target.id))
+    session.delete(target)
+    session.commit()
+    return objects
+
+
 def bucket_layout(target: SyncTarget, example: str = "Artist/Album/01 Title.mp3") -> list[str]:
     """Where a target puts things, as s3 URLs: for explaining the bucket to the user."""
     base = f"s3://{target.bucket}/{target.prefix.strip('/')}".rstrip("/")
@@ -173,9 +184,14 @@ def _rating(value: str | None) -> str | None:
 
 
 def _mood(value: str | None) -> str | None:
-    """Moods as a comma-separated list; files separate them with ; or ,."""
+    """Moods separated by "; " like every multi-valued key; MusicMatch comments
+    sometimes separate them with commas instead."""
     parts = [p.strip() for p in re.split(r"[;,]", value or "") if p.strip()]
-    return ",".join(parts) or None
+    return "; ".join(dict.fromkeys(parts)) or None
+
+
+def _flag(value: str | None) -> str | None:
+    return "1" if (value or "").strip().lower() in ("1", "true", "yes") else None
 
 
 def track_metadata(
@@ -198,6 +214,7 @@ def track_metadata(
         "originaldate": _original_date(fields.get("originaldate")),
         "genre": fields.get("genre"),
         "composer": fields.get("composer"),
+        "compilation": _flag(fields.get("compilation")),
         "rating": _rating(fields.get("rating")),
         "mood": _mood(fields.get("mood")),
         "replaygaintrackgain": _decimal(fields.get("replaygain_track_gain")),
@@ -211,11 +228,22 @@ def track_metadata(
     }
     values = {k: v for k, v in values.items() if v}
     metadata = {k: quote(v, safe="") for k, v in values.items()}
-    # Stay within the size limit by shortening the longest values
-    while sum(len(k) + len(v) for k, v in metadata.items()) > METADATA_LIMIT:
+    # Stay within the size limit by shortening the longest values, and say which were cut
+    # so that the player can tell (and read the full value from the file's tags)
+    cut: list[str] = []
+
+    def size() -> int:
+        total = sum(len(k) + len(v) for k, v in metadata.items())
+        return total + (len("truncated") + len(quote(",".join(cut), safe="")) if cut else 0)
+
+    while size() > METADATA_LIMIT:
         longest = max(metadata, key=lambda k: len(metadata[k]))
         values[longest] = values[longest][: len(values[longest]) // 2]
         metadata[longest] = quote(values[longest], safe="")
+        if longest not in cut:
+            cut.append(longest)
+    if cut:
+        metadata["truncated"] = quote(",".join(sorted(cut)), safe="")
     return metadata
 
 

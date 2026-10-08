@@ -156,7 +156,8 @@ def test_metadata_fits_size_limit(setup):
     file = session.scalar(select(AudioFile))
     meta = sy.track_metadata(file.duration, {"title": "ä" * 3000, "artist": "x"}, None)
     assert sum(len(k) + len(v) for k, v in meta.items()) <= sy.METADATA_LIMIT
-    assert meta["artist"] == "x"
+    assert meta["artist"] == "x" and meta["truncated"] == "title"
+    assert "truncated" not in sy.track_metadata(1, {"title": "short"}, None)
 
 
 def test_metadata_numbers_are_plain_integers():
@@ -171,14 +172,14 @@ def test_metadata_numbers_are_plain_integers():
 def test_metadata_player_fields():
     fields = {
         "originaldate": "1996-05-01T00:00:00Z", "composer": "Elfman", "rating": "4",
-        "mood": "Upbeat; Happy", "replaygain_track_gain": "-7.23 dB",
+        "mood": "Upbeat, Happy", "compilation": "1", "replaygain_track_gain": "-7.23 dB",
         "replaygain_album_gain": "+3.00 dB", "replaygain_track_peak": "0.988000",
         "replaygain_album_peak": "x", "artistsort": "Texas", "albumartistsort": "Texas",
     }  # fmt: skip
     meta = sy.track_metadata(100, fields, "Music/Texas/cover.jpg")
     assert meta == {
         "originaldate": "1996-05-01", "composer": "Elfman", "rating": "4",
-        "mood": "Upbeat%2CHappy", "replaygaintrackgain": "-7.23",
+        "mood": "Upbeat%3B%20Happy", "compilation": "1", "replaygaintrackgain": "-7.23",
         "replaygainalbumgain": "3.00", "replaygaintrackpeak": "0.988000",
         "artistsort": "Texas", "albumartistsort": "Texas", "length": "100000",
         "image": "Music%2FTexas%2Fcover.jpg",
@@ -225,3 +226,5 @@ def test_target_commands(setup, tmp_path):
     assert "never synced" in result.output and "playlists/" in result.output
     assert runner.invoke(app, [*db, "target", "rename", target.name, "nas"]).exit_code == 0
     assert "nas" in runner.invoke(app, [*db, "target", "list"]).output
+    assert runner.invoke(app, [*db, "target", "remove", "nas"]).exit_code == 0
+    assert runner.invoke(app, [*db, "target", "list"]).output == ""

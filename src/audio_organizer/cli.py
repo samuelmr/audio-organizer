@@ -588,6 +588,15 @@ def target_rename(ctx: typer.Context, name: str, new_name: str) -> None:
     typer.echo(f"Renamed {name} to {new_name}")
 
 
+@target_app.command("remove")
+def target_remove(ctx: typer.Context, name: str) -> None:
+    """Forget a target. Nothing in the bucket is deleted; if you add it again, run
+    `aorg target reconcile` first so that the files are not uploaded twice."""
+    with _session(ctx) as session:
+        objects = sy.remove_target(session, _target(session, name))
+    typer.echo(f"Removed target {name}: forgot {objects} synced objects, the bucket is unchanged")
+
+
 @target_app.command("reconcile")
 def target_reconcile(ctx: typer.Context, name: str) -> None:
     """Compare the catalog with the bucket's contents. Adopts objects uploaded by other

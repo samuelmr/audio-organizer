@@ -32,4 +32,14 @@ environment variables or <code>~/.aws</code>, or from the named profile.</p>
 {% endfor %}</pre>
 <p class="hint">If the bucket already holds your music, run <code>aorg target reconcile {{ target.name }}</code> once before the first sync.</p>
 {% endif %}
+{% if target %}
+<h2>Remove</h2>
+<form method="post" action="/sync/targets/{{ target.id }}/remove">
+ <p>Removing the target only makes this catalog forget it and what it synced there; nothing
+ in the bucket is deleted. If you add it again later, run <code>aorg target reconcile</code>
+ before syncing so that nothing is uploaded twice.</p>
+ <p><label><input type="checkbox" name="confirm" value="1" required> Forget target {{ target.name }}</label>
+ <button type="submit">Remove</button></p>
+</form>
+{% endif %}
 {% endblock %}

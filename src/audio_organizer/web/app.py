@@ -955,6 +955,19 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         session.commit()
         return _redirect("/sync", f"Saved target {target.name}")
 
+    @app.post("/sync/targets/{target_id:int}/remove")
+    async def remove_sync_target(request: Request, target_id: int, session: Session = SessionDep):
+        """Forget a target; the bucket is left alone. The form's checkbox is the
+        confirmation, as the pages work without JavaScript."""
+        target = _sync_target(session, target_id)
+        if not (await request.form()).get("confirm"):
+            return _redirect(f"/sync/targets/{target_id}", "Tick the box to remove the target")
+        name = target.name
+        objects = sy.remove_target(session, target)
+        return _redirect(
+            "/sync", f"Removed target {name}: forgot {objects} synced objects, bucket unchanged"
+        )
+
     @app.get("/sync/{name:path}", response_class=HTMLResponse)
     def sync_plan(request: Request, name: str, session: Session = SessionDep):
         """What a sync would do. Planning looks for album covers in every folder, which

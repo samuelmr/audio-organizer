@@ -37,8 +37,11 @@ environment variables, `~/.aws/credentials`, or a named profile (`--profile`).
     aorg target list                  # bucket, prefix, objects known, last sync
     aorg target show nas              # and where tracks, covers and playlists go
     aorg target rename nas home
+    aorg target remove home           # forgets the target; the bucket is not touched
 
-Targets can also be added and edited on the web UI's Sync page.
+Targets can also be added, edited and removed on the web UI's Sync page. If you add a
+removed target again, run `aorg target reconcile` before syncing, so that files are not
+uploaded twice.
 
 ## Usage
 
@@ -340,15 +343,20 @@ percent-encoded UTF-8, and left out when empty:
 | `originaldate` | `YYYY`, `YYYY-MM` or `YYYY-MM-DD` |
 | `length` | milliseconds |
 | `image` | the full bucket key of the album's cover image, which is uploaded too |
+| `compilation` | `1` for a compilation (iTunes TCMP), else left out |
 | `rating` | integer 1–5 |
-| `mood` | comma-separated |
+| `mood` | text |
 | `replaygaintrackgain`, `replaygainalbumgain` | signed decimal dB without unit, e.g. `-7.23` |
-| `replaygaintrackpeak`, `replaygainalbumpeak` | linear float, e.g. `0.988` |
+| `replaygaintrackpeak`, `replaygainalbumpeak` | linear float, e.g. `0.988`; true peaks can exceed 1 |
+| `truncated` | the keys that were cut to fit, comma-separated |
 
-The values are the catalog's, so your edits are synced even before they are written
-into the files. The size limit of S3 user metadata is 2 KB; the longest values are cut
-first. Adding keys to the list changes the metadata of already synced tracks: the next
-sync updates them with server-side copies, without uploading the audio.
+Several values in one field (two artists, genres or moods) are separated by a semicolon
+and a space, as in `Rock; Pop`; commas are not separators, since names such as "Earth, Wind & Fire" contain
+them. The values are the catalog's, so your edits are synced even before they are written
+into the files. The size limit of S3 user metadata is 2 KB (accented letters take six
+characters once encoded); when a track's values exceed it, the longest values are cut
+and listed in `truncated`. Adding keys to the list changes the metadata of already synced
+tracks: the next sync updates them with server-side copies, without uploading the audio.
 
 All playlists of the library are synced too, as `.m3u`, `.json` and `.html` files in
 `playlists/` (under the prefix), referring to the tracks by relative paths
