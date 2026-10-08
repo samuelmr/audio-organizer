@@ -10,11 +10,17 @@
     link.setAttribute("aria-pressed", "false");
   });
 
+  // the icons are symbols in base.html
+  const setIcon = (link, name) => {
+    const use = link.querySelector("use");
+    if (use) use.setAttribute("href", `#icon-${name}`);
+  };
+
   const stop = () => {
     if (!current) return;
     current.audio.pause();
     current.audio.removeAttribute("src");
-    current.link.textContent = "▶";
+    setIcon(current.link, "play");
     current.link.classList.remove("playing");
     current.link.setAttribute("aria-pressed", "false");
     current = null;
@@ -28,7 +34,7 @@
     const audio = new Audio(link.href);
     const playing = { link, audio };
     current = playing;
-    link.textContent = "■";
+    setIcon(link, "stop");
     link.classList.add("playing");
     link.setAttribute("aria-pressed", "true");
     audio.addEventListener("ended", () => { if (current === playing) stop(); });

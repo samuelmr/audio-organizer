@@ -9,6 +9,12 @@
     if (input) input.click();
   });
 
+  // Covers that are missing leave their empty square instead of a broken image
+  document.querySelectorAll(".thumb img").forEach((img) => {
+    if (img.complete && !img.naturalWidth) img.remove();
+    else img.addEventListener("error", () => img.remove());
+  });
+
   // A checkbox with data-select-all="name" selects or deselects all checkboxes of that
   // name, and shows a partial selection.
   document.querySelectorAll("input[data-select-all]").forEach((all) => {

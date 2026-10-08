@@ -1,102 +1,193 @@
+/* Source Sans Pro, served with the app (fonts/, from @fontsource) like in audio-player, so
+   that the pages contact no one else. latin-ext is loaded only for the letters latin lacks. */
+@font-face {
+  font-family: "Source Sans Pro";
+  font-weight: 400;
+  font-display: swap;
+  src: url(fonts/source-sans-pro-latin-400-normal.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Source Sans Pro";
+  font-weight: 400;
+  font-display: swap;
+  src: url(fonts/source-sans-pro-latin-ext-400-normal.woff2) format("woff2");
+  unicode-range: U+0100-02AF, U+0304, U+0308, U+0329, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Source Sans Pro";
+  font-weight: 600;
+  font-display: swap;
+  src: url(fonts/source-sans-pro-latin-600-normal.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Source Sans Pro";
+  font-weight: 600;
+  font-display: swap;
+  src: url(fonts/source-sans-pro-latin-ext-600-normal.woff2) format("woff2");
+  unicode-range: U+0100-02AF, U+0304, U+0308, U+0329, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Source Sans Pro";
+  font-weight: 700;
+  font-display: swap;
+  src: url(fonts/source-sans-pro-latin-700-normal.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Source Sans Pro";
+  font-weight: 700;
+  font-display: swap;
+  src: url(fonts/source-sans-pro-latin-ext-700-normal.woff2) format("woff2");
+  unicode-range: U+0100-02AF, U+0304, U+0308, U+0329, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* The colours of audio-player, quieter: the surfaces and the accent are tinted by one hue,
+   which in audio-player follows the album art and here stays put. They are in OKLCH, so
+   that any hue gives the same lightness and contrast; --ok, --bad and --warn are fixed, as
+   they carry meaning. tests/test_style.py checks the contrast of every text colour on every
+   surface for every hue; run it after changing them. */
 :root {
-  --bg: #fbfbfa;
-  --fg: #1d1d1b;
-  --muted: #6b6b66;
-  --line: #deded8;
-  --accent: #2459a8;
-  --ok: #2e7d32;
-  --bad: #b3261e;
-  --warn: #9a6700;
-  --highlight: #f1f0ea;
+  /* teal, audio-player's default (hsl hue 180) */
+  --hue: 195;
+  --bg: oklch(0.985 0.006 var(--hue));
+  --bg-glow: oklch(0.94 0.028 var(--hue));
+  --fg: oklch(0.23 0.02 var(--hue));
+  --muted: oklch(0.47 0.02 var(--hue));
+  --line: oklch(0.88 0.015 var(--hue));
+  --highlight: oklch(0.955 0.012 var(--hue));
+  --accent: oklch(0.47 0.08 var(--hue));
+  --accent-soft: oklch(0.47 0.08 var(--hue) / 0.12);
+  --ok: oklch(0.48 0.12 145);
+  --bad: oklch(0.5 0.17 27);
+  --warn: oklch(0.5 0.1 75);
+  --shadow: oklch(0.2 0.02 var(--hue) / 0.18);
   color-scheme: light dark;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #181817;
-    --fg: #e8e8e3;
-    --muted: #a0a09a;
-    --line: #3a3a37;
-    --accent: #8ab4f8;
-    --ok: #81c995;
-    --bad: #f28b82;
-    --warn: #fdd663;
-    --highlight: #24241f;
+    --bg: oklch(0.19 0.012 var(--hue));
+    --bg-glow: oklch(0.27 0.04 var(--hue));
+    --fg: oklch(0.93 0.01 var(--hue));
+    --muted: oklch(0.74 0.02 var(--hue));
+    --line: oklch(0.34 0.015 var(--hue));
+    --highlight: oklch(0.24 0.015 var(--hue));
+    --accent: oklch(0.8 0.1 var(--hue));
+    --accent-soft: oklch(0.8 0.1 var(--hue) / 0.14);
+    --ok: oklch(0.8 0.13 145);
+    --bad: oklch(0.75 0.13 25);
+    --warn: oklch(0.82 0.12 85);
+    --shadow: oklch(0 0 0 / 0.5);
   }
 }
 
 * { box-sizing: border-box; }
 
+/* audio-player's glow of the hue at the top, faint and behind the menu only */
 body {
   margin: 0;
-  background: var(--bg);
+  background: var(--bg) radial-gradient(48em 10em at 12% 0, var(--bg-glow), transparent) no-repeat;
   color: var(--fg);
-  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: 16px/1.4 "Source Sans Pro", system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
 header { border-bottom: 1px solid var(--line); }
-nav { display: flex; flex-wrap: wrap; gap: 1.25rem; padding: 0.75rem 1rem; }
-nav a { color: var(--fg); text-decoration: none; }
-nav a:hover, nav a[aria-current] { text-decoration: underline; }
-.brand { font-weight: 600; }
+nav { display: flex; flex-wrap: wrap; gap: 0.25rem 0.4rem; align-items: center; padding: 0.6rem 1rem; }
+nav a { color: var(--fg); text-decoration: none; border-radius: 2em; padding: 0.2rem 0.75rem; }
+nav a:hover { background: var(--highlight); }
+nav a[aria-current] { background: var(--accent-soft); font-weight: 600; }
+.brand { font-weight: 700; margin-right: 0.75rem; padding-left: 0; }
+.brand:hover { background: none; text-decoration: underline; }
 
 main { padding: 1rem; max-width: 80rem; }
-h1 { font-size: 1.5rem; margin: 0.5rem 0 1rem; }
-h2 { font-size: 1.15rem; margin: 1.75rem 0 0.75rem; }
+h1 { font-size: 1.6rem; margin: 0.5rem 0 1rem; }
+h2 { font-size: 1.2rem; margin: 1.75rem 0 0.75rem; }
 a { color: var(--accent); }
 code { font-size: 0.9em; }
 
 table { border-collapse: collapse; width: 100%; }
 th, td { text-align: left; padding: 0.35rem 0.6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
-thead th { font-weight: 600; color: var(--muted); font-size: 0.85rem; }
+thead th {
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
 tbody tr:hover { background: var(--highlight); }
+/* the current row, as the playing track in audio-player's queue: the accent, faintly,
+   with a bar at the start */
+tbody tr:has(a.play.playing), tr[data-select-row]:has(input:checked) { background: var(--accent-soft); }
+tbody tr:has(a.play.playing) > :first-child,
+tr[data-select-row]:has(input:checked) > :first-child { box-shadow: inset 0.25em 0 0 var(--accent); }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
 .path { color: var(--muted); font-family: ui-monospace, monospace; font-size: 0.85rem; word-break: break-all; }
 .details, .count, .hint, small { color: var(--muted); }
-small { display: block; font-size: 0.8rem; }
+small { display: block; font-size: 0.85rem; }
 
 input, select, button { font: inherit; color: inherit; }
 input, select { background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 0.3rem 0.45rem; }
 button { background: var(--highlight); border: 1px solid var(--line); border-radius: 4px; padding: 0.35rem 0.8rem; cursor: pointer; }
 button:hover { border-color: var(--muted); }
-button.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600; }
 button.danger { color: var(--bad); }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+/* the search as audio-player's: a pill without a border */
 .search { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; margin-bottom: 0.75rem; }
-.search input[type=search] { flex: 1 1 18rem; }
+.search input[type=search] {
+  flex: 1 1 18rem;
+  background: var(--highlight);
+  border-color: transparent;
+  border-radius: 2em;
+  padding: 0.35rem 1rem;
+}
+.search input[type=search]:hover { border-color: var(--line); }
 .stacked { display: grid; gap: 0.75rem; max-width: 40rem; margin-bottom: 1rem; }
 .stacked label { display: grid; gap: 0.25rem; }
 .actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1rem 0; }
 form.inline { display: inline; }
-.pages, .groups { display: flex; flex-wrap: wrap; gap: 1rem; margin: 1rem 0; }
-.groups a[aria-current] { font-weight: 600; }
+
+/* pages and groups as chips */
+.pages, .groups { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1rem 0; }
+.pages a, .groups a {
+  background: var(--highlight);
+  border-radius: 2em;
+  color: var(--fg);
+  padding: 0.2rem 0.9rem;
+  text-decoration: none;
+}
+.pages a:hover, .groups a:hover { background: var(--line); }
+.groups a[aria-current] { background: var(--accent-soft); font-weight: 600; }
 
 .fields input { width: 100%; min-width: 12rem; }
 .fields .source { color: var(--muted); font-size: 0.85rem; }
 .fields .others span { display: block; font-size: 0.85rem; color: var(--muted); }
 .fields .others .differs { color: var(--warn); }
 
+/* round play buttons, filled while playing, as in audio-player */
 a.play {
-  display: inline-block;
-  width: 1.5em;
-  text-align: center;
-  text-decoration: none;
-  border: 1px solid var(--line);
+  display: inline-grid;
+  place-items: center;
+  width: 1.6em;
+  height: 1.6em;
+  vertical-align: -0.35em;
   border-radius: 50%;
-  font-size: 0.75rem;
-  line-height: 1.5em;
-  color: var(--accent);
+  background: var(--highlight);
+  color: var(--fg);
+  text-decoration: none;
 }
-a.play:hover { border-color: var(--accent); }
-a.play.playing { background: var(--accent); color: var(--bg); }
-a.play.unplayable { color: var(--muted); text-decoration: line-through; }
+a.play svg { width: 0.7em; height: 0.7em; fill: currentColor; }
+a.play:hover { background: var(--line); }
+a.play.playing { background: var(--fg); color: var(--bg); }
+a.play.unplayable { opacity: 0.4; }
 table.duplicates tbody { border-bottom: 2px solid var(--line); }
 tr[data-select-row] { cursor: pointer; }
 tr[data-select-row] label { cursor: pointer; }
-tr.choice .fate { font-size: 0.8rem; color: var(--bad); }
+tr.choice .fate { font-size: 0.85rem; color: var(--bad); }
 tr.choice .fate::before { content: "trash"; }
-tr.choice:has(input:checked) { background: var(--highlight); }
 tr.choice:has(input:checked) .fate { color: var(--ok); font-weight: 600; }
 tr.choice:has(input:checked) .fate::before { content: "keep"; }
 table.changes .verdict { font-size: 0.85rem; font-weight: 600; margin-left: 0.25rem; }
@@ -118,38 +209,100 @@ a.details {
 }
 a.details:hover, a.details:focus-visible { color: var(--bg); background: var(--accent); }
 
-form.notice { background: var(--highlight); border-left: 3px solid var(--warn); padding: 0.5rem 0.75rem; margin: 1rem 0; }
+/* notes beside the content: a tinted panel with a bar at the start */
+form.notice, .message {
+  background: var(--highlight);
+  border-left: 3px solid var(--warn);
+  border-radius: 0 0.5em 0.5em 0;
+  padding: 0.5rem 0.75rem;
+  margin: 1rem 0;
+}
+.message { border-left-color: var(--accent); }
 form.notice p { margin: 0 0 0.5rem; }
 .fields th[scope=row] { width: 14rem; font-weight: normal; }
+
+/* covers as in audio-player: round corners and a soft shadow instead of a frame */
 .covers { display: flex; flex-wrap: wrap; gap: 1.5rem; }
 .covers figure { margin: 0; }
-.covers img, .no-cover { width: 160px; height: 160px; object-fit: contain; border: 1px solid var(--line); }
-.no-cover { display: grid; place-items: center; color: var(--muted); font-size: 0.85rem; text-align: center; }
+.covers img, .no-cover {
+  width: 160px;
+  height: 160px;
+  object-fit: contain;
+  border-radius: 0.6em;
+  box-shadow: 0 0.5em 1.25em var(--shadow);
+}
+.no-cover {
+  display: grid;
+  place-items: center;
+  background: var(--highlight);
+  box-shadow: none;
+  color: var(--muted);
+  font-size: 0.85rem;
+  text-align: center;
+}
 .covers figcaption { color: var(--muted); font-size: 0.85rem; margin-top: 0.25rem; }
 
-img.thumb { object-fit: cover; border: 1px solid var(--line); display: block; }
+/* small covers, round like audio-player's: an image of its own (the covers page), or
+   one before an album name on a square that shows alone when there is none */
+img.thumb { object-fit: cover; border-radius: 0.35em; display: block; background: var(--highlight); }
+span.thumb {
+  display: inline-block;
+  width: 2.3em;
+  height: 2.3em;
+  margin: -0.2em 0.6em -0.2em 0;
+  vertical-align: middle;
+  border-radius: 0.35em;
+  overflow: hidden;
+  background: var(--highlight);
+}
+span.thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+tr.group span.thumb { margin-top: -0.4em; margin-bottom: -0.2em; }
 
 .subtitle { color: var(--muted); margin-top: -0.5rem; }
 a.quiet { color: inherit; text-decoration: none; }
 a.quiet:hover { text-decoration: underline; }
 .muted { color: var(--muted); }
-tr.group th { padding-top: 1rem; font-size: 1rem; border-bottom: 1px solid var(--muted); }
+tr.group th { padding-top: 1rem; font-size: 1.05rem; border-bottom: 1px solid var(--muted); }
 tr.group:hover { background: none; }
 tr.group .by { color: var(--muted); font-weight: normal; margin-left: 0.5rem; }
 
-.message { background: var(--highlight); border-left: 3px solid var(--accent); padding: 0.5rem 0.75rem; }
 .error, .failed { color: var(--bad); }
 .ok { color: var(--ok); }
 .flag { color: var(--warn); font-weight: 600; }
-.status { font-size: 0.85rem; }
+/* statuses as outlined chips in their colour; the word says it too */
+.status {
+  display: inline-block;
+  border: 1px solid currentColor;
+  border-radius: 2em;
+  padding: 0 0.55em;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
 .status.applied { color: var(--ok); }
 .status.failed, .status.rejected { color: var(--bad); }
 .status.approved { color: var(--accent); }
-.outcomes { border: 1px solid var(--line); padding: 0 1rem 0.5rem; margin-bottom: 1rem; }
+.outcomes { border: 1px solid var(--line); border-radius: 0.6em; padding: 0 1rem 0.5rem; margin-bottom: 1rem; }
 .snapshot { display: grid; grid-template-columns: max-content 1fr; gap: 0.2rem 1rem; }
 .snapshot dt { color: var(--muted); }
 .snapshot dd { margin: 0; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+/* audio-player's chevron, turning as the section opens */
+summary { cursor: pointer; list-style: none; }
+summary::-webkit-details-marker { display: none; }
+summary::before {
+  content: "›";
+  display: inline-block;
+  width: 1em;
+  font-size: 1.2em;
+  line-height: 1;
+  transition: transform 120ms;
+}
+details[open] > summary::before { transform: rotate(90deg); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
 
 @media (max-width: 40rem) {
   .tracks th:nth-child(n+4), .tracks td:nth-child(n+4) { display: none; }

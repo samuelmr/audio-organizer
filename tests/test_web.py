@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from audio_organizer import tags
+from audio_organizer import covers, tags
 from audio_organizer.models import AudioFile, Library, SyncTarget
 from audio_organizer.scanner import scan
 from audio_organizer.web import create_app
@@ -251,6 +251,35 @@ def test_audio(web, Session):
     assert not (web.root / "Texas/Texas_Halo.mp3").exists()
     assert web.get(f"/tracks/{file_id}/audio").status_code == 200
     assert web.get("/tracks/99999/audio").status_code == 404
+
+
+def test_album_art(web, Session, tmp_path):
+    file_id = _file_id(Session, "Texas/Greatest Hits/11 Halo.mp3")
+    assert web.get(f"/tracks/{file_id}/art").status_code == 404
+    assert f'src="/tracks/{file_id}/art"' in web.get("/libraries/music/albums").text
+
+    # Without an embedded cover, the folder's
+    folder = web.root / "Texas/Greatest Hits"
+    (folder / "cover.jpg").write_bytes(b"\xff\xd8\xff\xe0 folder")
+    response = web.get(f"/tracks/{file_id}/art")
+    assert response.content == b"\xff\xd8\xff\xe0 folder"
+    etag = response.headers["etag"]
+    assert web.get(f"/tracks/{file_id}/art", headers={"If-None-Match": etag}).status_code == 304
+
+    # The embedded one first; the file changed, and so did the ETag
+    image = tmp_path / "front.png"
+    image.write_bytes(b"\x89PNG\r\n\x1a\n embedded")
+    covers.embed(folder / "11 Halo.mp3", image)
+    response = web.get(f"/tracks/{file_id}/art", headers={"If-None-Match": etag})
+    assert response.status_code == 200
+    assert response.content == image.read_bytes()
+
+
+def test_menu_marks_the_current_page(web):
+    page = web.get("/libraries/music/albums").text
+    assert '<a href="/libraries/music/albums" aria-current="page">' in page
+    assert '<a href="/libraries/music" aria-current' not in page
+    assert '<a href="/libraries/music" aria-current="page">' in web.get("/libraries/music").text
 
 
 def test_track_page_sections(web, Session):

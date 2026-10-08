@@ -202,6 +202,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
                 func.count(func.distinct(M.artist)).label("artists"),
                 func.min(M.artist).label("artist"),
                 func.min(M.year).label("year"),
+                func.min(AudioFile.id).label("file_id"),  # for the cover
             )
             .join(AudioFile, M.file_id == AudioFile.id)
             .where(present(lib.id), M.album.is_not(None))
@@ -303,6 +304,31 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             raise HTTPException(404, "No embedded cover")
         mime, data = found
         return Response(data, media_type=mime)
+
+    @app.get("/tracks/{file_id}/art")
+    def track_art(request: Request, file_id: int, session: Session = SessionDep):
+        """The cover to show beside the track: the embedded one, else its folder's. Lists
+        show one per album, so the browser revalidates by an ETag of the audio file and the
+        folder image instead of reading the covers again."""
+        file = _file(session, file_id)
+        path = Path(file.library.root) / file.path
+        if not path.is_file():
+            raise HTTPException(404, "The file is not in the library")
+        image = sy.find_cover(path.parent)
+        stats = [path.stat()] + ([image.stat()] if image else [])
+        etag = '"' + "-".join(f"{s.st_mtime_ns:x}.{s.st_size:x}" for s in stats) + '"'
+        headers = {"ETag": etag, "Cache-Control": "no-cache"}
+        if request.headers.get("if-none-match") == etag:
+            return Response(status_code=304, headers=headers)
+        found = covers.embedded(path)
+        if found is not None:
+            mime, data = found
+            return Response(data, media_type=mime, headers=headers)
+        if image is not None:
+            return FileResponse(
+                image, media_type=covers.IMAGE_TYPES[image.suffix.lower()], headers=headers
+            )
+        raise HTTPException(404, "No cover")
 
     @app.post("/tracks/{file_id}/cover")
     def embed_cover(file_id: int, session: Session = SessionDep):

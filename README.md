@@ -74,7 +74,7 @@ The web UI shows the same catalog: browse, search and sort your tracks, list tho
 sources disagree or that lack an album or title, see a track's values and where they
 come from, its identical copies and its original tags, and edit them. Click an album,
 artist or folder to see just its tracks (an album's in disc and track order), or browse
-the albums list. Albums are grouped by their tags, so the tracks of an album scattered
+the albums list with their covers. Albums are grouped by their tags, so the tracks of an album scattered
 across folders show up together. It is also where changesets are easiest to review:
 select changes (or all, then deselect some) to approve or reject, try a dry run, apply
 and undo. The ▶ buttons on track, duplicate and changeset pages play the files in the

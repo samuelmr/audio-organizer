@@ -1,5 +1,11 @@
 {# A play/stop toggle for a track (see static/play.js); without JavaScript a plain link
    to the audio, which the browser plays in its own player. #}
 {% macro play(file_id, label="") -%}
-<a class="play" href="/tracks/{{ file_id }}/audio" data-play aria-label="Play {{ label }}" title="Play">▶</a>
+<a class="play" href="/tracks/{{ file_id }}/audio" data-play aria-label="Play {{ label }}" title="Play"><svg aria-hidden="true"><use href="#icon-play"/></svg></a>
+{%- endmacro %}
+
+{# A small cover on a tinted square, which shows alone when there is none (static/ui.js
+   removes the image that failed to load) #}
+{% macro thumb(file_id) -%}
+<span class="thumb"><img src="/tracks/{{ file_id }}/art" alt="" loading="lazy"></span>
 {%- endmacro %}

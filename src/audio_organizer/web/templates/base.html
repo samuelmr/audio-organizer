@@ -4,30 +4,42 @@
  <meta charset="utf-8">
  <meta name="viewport" content="width=device-width, initial-scale=1">
  <title>{% block title %}audio-organizer{% endblock %}</title>
+ <link rel="preload" href="/static/fonts/source-sans-pro-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
  <link rel="stylesheet" href="{{ asset('style.css') }}">
  <script src="{{ asset('play.js') }}" defer></script>
  <script src="{{ asset('ui.js') }}" defer></script>
 </head>
 <body>
+{# Icons from audio-player (Font Awesome Free, CC BY 4.0), used by the play macro and
+   play.js #}
+<svg style="display: none">
+ <symbol id="icon-play" viewBox="0 0 640 640"><path d="M187.2 100.9C174.8 94.1 159.8 94.4 147.6 101.6C135.4 108.8 128 121.9 128 136L128 504C128 518.1 135.5 531.2 147.6 538.4C159.7 545.6 174.8 545.9 187.2 539.1L523.2 355.1C536 348.1 544 334.6 544 320C544 305.4 536 291.9 523.2 284.9L187.2 100.9z"/></symbol>
+ <symbol id="icon-stop" viewBox="0 0 640 640"><path d="M176 128L464 128C490.5 128 512 149.5 512 176L512 464C512 490.5 490.5 512 464 512L176 512C149.5 512 128 490.5 128 464L128 176C128 149.5 149.5 128 176 128z"/></symbol>
+</svg>
+{# A menu link, marked as the current page on it and the pages under it #}
+{% macro link(href, label, exact=false) -%}
+ <a href="{{ href }}"{% if request.url.path == href or (not exact and request.url.path.startswith(href ~ '/')) %} aria-current="page"{% endif %}>{{ label }}</a>
+{%- endmacro %}
 <header>
  <nav>
   <a class="brand" href="/">audio-organizer</a>
   {% if library %}
-   <a href="/libraries/{{ library.name }}">Tracks</a>
-   <a href="/libraries/{{ library.name }}/albums">Albums</a>
-   <a href="/libraries/{{ library.name }}/playlists">Playlists</a>
-   <a href="/libraries/{{ library.name }}/duplicates">Duplicates</a>
-   <a href="/libraries/{{ library.name }}/album-merges">Album folders</a>
-   <a href="/libraries/{{ library.name }}/artists">Artists</a>
-   <a href="/libraries/{{ library.name }}/layout">Layout</a>
-   <a href="/libraries/{{ library.name }}/ratings">Ratings</a>
-   <a href="/libraries/{{ library.name }}/covers">Covers</a>
-   <a href="/libraries/{{ library.name }}/write-tags">Write tags</a>
+   {% set base = '/libraries/' ~ library.name %}
+   {{ link(base, "Tracks", exact=true) }}
+   {{ link(base ~ '/albums', "Albums") }}
+   {{ link(base ~ '/playlists', "Playlists") }}
+   {{ link(base ~ '/duplicates', "Duplicates") }}
+   {{ link(base ~ '/album-merges', "Album folders") }}
+   {{ link(base ~ '/artists', "Artists") }}
+   {{ link(base ~ '/layout', "Layout") }}
+   {{ link(base ~ '/ratings', "Ratings") }}
+   {{ link(base ~ '/covers', "Covers") }}
+   {{ link(base ~ '/write-tags', "Write tags") }}
   {% else %}
-   <a href="/">Libraries</a>
+   {{ link('/', "Libraries", exact=true) }}
   {% endif %}
-  <a href="/changes">Changes</a>
-  <a href="/sync">Sync</a>
+  {{ link('/changes', "Changes") }}
+  {{ link('/sync', "Sync") }}
  </nav>
 </header>
 <main>

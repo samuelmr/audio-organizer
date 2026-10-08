@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Albums – audio-organizer{% endblock %}
 {% block content %}
+{% from "_macros.html" import thumb %}
 {% set base = '/libraries/' ~ library.name %}
 <h1>Albums</h1>
 <form class="search" method="get" action="{{ base }}/albums">
@@ -15,7 +16,7 @@ across folders are listed together.</p>
  <tbody>
  {% for row in rows %}
   <tr>
-   <td><a href="{{ url(base, album=row.album, albumartist=row.albumartist) }}">{{ row.album }}</a></td>
+   <td>{{ thumb(row.file_id) }}<a href="{{ url(base, album=row.album, albumartist=row.albumartist) }}">{{ row.album }}</a></td>
    <td>{% if row.albumartist %}{{ row.albumartist }}{% elif row.artists > 1 %}<span class="muted">{{ row.artists }} artists</span>{% else %}{{ row.artist or "" }}{% endif %}</td>
    <td class="num">{{ row.tracks }}</td>
    <td>{{ row.year or "" }}</td>

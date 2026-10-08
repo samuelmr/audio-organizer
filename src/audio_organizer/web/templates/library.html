@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ library.name }} – audio-organizer{% endblock %}
 {% block content %}
+{% from "_macros.html" import thumb %}
 {% set base = '/libraries/' ~ library.name %}
 {% if album is not none %}
  <h1>{{ album }}</h1>
@@ -47,7 +48,7 @@
    {% if key != group.key %}
     {% set group.key = key %}
     <tr class="group"><th colspan="8">
-     {% if meta.album %}<a href="{{ url(base, album=meta.album, albumartist=meta.albumartist) }}">{{ meta.album }}</a>{% else %}No album{% endif %}
+     {{ thumb(file.id) }}{% if meta.album %}<a href="{{ url(base, album=meta.album, albumartist=meta.albumartist) }}">{{ meta.album }}</a>{% else %}No album{% endif %}
      {% if meta.albumartist %}<span class="by">{{ meta.albumartist }}</span>{% endif %}
     </th></tr>
    {% endif %}
