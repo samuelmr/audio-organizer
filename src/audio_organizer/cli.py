@@ -372,7 +372,7 @@ def edit(
         values[name] = value.strip()
     with _session(ctx) as session:
         file = _find_file(session, path)
-        changeset = ch.new_changeset(session, f"Manual edit of {file.path}")
+        changeset = ch.new_changeset(session, f"Manual edit of {file.path}", "manual")
         change = ch.propose_manual_edit(session, changeset, file, values)
         if change is None:
             session.expunge(changeset)
@@ -407,14 +407,17 @@ def changes_list(
             if not all_ and not ({"proposed", "approved", "failed"} & counts.keys()):
                 continue
             summary = ", ".join(f"{n} {status}" for status, n in sorted(counts.items()))
-            typer.echo(f"{changeset.id}\t{changeset.description}\t{summary}")
+            typer.echo(
+                f"{changeset.id}\t{changeset.source or '-'}\t{changeset.description}\t{summary}"
+            )
 
 
 @changes_app.command("show")
 def changes_show(ctx: typer.Context, changeset_id: int) -> None:
     with _session(ctx) as session:
         changeset = _changeset(session, changeset_id)
-        typer.echo(f"Changeset {changeset.id}: {changeset.description}")
+        source = changeset.source or "unknown source"
+        typer.echo(f"Changeset {changeset.id} ({source}): {changeset.description}")
         for change in changeset.changes:
             error = f"  ({change.error})" if change.error else ""
             typer.echo(f"  #{change.id} [{change.status}] {ch.describe(change)}{error}")

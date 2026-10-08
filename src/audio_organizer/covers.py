@@ -463,7 +463,7 @@ def _found_online(session: Session, min_pixels: int) -> dict[str, CoverImage]:
 def propose(session: Session, library: Library, folders: list[FolderCovers], description: str):
     from . import changes as ch
 
-    changeset = ch.new_changeset(session, description)
+    changeset = ch.new_changeset(session, description, "covers")
     root = Path(library.root)
     for folder in folders:
         label = None

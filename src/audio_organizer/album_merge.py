@@ -164,7 +164,7 @@ def batch(merges: list[Merge], limit: int) -> list[Merge]:
 
 
 def propose(session: Session, merges: list[Merge], description: str) -> Changeset:
-    changeset = ch.new_changeset(session, description)
+    changeset = ch.new_changeset(session, description, "album_merge")
     for merge in merges:
         for track, keep in merge.trash:
             ch.propose_trash(changeset, track.file, replacement=keep.file)

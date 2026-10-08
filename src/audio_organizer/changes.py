@@ -34,8 +34,15 @@ class Outcome:
     message: str
 
 
-def new_changeset(session: Session, description: str) -> Changeset:
-    changeset = Changeset(description=description)
+# Features that propose changesets, recorded in Changeset.source so that changesets can be
+# filtered by feature and rules can be scoped to one.
+SOURCES = ("writing", "layout", "duplicates", "album_merge", "covers", "manual")
+
+
+def new_changeset(session: Session, description: str, source: str) -> Changeset:
+    if source not in SOURCES:
+        raise ValueError(f"Unknown changeset source: {source}")
+    changeset = Changeset(description=description, source=source)
     session.add(changeset)
     return changeset
 

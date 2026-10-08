@@ -3,7 +3,7 @@
 {% block title %}Changeset {{ changeset.id }} – audio-organizer{% endblock %}
 {% block content %}
 <h1>Changeset {{ changeset.id }}</h1>
-<p>{{ changeset.description }}</p>
+<p>{{ changeset.description }}{% if changeset.source %} <span class="hint">({{ changeset.source }})</span>{% endif %}</p>
 <p class="hint">▶ plays the file next to it. Click a row to select it.</p>
 
 {% if outcomes is not none %}

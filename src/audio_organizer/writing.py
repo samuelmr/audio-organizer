@@ -66,7 +66,7 @@ def survey(
 def propose(
     session: Session, files: list[Pending], description: str, id3_version: int | None = None
 ) -> Changeset:
-    changeset = ch.new_changeset(session, description)
+    changeset = ch.new_changeset(session, description, "writing")
     for pending in files:
         ch.propose_retag(changeset, pending.file, dict(pending.fields), id3_version)
     session.commit()

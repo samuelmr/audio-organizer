@@ -166,7 +166,7 @@ def choose(proposals: list[Proposal], keep_ids: dict[str, int]) -> list[Proposal
 def propose(session: Session, proposals: list[Proposal], description: str) -> Changeset:
     """One changeset for the proposals: for each, copying tags to the kept file, then
     trashing the other copies."""
-    changeset = ch.new_changeset(session, description)
+    changeset = ch.new_changeset(session, description, "duplicates")
     for proposal in proposals:
         if proposal.fill:
             ch.propose_retag(changeset, proposal.keep.file, proposal.fill)

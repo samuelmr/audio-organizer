@@ -8,6 +8,7 @@ authors = [
 ]
 requires-python = ">=3.13"
 dependencies = [
+    "alembic>=1.20.0",
     "boto3>=1.43.108",
     "fastapi>=0.142.2",
     "jinja2>=3.1.6",

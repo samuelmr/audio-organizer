@@ -243,7 +243,7 @@ def propose(
 ) -> Changeset:
     """One changeset moving the albums' files; a folder's cover images go with the last
     track that leaves it."""
-    changeset = ch.new_changeset(session, description)
+    changeset = ch.new_changeset(session, description, "layout")
     for album in albums:
         with_extras(album, library)
         last_from: dict[str, Move] = {}

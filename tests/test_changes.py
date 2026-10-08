@@ -27,7 +27,7 @@ def catalog(Session, copy_audio, tmp_path):
 def test_manual_edit_retag_apply_and_undo(catalog):
     session, root, file = catalog
     set_value(session, file, "manual", "genre", "Rock")  # an earlier edit, not yet in the tags
-    changeset = ch.new_changeset(session, "edit")
+    changeset = ch.new_changeset(session, "edit", "manual")
     change = ch.propose_manual_edit(session, changeset, file, {"album": "The Greatest Hits"})
     session.commit()
     assert change.payload == {
@@ -60,7 +60,7 @@ def test_manual_edit_retag_apply_and_undo(catalog):
 
 def test_move_apply_and_undo(catalog):
     session, root, file = catalog
-    changeset = ch.new_changeset(session, "reorganize")
+    changeset = ch.new_changeset(session, "reorganize", "manual")
     change = ch.propose_move(changeset, file, "Texas/Greatest Hits/11 Halo.mp3")
     ch.set_status([change], "approved")
     [outcome] = ch.apply(session, changeset)
@@ -80,7 +80,7 @@ def test_refuses_to_touch_file_changed_since_scan(catalog):
     session, root, file = catalog
     path = root / file.path
     os.utime(path, ns=(0, path.stat().st_mtime_ns + 10**9))
-    changeset = ch.new_changeset(session, "edit")
+    changeset = ch.new_changeset(session, "edit", "manual")
     change = ch.propose_retag(changeset, file, {"genre": "Rock"})
     ch.set_status([change], "approved")
     [outcome] = ch.apply(session, changeset)
@@ -92,7 +92,7 @@ def test_refuses_to_touch_file_changed_since_scan(catalog):
 def test_move_refuses_to_overwrite(catalog, copy_audio):
     session, root, file = catalog
     copy_audio("mp3b", root / "Texas/other.mp3")
-    changeset = ch.new_changeset(session, "reorganize")
+    changeset = ch.new_changeset(session, "reorganize", "manual")
     change = ch.propose_move(changeset, file, "Texas/other.mp3")
     ch.set_status([change], "approved")
     [outcome] = ch.apply(session, changeset)

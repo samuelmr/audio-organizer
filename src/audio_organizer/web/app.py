@@ -268,7 +268,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         """Propose writing the values not yet in the file (edits, measurements, lookups)."""
         file = _file(session, file_id)
         form = await request.form()
-        changeset = ch.new_changeset(session, f"Write tags of {file.path}")
+        changeset = ch.new_changeset(session, f"Write tags of {file.path}", "writing")
         change = ch.propose_tag_sync(changeset, file, _id3_version(form))
         if change is None:
             session.expunge(changeset)
@@ -349,7 +349,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         image = sy.find_cover(path.parent)
         if image is None:
             return _redirect(f"/tracks/{file.id}", "There is no cover image in the folder")
-        changeset = ch.new_changeset(session, f"Embed the cover of {file.path}")
+        changeset = ch.new_changeset(session, f"Embed the cover of {file.path}", "covers")
         relative = image.relative_to(file.library.root).as_posix()
         ch.propose_embed_cover(changeset, file, relative)
         session.commit()
@@ -394,7 +394,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
                 values[name] = None
         if not values:
             return _redirect(f"/tracks/{file.id}", "Nothing changed")
-        changeset = ch.new_changeset(session, f"Manual edit of {file.path}")
+        changeset = ch.new_changeset(session, f"Manual edit of {file.path}", "manual")
         change = ch.propose_manual_edit(session, changeset, file, values, _id3_version(form))
         if change is None:
             session.expunge(changeset)

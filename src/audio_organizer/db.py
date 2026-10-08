@@ -3,6 +3,8 @@
 import os
 from pathlib import Path
 
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import Engine, create_engine, event, inspect
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -36,8 +38,34 @@ def make_engine(url: str | None = None) -> Engine:
             cursor.close()
 
     _drop_outdated_derived_tables(engine)
+    migrate(engine)
     Base.metadata.create_all(engine)
     return engine
+
+
+# The revision that catalogs from before migrations existed are taken to be at.
+BASELINE_REVISION = "0001"
+
+
+def migrate(engine: Engine) -> None:
+    """Bring the catalog's existing tables up to date with Alembic migrations.
+
+    A new catalog is created from the models and stamped as current. A catalog from before
+    migrations existed is stamped with the baseline first. New tables are not migrations:
+    create_all adds them.
+    """
+    config = Config()
+    config.set_main_option("script_location", str(Path(__file__).parent / "migrations"))
+    tables = set(inspect(engine).get_table_names())
+    with engine.begin() as connection:
+        config.attributes["connection"] = connection
+        if "changeset" not in tables:
+            Base.metadata.create_all(connection)
+            command.stamp(config, "head")
+            return
+        if "alembic_version" not in tables:
+            command.stamp(config, BASELINE_REVISION)
+        command.upgrade(config, "head")
 
 
 # Tables computed entirely from other data: when their columns change, they are dropped,

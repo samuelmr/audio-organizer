@@ -4,17 +4,18 @@
 <h1>Changes</h1>
 <p>{% if all %}All changesets. <a href="/changes">Show only open ones</a>{% else %}Changesets waiting for review or with failures. <a href="/changes?all=1">Show all</a>{% endif %}</p>
 <table>
- <thead><tr><th class="num">#</th><th>Description</th><th>Changes</th><th>Created</th></tr></thead>
+ <thead><tr><th class="num">#</th><th>Source</th><th>Description</th><th>Changes</th><th>Created</th></tr></thead>
  <tbody>
  {% for changeset, counts in rows %}
   <tr>
    <td class="num">{{ changeset.id }}</td>
+   <td>{{ changeset.source or "" }}</td>
    <td><a href="/changes/{{ changeset.id }}">{{ changeset.description }}</a></td>
    <td>{% for status, n in counts | dictsort %}<span class="status {{ status }}">{{ n }} {{ status }}</span> {% endfor %}</td>
    <td>{{ changeset.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
   </tr>
  {% else %}
-  <tr><td colspan="4">Nothing to review.</td></tr>
+  <tr><td colspan="5">Nothing to review.</td></tr>
  {% endfor %}
  </tbody>
 </table>

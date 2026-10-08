@@ -399,14 +399,15 @@ Design principles:
 | Module | Purpose |
 | --- | --- |
 | `models.py` | Catalog schema |
-| `db.py` | Database setup |
+| `db.py` | Database setup and migrations |
+| `migrations/` | Alembic migrations of existing tables (run automatically when the catalog is opened); new tables come from the models |
 | `scanner.py` | Incremental scanning, move detection |
 | `tags.py` | Reading and writing tags (ID3, MP4, Vorbis comments) |
 | `pathparse.py` | Metadata evidence from folder and file names |
 | `provenance.py` | Resolving field values from their sources; the effective metadata table |
 | `audiohash.py` | Audio-only content hash (sampled) |
 | `blockfile.py` | Block-cached reading of a file, for few network round trips |
-| `changes.py` | Changesets: propose, approve, apply, undo; retag, move and trash |
+| `changes.py` | Changesets (each records the feature that proposed it): propose, approve, apply, undo; retag, move and trash |
 | `duplicates.py` | Identical copies and what to keep |
 | `album_merge.py` | Album folders holding the same album, and merging them |
 | `layout.py` | The folder layout template, and moving files into it |

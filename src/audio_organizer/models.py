@@ -150,6 +150,9 @@ class Changeset(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     description: Mapped[str] = mapped_column(Text, default="")
+    # The feature that proposed it (one of changes.SOURCES); None for changesets made
+    # before the column existed.
+    source: Mapped[str | None] = mapped_column(String(30), index=True)
 
     changes: Mapped[list["Change"]] = relationship(
         back_populates="changeset", cascade="all, delete-orphan", order_by="Change.id"
