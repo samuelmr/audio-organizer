@@ -13,9 +13,11 @@ from . import __version__, loudness
 from . import album_merge as am
 from . import artists as art
 from . import changes as ch
+from . import covers as cv
 from . import duplicates as du
 from . import layout as lo
 from . import playlists as pl
+from . import ratings as rt
 from . import sync as sy
 from . import writing as wr
 from .db import make_sessionmaker
@@ -152,6 +154,12 @@ def scan_command(
     retry_errors: Annotated[
         bool, typer.Option("--retry-errors", help="Read again files that could not be read")
     ] = False,
+    reread: Annotated[
+        bool,
+        typer.Option(
+            "--reread", help="Read every file again, e.g. after an update that reads more tags"
+        ),
+    ] = False,
     deep: Annotated[
         bool,
         typer.Option("--deep", help="Also measure loudness (ReplayGain) of files not measured yet"),
@@ -184,7 +192,7 @@ def scan_command(
         lib = _library(session, library)
         stats = scan(
             session, lib, hash_audio=hash_audio, workers=workers, retry_errors=retry_errors,
-            progress=progress,
+            reread=reread, progress=progress,
         )  # fmt: skip
     typer.echo(
         f"{stats.seen} files: {stats.new} new, {stats.changed} changed, {stats.moved} moved, "
@@ -1002,6 +1010,94 @@ def write_tags(
             typer.echo(f"  ... and {len(found.files) - 20} more")
         if batch:
             typer.echo(f"Run with --propose to create a changeset for {len(batch)} files.")
+
+
+@app.command("ratings")
+def ratings_command(
+    ctx: typer.Context,
+    set_: Annotated[
+        list[str] | None,
+        typer.Option("--set", help='Stars for a preference: "Good=3"; "Good=" for none'),
+    ] = None,
+    apply: Annotated[
+        bool, typer.Option("--apply", help="Set the ratings of files from the mapping")
+    ] = False,
+    library: LibraryOption = None,
+) -> None:
+    """Star ratings from MusicMatch "preference" values (Excellent, Very Good, ...).
+
+    Shows how each preference maps to 1-5 stars; --set changes the mapping and --apply
+    sets the ratings in the catalog. A rating already in a file's tags is kept. The
+    ratings are then written into the files with `aorg write-tags --only rating`.
+    """
+    with _session(ctx) as session:
+        lib = _library(session, library)
+        mapping = rt.get_map(session, lib)
+        for item in set_ or []:
+            name, sep, stars = item.partition("=")
+            if not sep or stars.strip() not in ("", "1", "2", "3", "4", "5"):
+                raise typer.BadParameter('--set takes "Preference=1..5" or "Preference="')
+            mapping[name.strip()] = int(stars) if stars.strip() else None
+        if set_:
+            rt.set_map(session, lib, mapping)
+            session.commit()
+        counts = rt.preferences(session, lib)
+        for name, n in counts.most_common():
+            stars = mapping.get(name)
+            typer.echo(f"  {name:12} {n:6} files  ->  {'★' * stars if stars else 'no rating'}")
+        if apply:
+            rated = rt.apply(session, lib, mapping)
+            typer.echo(
+                f"Rated {rated} files. Write the ratings with `aorg write-tags --only rating`."
+            )
+        elif counts:
+            typer.echo("Run with --apply to set the ratings.")
+
+
+@app.command("covers")
+def covers_command(
+    ctx: typer.Context,
+    path: Annotated[str | None, typer.Option(help="Only folders under this path")] = None,
+    limit: Annotated[int, typer.Option(help="Folders in a batch")] = 20,
+    propose: Annotated[
+        bool, typer.Option("--propose", help="Create a changeset for a batch")
+    ] = False,
+    library: LibraryOption = None,
+) -> None:
+    """Embed folders' cover images into their tracks that have no embedded cover.
+
+    The image (cover/folder/front.jpg or .png, or the folder's only image) is copied
+    into every such track, so large images make every file bigger. Run `aorg scan
+    --reread` once first if the catalog is older than cover detection.
+    """
+    with _session(ctx) as session:
+        lib = _library(session, library)
+        found = cv.survey(session, lib, path_prefix=path)
+        files = sum(len(f.files) for f in found.folders)
+        typer.echo(
+            f"{len(found.folders)} folders have a cover image and {files} tracks without an "
+            f"embedded cover; {len(found.too_small)} more have only a thumbnail (under 200 "
+            f"pixels), and {found.without_image} folders with such tracks have no image."
+        )
+        batch = found.folders[:limit]
+        if propose:
+            if batch:
+                changeset = cv.propose(
+                    session, lib, batch, f"Embed the covers of {len(batch)} folders"
+                )
+                typer.echo(
+                    f"Changeset {changeset.id}: {len(changeset.changes)} files. Review with "
+                    f"`aorg changes show {changeset.id}`."
+                )
+            return
+        for folder in batch:
+            size = "×".join(map(str, folder.dimensions)) if folder.dimensions else "?"
+            typer.echo(
+                f"  {folder.folder}/: {folder.image.name} ({size}, "
+                f"{folder.image_size // 1024} KB) into {len(folder.files)} tracks"
+            )
+        if batch:
+            typer.echo(f"Run with --propose to create a changeset for {len(batch)} folders.")
 
 
 @app.command("artists")

@@ -2,14 +2,20 @@
 pictures): reading them, and embedding an album's cover image into files without one.
 """
 
-from pathlib import Path
+from collections import defaultdict
+from dataclasses import dataclass, field
+from pathlib import Path, PurePosixPath
 
 from mutagen.aac import AAC
 from mutagen.flac import FLAC, Picture
 from mutagen.id3 import APIC, ID3
 from mutagen.mp4 import MP4, MP4Cover
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from . import tags
+from .models import AudioFile, FieldValue, Library
+from .tracks import present
 
 IMAGE_TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
 
@@ -87,3 +93,107 @@ def _save_id3(audio, file_tags, path, change) -> None:
         file_tags.save(path, v2_version=version)
     else:
         audio.save(v2_version=version)
+
+
+# ---- embedding in batches ------------------------------------------------------------
+
+
+@dataclass
+class FolderCovers:
+    folder: str
+    image: Path  # the folder's cover image
+    files: list[AudioFile]  # without an embedded cover
+    dimensions: tuple[int, int] | None = None  # pixels, when the image header says
+
+    @property
+    def image_size(self) -> int:
+        return self.image.stat().st_size
+
+
+@dataclass
+class Survey:
+    folders: list[FolderCovers] = field(default_factory=list)
+    without_image: int = 0  # folders whose tracks lack a cover, but with no image
+    too_small: list[FolderCovers] = field(default_factory=list)  # images under min_pixels
+    checked_all: bool = True  # False when the survey stopped after enough folders
+
+
+def survey(
+    session: Session,
+    library: Library,
+    *,
+    path_prefix: str | None = None,
+    enough: int | None = None,
+    min_pixels: int = 200,
+) -> Survey:
+    """Folders with a cover image and tracks without an embedded cover. Images smaller
+    than min_pixels on a side (thumbnails) are listed apart, not proposed. Looking for
+    the images lists each folder, slow on a network share, so with enough the survey
+    stops once that many folders are found."""
+    from .sync import find_cover
+
+    has_cover = select(FieldValue.file_id).where(
+        FieldValue.source == "tag", FieldValue.field == tags.EMBEDDED_COVER
+    )
+    query = (
+        select(AudioFile)
+        .where(present(library.id), AudioFile.id.not_in(has_cover))
+        .order_by(AudioFile.path)
+    )
+    if path_prefix:
+        query = query.where(AudioFile.path.startswith(path_prefix, autoescape=True))
+    by_folder: dict[str, list[AudioFile]] = defaultdict(list)
+    for file in session.scalars(query):
+        by_folder[str(PurePosixPath(file.path).parent)].append(file)
+    result = Survey()
+    for folder, files in by_folder.items():
+        if enough is not None and len(result.folders) >= enough:
+            result.checked_all = False
+            break
+        image = find_cover(Path(library.root) / folder)
+        if image is None:
+            result.without_image += 1
+            continue
+        found = FolderCovers(folder, image, files, dimensions(image))
+        if found.dimensions and min(found.dimensions) < min_pixels:
+            result.too_small.append(found)  # e.g. Windows Media Player's AlbumArtSmall.jpg
+        else:
+            result.folders.append(found)
+    return result
+
+
+def dimensions(image: Path) -> tuple[int, int] | None:
+    """(width, height) of a JPEG or PNG image from its header, or None."""
+    try:
+        with open(image, "rb") as f:
+            head = f.read(64 * 1024)
+    except OSError:
+        return None
+    if head[:8] == b"\x89PNG\r\n\x1a\n" and len(head) >= 24:
+        return int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
+    if head[:2] != b"\xff\xd8":
+        return None
+    pos = 2
+    while pos + 9 < len(head):
+        if head[pos] != 0xFF:
+            return None
+        marker, length = head[pos + 1], int.from_bytes(head[pos + 2 : pos + 4], "big")
+        if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):  # start of frame
+            height = int.from_bytes(head[pos + 5 : pos + 7], "big")
+            width = int.from_bytes(head[pos + 7 : pos + 9], "big")
+            return width, height
+        pos += 2 + length
+    return None
+
+
+def propose(session: Session, library: Library, folders: list[FolderCovers], description: str):
+    from . import changes as ch
+
+    changeset = ch.new_changeset(session, description)
+    root = Path(library.root)
+    for folder in folders:
+        image = folder.image.relative_to(root).as_posix()
+        for file in folder.files:
+            ch.propose_embed_cover(changeset, file, image)
+    session.commit()
+    return changeset

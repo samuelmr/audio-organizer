@@ -64,6 +64,9 @@ FIELDS = (
     "replaygain_album_peak",
 )
 
+# Not a field one edits: read() reports "1" in it when the file has an embedded picture
+EMBEDDED_COVER = "embedded_cover"
+
 # One field per ID3 text frame (ID3v2.3 TORY is read as TDOR)
 ID3_TEXT = {
     "artist": "TPE1",
@@ -195,7 +198,19 @@ def read(path: str | Path | BinaryIO) -> AudioInfo:
         _put(info.fields, name, values)
     _split_pair(info.fields, "tracknumber", "tracktotal")
     _split_pair(info.fields, "discnumber", "disctotal")
+    if _has_picture(audio, tags):
+        info.fields[EMBEDDED_COVER] = "1"
     return info
+
+
+def _has_picture(audio, tags) -> bool:
+    if isinstance(tags, ID3):
+        return bool(tags.getall("APIC"))
+    if isinstance(tags, MP4Tags):
+        return bool(tags.get("covr"))
+    if getattr(audio, "pictures", None):  # FLAC
+        return True
+    return bool(tags is not None and hasattr(tags, "get") and tags.get("metadata_block_picture"))
 
 
 def _read_id3(tags: ID3) -> dict[str, list]:

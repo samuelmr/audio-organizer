@@ -331,6 +331,24 @@ def test_write_tags_in_bulk(web, Session):
     assert "0 files have values" in web.get("/libraries/music/write-tags").text
 
 
+def test_ratings_and_covers_pages(web, Session):
+    tags.write(web.root / "Texas/Texas_Halo.mp3", {"preference": "Very Good"})
+    (web.root / "Texas/Greatest Hits/Folder.jpg").write_bytes(b"\xff\xd8\xff\xe0 cover")
+    with Session() as session:
+        scan(session, session.scalar(select(Library)))
+
+    page = web.get("/libraries/music/ratings").text
+    assert "Very Good" in page and 'option value="4" selected' in page
+    page = web.post("/libraries/music/ratings", data={"pref-1": "Very Good", "stars-1": "5"}).text
+    assert "Rated 1 files" in page and "rating: 5" in page  # on the write tags page
+
+    page = web.get("/libraries/music/covers").text
+    assert "Texas/Greatest Hits/" in page and "Folder.jpg" in page
+    response = web.post("/libraries/music/covers", data={"folder": "Texas/Greatest Hits"})
+    assert re.fullmatch(r"/changes/\d+", response.url.path)
+    assert "will get the cover image" in response.text
+
+
 def test_artists_page(web):
     page = web.get("/libraries/music/artists", params={"show": "all"}).text
     assert "2 artists" in page and "P!nk" in page

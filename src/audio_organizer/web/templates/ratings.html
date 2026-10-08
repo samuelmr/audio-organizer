@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Ratings – audio-organizer{% endblock %}
+{% block content %}
+{% set base = '/libraries/' ~ library.name %}
+<h1>Ratings</h1>
+<p>MusicMatch Jukebox kept your opinion of tracks as a "preference" (Excellent, Very Good,
+…) that only it and this tool read. Choose how many stars each preference is worth, and
+the files get star ratings that other players read. A rating a file already has is
+kept. The ratings go into the catalog first; you then write them into the files, as
+changesets you review.</p>
+
+{% if counts %}
+<form method="post" action="{{ base }}/ratings">
+<table>
+ <thead><tr><th>Preference</th><th class="num">Files</th><th>Stars</th></tr></thead>
+ <tbody>
+ {% for preference, n in counts.most_common() %}
+  {% set stars = mapping.get(preference) %}
+  <tr>
+   <td><input type="hidden" name="pref-{{ loop.index }}" value="{{ preference }}"><label for="stars-{{ loop.index }}">{{ preference }}</label></td>
+   <td class="num">{{ n }}</td>
+   <td>
+    <select id="stars-{{ loop.index }}" name="stars-{{ loop.index }}">
+     <option value="">no rating</option>
+     {% for s in range(1, 6) %}<option value="{{ s }}" {% if stars == s %}selected{% endif %}>{{ "★" * s }}{{ "☆" * (5 - s) }}</option>{% endfor %}
+    </select>
+   </td>
+  </tr>
+ {% endfor %}
+ </tbody>
+</table>
+<p><button class="primary">Set the ratings</button></p>
+</form>
+{% else %}
+<p>No files have a MusicMatch preference.</p>
+{% endif %}
+{% endblock %}

@@ -78,6 +78,8 @@ def test_embed_and_remove_cover(copy_audio, tmp_path, name):
     assert covers.embedded(path) is None
     covers.embed(path, image)
     assert covers.embedded(path) == ("image/jpeg", image.read_bytes())
-    assert tags.read(path).fields == before  # other tags untouched
+    after = tags.read(path).fields
+    assert after.pop(tags.EMBEDDED_COVER) == "1"
+    assert after == before  # other tags untouched
     covers.remove(path)
     assert covers.embedded(path) is None

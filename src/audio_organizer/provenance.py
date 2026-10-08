@@ -16,6 +16,7 @@ SOURCE_PRIORITY = {
     "gnudb": 60,
     "analysis": 55,  # measured from the audio (ReplayGain): newer than what tags say
     "tag": 50,
+    "rule": 45,  # derived by a rule the user set up (stars from MusicMatch preference)
     "neighbours": 40,
     "path": 30,
 }

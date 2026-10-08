@@ -33,6 +33,7 @@ from .. import covers, loudness, tags
 from .. import duplicates as du
 from .. import layout as lo
 from .. import playlists as pl
+from .. import ratings as rt
 from .. import sync as sy
 from .. import writing as wr
 from ..models import (
@@ -541,6 +542,71 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             return _redirect(f"/libraries/{lib.name}/write-tags", "Nothing to write")
         version = int(id3_version) if id3_version in ("3", "4") else None
         changeset = wr.propose(session, batch, f"Write tags of {len(batch)} files", version)
+        return _redirect(f"/changes/{changeset.id}", "Review the changes to the files")
+
+    # ---- ratings and covers --------------------------------------------------------------
+
+    @app.get("/libraries/{name}/ratings", response_class=HTMLResponse)
+    def ratings_page(request: Request, name: str, session: Session = SessionDep):
+        lib = _library(session, name)
+        return render(
+            request, "ratings.html", library=lib, counts=rt.preferences(session, lib),
+            mapping=rt.get_map(session, lib),
+        )  # fmt: skip
+
+    @app.post("/libraries/{name}/ratings")
+    async def apply_ratings(request: Request, name: str, session: Session = SessionDep):
+        """Save the mapping from preferences to stars (fields "stars-<n>" with "pref-<n>")
+        and set the ratings."""
+        lib = _library(session, name)
+        form = await request.form()
+        mapping = rt.get_map(session, lib)
+        for key, preference in form.multi_items():
+            if key.startswith("pref-"):
+                stars = str(form.get("stars-" + key.removeprefix("pref-"), ""))
+                valid = stars in ("1", "2", "3", "4", "5")
+                mapping[str(preference)] = int(stars) if valid else None
+        rt.set_map(session, lib, mapping)
+        session.commit()
+        rated = rt.apply(session, lib, mapping)
+        return _redirect(
+            _url(f"/libraries/{lib.name}/write-tags", only="rating"),
+            f"Rated {rated} files in the catalog; write the ratings into the files here",
+        )
+
+    @app.get("/libraries/{name}/covers", response_class=HTMLResponse)
+    def covers_page(
+        request: Request, name: str, path: str = "", limit: int = 20, session: Session = SessionDep
+    ):
+        lib = _library(session, name)
+        found = covers.survey(session, lib, path_prefix=path or None, enough=max(limit, 1))
+        return render(
+            request, "covers.html", library=lib, found=found, path=path, limit=limit,
+        )  # fmt: skip
+
+    @app.post("/libraries/{name}/covers")
+    def propose_covers(
+        name: str,
+        path: Annotated[str, Form()] = "",
+        limit: Annotated[int, Form()] = 20,
+        folder: Annotated[str, Form()] = "",
+        session: Session = SessionDep,
+    ):
+        """A batch of folders, or with folder, just that one."""
+        lib = _library(session, name)
+        if folder:
+            found = covers.survey(session, lib, path_prefix=folder + "/")
+            chosen = [f for f in found.folders if f.folder == folder]
+        else:
+            found = covers.survey(session, lib, path_prefix=path or None, enough=max(limit, 1))
+            chosen = found.folders
+        if not chosen:
+            return _redirect(f"/libraries/{lib.name}/covers", "Nothing to embed")
+        changeset = covers.propose(
+            session, lib, chosen,
+            f"Embed the cover of {chosen[0].folder}" if folder
+            else f"Embed the covers of {len(chosen)} folders",
+        )  # fmt: skip
         return _redirect(f"/changes/{changeset.id}", "Review the changes to the files")
 
     # ---- layout --------------------------------------------------------------------------

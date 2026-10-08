@@ -46,6 +46,9 @@ The first scan reads every file; later scans only read new and changed ones, so 
 `aorg scan` whenever you have added or changed music. Files moved or renamed outside
 `aorg` are recognized by their audio and keep their history.
 
+After updating `aorg`, `aorg scan --reread` reads every file again once, so that tags a
+newer version reads (such as ratings, sort names or embedded covers) are in the catalog.
+
 A *deep* scan also measures the loudness of every file not measured yet, for ReplayGain:
 
     aorg scan --deep                  # continues where an interrupted run stopped
@@ -128,6 +131,33 @@ values only inferred from file and folder names are not written. To write them i
 fields), `--id3-version` writes MP3 tags as ID3v2.3 or 2.4 (by default each file keeps
 its own), and each batch becomes a changeset to review. The web UI's Write tags page
 does the same.
+
+### Ratings from MusicMatch preferences
+
+MusicMatch Jukebox kept a "preference" for tracks (Excellent, Very Good, Good, Fair,
+Poor, Bad Taste). They can become 1–5 star ratings that other players read:
+
+    aorg ratings                              # preferences, with the stars they map to
+    aorg ratings --set "Good=" --set "Bad Taste=1" --apply
+    aorg write-tags --only rating --propose
+
+The default mapping is Excellent ★★★★★, Very Good ★★★★, Good ★★★, Fair ★★, Poor and Bad
+Taste ★; an empty value gives no rating. A rating already in a file is kept. The web
+UI's Ratings page does the same. Smart playlists can then use rules such as `rating>=4`.
+
+### Covers
+
+Phones, car stereos and many players only show covers embedded in the files:
+
+    aorg covers                               # folders with an image and tracks without
+    aorg covers --path "Björk" --propose      # embed it into those tracks
+
+A folder's cover image is `cover`, `folder` or `front` (`.jpg`, `.jpeg` or `.png`), or
+its only image. Thumbnails under 200 pixels, such as Windows Media Player's
+`AlbumArtSmall.jpg`, are listed but not embedded. The image is copied into every track,
+so mind large images. A file that already has an embedded cover is never given another
+one. The web UI's Covers page does the same, also for single folders, and a track's
+page can embed its folder's cover into that one file.
 
 ### Duplicates
 
@@ -322,8 +352,9 @@ Design principles:
 | `layout.py` | The folder layout template, and moving files into it |
 | `artists.py` | Artists' sort names and suggestions for them |
 | `loudness.py` | ReplayGain 2.0: measuring tracks with ffmpeg, album gains, deep scan |
-| `covers.py` | Embedded cover images: reading, embedding, removing |
+| `covers.py` | Embedded cover images: reading, embedding, removing; folders to embed in |
 | `writing.py` | Writing values not yet in the files, in batches |
+| `ratings.py` | Star ratings from MusicMatch preferences |
 | `tracks.py` | Streaming tracks with resolved metadata, in batches |
 | `playlists.py` | Playlist rules, generation in one pass, import and export |
 | `playlist_formats.py` | M3U, JSON-LD and HTML playlist files |

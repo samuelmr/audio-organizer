@@ -101,9 +101,9 @@ def propose_embed_cover(changeset: Changeset, file: AudioFile, image: str) -> Ch
     return change
 
 
-# Sources whose values are meant to end up in the files: the user's edits, measurements
-# and lookups. Values inferred from paths or neighbouring files are only evidence.
-WRITTEN_SOURCES = ("manual", "analysis", "gnudb")
+# Sources whose values are meant to end up in the files: the user's edits, measurements,
+# lookups and rules. Values inferred from paths or neighbouring files are only evidence.
+WRITTEN_SOURCES = ("manual", "analysis", "gnudb", "rule")
 
 
 def unwritten(file: AudioFile) -> dict[str, str]:
@@ -215,6 +215,9 @@ def apply(session: Session, changeset: Changeset, *, dry_run: bool = False) -> l
                 change.undo = _trash(session, change)
             elif change.kind == "cover":
                 image = Path(change.file.library.root) / change.payload["image"]
+                if covers.embedded(_full_path(change.file)) is not None:
+                    # Undo would remove that one too; the catalog may predate cover info
+                    raise ChangeError("the file already has an embedded cover")
                 covers.embed(_full_path(change.file), image)
                 _refresh(session, change.file)
                 change.undo = {}
