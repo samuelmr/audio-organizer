@@ -9,7 +9,7 @@ import typer
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from . import __version__
+from . import __version__, loudness
 from . import album_merge as am
 from . import artists as art
 from . import changes as ch
@@ -17,6 +17,7 @@ from . import duplicates as du
 from . import layout as lo
 from . import playlists as pl
 from . import sync as sy
+from . import writing as wr
 from .db import make_sessionmaker
 from .models import AudioFile, Change, Changeset, Library, Playlist, SyncTarget
 from .provenance import resolve
@@ -151,8 +152,22 @@ def scan_command(
     retry_errors: Annotated[
         bool, typer.Option("--retry-errors", help="Read again files that could not be read")
     ] = False,
+    deep: Annotated[
+        bool,
+        typer.Option("--deep", help="Also measure loudness (ReplayGain) of files not measured yet"),
+    ] = False,
+    deep_limit: Annotated[
+        int | None, typer.Option(help="Measure at most this many files in this run")
+    ] = None,
 ) -> None:
-    """Catalog new and changed files. Unchanged files are skipped."""
+    """Catalog new and changed files. Unchanged files are skipped.
+
+    With --deep, files are also read in full to measure their loudness: ReplayGain 2.0
+    track gain and peak, and album gain and peak once all of an album's tracks are
+    measured. The results are kept in the catalog, not written into the files (see
+    `aorg write-tags`). Measuring takes long; it continues where an interrupted run
+    stopped, and --deep-limit splits it into parts.
+    """
     started = time.monotonic()
     last_report = 0.0
 
@@ -180,6 +195,38 @@ def scan_command(
         typer.echo(f"  {relpath}: {error}")
     if len(stats.errors) > 20:
         typer.echo(f"  ... and {len(stats.errors) - 20} more")
+    if deep:
+        _deep_scan(ctx, library, deep_limit)
+
+
+def _deep_scan(ctx: typer.Context, library: str | None, limit: int | None) -> None:
+    started = time.monotonic()
+    last_report = 0.0
+
+    def progress(done: int, total: int, relpath: str, error: str | None) -> None:
+        nonlocal last_report
+        now = time.monotonic()
+        if error:
+            typer.echo(f"  ! {error}", err=True)
+        if now - last_report >= 5 or done == total:
+            last_report = now
+            rate = done / max(now - started, 0.001)
+            left = (total - done) / rate if rate else 0
+            typer.echo(
+                f"  measured {done}/{total} ({rate:.1f} files/s, ~{left / 60:.0f} min left): "
+                f"{relpath}",
+                err=True,
+            )
+
+    with _session(ctx) as session:
+        lib = _library(session, library)
+        todo = len(loudness.unmeasured(session, lib))
+        typer.echo(f"Measuring loudness: {min(todo, limit or todo)} of {todo} files not measured")
+        stats = loudness.measure_library(session, lib, limit=limit, progress=progress)
+    typer.echo(
+        f"Measured {stats.measured} files, {len(stats.errors)} errors; album gain for "
+        f"{stats.albums} albums ({time.monotonic() - started:.0f} s)"
+    )
 
 
 @app.command("stats")
@@ -905,6 +952,56 @@ def merge_albums(
             for merge in others:
                 for line in _describe_merge(merge):
                     typer.echo(line)
+
+
+@app.command("write-tags")
+def write_tags(
+    ctx: typer.Context,
+    path: Annotated[str | None, typer.Option(help="Only files under this path")] = None,
+    only: Annotated[
+        str | None,
+        typer.Option(help="Only these fields, comma-separated; e.g. replaygain, rating"),
+    ] = None,
+    limit: Annotated[int, typer.Option(help="Files in a batch")] = 100,
+    id3_version: Annotated[
+        int | None, typer.Option(help="Write ID3 tags as version 3 or 4 [default: as now]")
+    ] = None,
+    propose: Annotated[
+        bool, typer.Option("--propose", help="Create a changeset for a batch")
+    ] = False,
+    library: LibraryOption = None,
+) -> None:
+    """Write values that are not yet in the files: your edits, measurements (`aorg scan
+    --deep`) and lookups. Proposed as changesets, in batches."""
+    if id3_version not in (None, 3, 4):
+        raise typer.BadParameter("--id3-version is 3 or 4")
+    fields = [f.strip() for f in only.split(",") if f.strip()] if only else None
+    with _session(ctx) as session:
+        lib = _library(session, library)
+        found = wr.survey(session, lib, path_prefix=path, only=fields)
+        counts = ", ".join(f"{name} {n}" for name, n in found.by_field.most_common())
+        typer.echo(
+            f"{len(found.files)} files have values not yet in them"
+            + (f" ({counts})" if counts else "")
+            + f"; {found.waiting} have changes waiting for review."
+        )
+        batch = found.files[:limit]
+        if propose:
+            if batch:
+                changeset = wr.propose(
+                    session, batch, f"Write tags of {len(batch)} files", id3_version
+                )
+                typer.echo(
+                    f"Changeset {changeset.id}: {len(changeset.changes)} files. Review with "
+                    f"`aorg changes show {changeset.id}`."
+                )
+            return
+        for pending in batch[:20]:
+            typer.echo(f"  {pending.file.path}: {', '.join(pending.fields)}")
+        if len(found.files) > 20:
+            typer.echo(f"  ... and {len(found.files) - 20} more")
+        if batch:
+            typer.echo(f"Run with --propose to create a changeset for {len(batch)} files.")
 
 
 @app.command("artists")

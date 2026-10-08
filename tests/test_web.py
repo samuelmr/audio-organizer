@@ -266,7 +266,8 @@ def test_measure_and_write_replaygain(web, Session):
     file_id = _file_id(Session, "Texas/Greatest Hits/11 Halo.mp3")
     page = web.post(f"/tracks/{file_id}/replaygain").text
     assert "Measured: gain" in page and "not in file" in page
-    assert "2 values not yet in the file" in page
+    # Track gain and peak, and album gain and peak: the album has only this track
+    assert "4 values not yet in the file" in page
 
     response = web.post(f"/tracks/{file_id}/write", data={"id3_version": "4"})
     assert re.fullmatch(r"/changes/\d+", response.url.path)
@@ -297,6 +298,37 @@ def test_embed_folder_cover(web, Session):
     assert web.get(f"/tracks/{file_id}/cover").content == (folder / "Folder.jpg").read_bytes()
     web.post(f"{changeset_path}/undo")
     assert web.get(f"/tracks/{file_id}/cover").status_code == 404
+
+
+def test_write_tags_in_bulk(web, Session):
+    from audio_organizer import loudness
+    from audio_organizer.models import Library as Lib
+
+    with Session() as session:
+        lib = session.scalar(select(Lib))
+        assert loudness.measure_library(session, lib).measured == 3
+    halo = _file_id(Session, "Texas/Texas_Halo.mp3")
+    web.post(f"/tracks/{halo}/edit", data={"rating": "5"})  # an edit, proposed at once
+
+    page = web.get("/libraries/music/write-tags").text
+    assert "2 files have values not yet in them" in page  # the edited one is waiting
+    assert "1 more have changes waiting" in page
+    assert "replaygain_track_gain" in page and "albumartist" not in page  # evidence only
+
+    page = web.get("/libraries/music/write-tags", params={"only": "replaygain_album"}).text
+    assert "replaygain_track_gain:" not in page and "replaygain_album_gain:" in page
+
+    response = web.post(
+        "/libraries/music/write-tags", data={"only": "replaygain", "id3_version": "3"}
+    )
+    assert re.fullmatch(r"/changes/\d+", response.url.path)
+    assert "will be retagged as ID3v2.3" in response.text
+    changeset_path = response.url.path
+    web.post(f"{changeset_path}/status", data={"action": "approve-all"})
+    web.post(f"{changeset_path}/apply", data={})
+    fields = tags.read(web.root / "Texas/Greatest Hits/11 Halo.mp3").fields
+    assert fields["replaygain_track_gain"].endswith(" dB") and "replaygain_album_peak" in fields
+    assert "0 files have values" in web.get("/libraries/music/write-tags").text
 
 
 def test_artists_page(web):

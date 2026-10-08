@@ -46,6 +46,19 @@ The first scan reads every file; later scans only read new and changed ones, so 
 `aorg scan` whenever you have added or changed music. Files moved or renamed outside
 `aorg` are recognized by their audio and keep their history.
 
+A *deep* scan also measures the loudness of every file not measured yet, for ReplayGain:
+
+    aorg scan --deep                  # continues where an interrupted run stopped
+    aorg scan --deep --deep-limit 500 # or in parts
+
+It reads every file in full, so the first one takes long (about 1 file per second from
+a network share). It uses ReplayGain 2.0 (EBU R128 loudness, -18 LUFS): track gain and
+peak for each file, and album gain and peak once all of an album's tracks (the files of
+one folder with the same album tag) are measured. The album gain is computed from the
+tracks' loudness rather than by measuring the whole album again, which is usually within
+a few tenths of a dB. The results stay in the catalog until you write them into the
+files (see [Writing tags](#writing-tags)); a file whose audio changes is measured again.
+
 `aorg show` lists each field with where its value comes from: the file's tags (`tag`),
 its folder and file name (`path`) or your edit (`manual`), and the other candidates when
 they disagree.
@@ -94,12 +107,27 @@ the MusicMatch comment they may have come from.
 On a track's page in the web UI:
 
 - **Measure ReplayGain** measures the track's loudness with ffmpeg and stores the track
-  gain and peak in the catalog. Values that are not yet in the file are marked, and
-  **Write them to the file** proposes writing them.
+  gain and peak (and the album's, once all its tracks are measured) in the catalog.
+  Values that are not yet in the file are marked, and **Write them to the file**
+  proposes writing them.
 - When writing to MP3 files, you can keep their ID3 version or write ID3v2.3 or 2.4.
   ID3v2.3 is read by more players and devices; both keep all of the fields above.
 - **Cover** shows the cover embedded in the file and the image in its folder, and can
   embed the folder's image in a file that has none.
+
+### Writing tags
+
+Edits, measurements and lookups are kept in the catalog until written into the files;
+values only inferred from file and folder names are not written. To write them in bulk:
+
+    aorg write-tags                           # what is waiting to be written
+    aorg write-tags --only replaygain --path "Texas" --propose
+    aorg write-tags --propose --limit 200 --id3-version 3
+
+`--only` takes field names or their beginnings (`replaygain` covers all ReplayGain
+fields), `--id3-version` writes MP3 tags as ID3v2.3 or 2.4 (by default each file keeps
+its own), and each batch becomes a changeset to review. The web UI's Write tags page
+does the same.
 
 ### Duplicates
 
@@ -293,8 +321,9 @@ Design principles:
 | `album_merge.py` | Album folders holding the same album, and merging them |
 | `layout.py` | The folder layout template, and moving files into it |
 | `artists.py` | Artists' sort names and suggestions for them |
-| `loudness.py` | Measuring ReplayGain with ffmpeg |
+| `loudness.py` | ReplayGain 2.0: measuring tracks with ffmpeg, album gains, deep scan |
 | `covers.py` | Embedded cover images: reading, embedding, removing |
+| `writing.py` | Writing values not yet in the files, in batches |
 | `tracks.py` | Streaming tracks with resolved metadata, in batches |
 | `playlists.py` | Playlist rules, generation in one pass, import and export |
 | `playlist_formats.py` | M3U, JSON-LD and HTML playlist files |

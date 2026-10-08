@@ -34,6 +34,7 @@ from .. import duplicates as du
 from .. import layout as lo
 from .. import playlists as pl
 from .. import sync as sy
+from .. import writing as wr
 from ..models import (
     AudioFile,
     Change,
@@ -501,6 +502,47 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         session.commit()
         return _redirect(_url(f"/libraries/{lib.name}/artists", show=show, q=q), message)
 
+    # ---- writing tags --------------------------------------------------------------------
+
+    def _only(value: str) -> list[str] | None:
+        return [f.strip() for f in value.split(",") if f.strip()] or None
+
+    @app.get("/libraries/{name}/write-tags", response_class=HTMLResponse)
+    def write_tags_page(
+        request: Request,
+        name: str,
+        path: str = "",
+        only: str = "",
+        limit: int = 100,
+        session: Session = SessionDep,
+    ):
+        lib = _library(session, name)
+        found = wr.survey(session, lib, path_prefix=path or None, only=_only(only))
+        unmeasured = len(loudness.unmeasured(session, lib))
+        return render(
+            request, "write_tags.html", library=lib, found=found,
+            batch=found.files[: max(limit, 1)], path=path, only=only, limit=limit,
+            unmeasured=unmeasured,
+        )  # fmt: skip
+
+    @app.post("/libraries/{name}/write-tags")
+    def propose_write_tags(
+        name: str,
+        path: Annotated[str, Form()] = "",
+        only: Annotated[str, Form()] = "",
+        limit: Annotated[int, Form()] = 100,
+        id3_version: Annotated[str, Form()] = "",
+        session: Session = SessionDep,
+    ):
+        lib = _library(session, name)
+        found = wr.survey(session, lib, path_prefix=path or None, only=_only(only))
+        batch = found.files[: max(limit, 1)]
+        if not batch:
+            return _redirect(f"/libraries/{lib.name}/write-tags", "Nothing to write")
+        version = int(id3_version) if id3_version in ("3", "4") else None
+        changeset = wr.propose(session, batch, f"Write tags of {len(batch)} files", version)
+        return _redirect(f"/changes/{changeset.id}", "Review the changes to the files")
+
     # ---- layout --------------------------------------------------------------------------
 
     @app.get("/libraries/{name}/layout", response_class=HTMLResponse)
@@ -807,10 +849,10 @@ def _redirect(path: str, message: str | None = None) -> RedirectResponse:
     return RedirectResponse(path, status_code=303)
 
 
-def _url(path: str, **params) -> str:
-    """A path with query parameters, leaving out empty ones."""
+def _url(base: str, /, **params) -> str:
+    """A path with query parameters (which may include "path"), leaving out empty ones."""
     query = urlencode({k: v for k, v in params.items() if v not in (None, "")})
-    return f"{path}?{query}" if query else path
+    return f"{base}?{query}" if query else base
 
 
 def _duration(seconds: float | None) -> str:

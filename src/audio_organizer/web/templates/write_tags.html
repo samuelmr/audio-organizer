@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Write tags – audio-organizer{% endblock %}
+{% block content %}
+{% set base = '/libraries/' ~ library.name %}
+<h1>Write tags</h1>
+<p>Your edits, loudness measurements and lookups are kept in the catalog until they are
+written into the files. Here you can write them for many files at once, as changesets
+you review before they are applied.</p>
+<p class="hint">{{ found.files | length }} files have values not yet in them;
+{{ found.waiting }} more have changes waiting for review.
+{% if unmeasured %}{{ unmeasured }} files have not been measured for ReplayGain yet:
+run <code>aorg scan --deep</code> to measure them (it reads every file, which takes a while).{% endif %}</p>
+
+{% if found.by_field %}
+<table>
+ <thead><tr><th>Field</th><th class="num">Files</th></tr></thead>
+ <tbody>
+ {% for field, n in found.by_field.most_common() %}
+  <tr><td><a href="{{ url(base ~ '/write-tags', path=path, only=field, limit=limit) }}">{{ field }}</a></td><td class="num">{{ n }}</td></tr>
+ {% endfor %}
+ </tbody>
+</table>
+{% endif %}
+
+<form class="search" method="get" action="{{ base }}/write-tags">
+ <input type="search" name="path" value="{{ path }}" placeholder="Only files under a path" aria-label="Path">
+ <input name="only" value="{{ only }}" placeholder="Only fields, e.g. replaygain, rating" aria-label="Only these fields">
+ <label>Batch of <input name="limit" inputmode="numeric" size="4" value="{{ limit }}"> files</label>
+ <button>Show</button>
+</form>
+
+{% if batch %}
+<form method="post" action="{{ base }}/write-tags" class="stacked">
+ <input type="hidden" name="path" value="{{ path }}">
+ <input type="hidden" name="only" value="{{ only }}">
+ <input type="hidden" name="limit" value="{{ limit }}">
+ <label>MP3 tags as
+  <select name="id3_version">
+   <option value="">each file's own ID3 version</option>
+   <option value="3">ID3v2.3 (read by more players and devices)</option>
+   <option value="4">ID3v2.4</option>
+  </select>
+ </label>
+ <button class="primary">Propose a changeset for these {{ batch | length }} files</button>
+</form>
+<table>
+ <thead><tr><th>File</th><th>Values to write</th></tr></thead>
+ <tbody>
+ {% for pending in batch %}
+  <tr>
+   <td class="path"><a href="/tracks/{{ pending.file.id }}">{{ pending.file.path }}</a></td>
+   <td>{% for name, value in pending.fields.items() %}{{ name }}: {{ value }}{% if not loop.last %}<br>{% endif %}{% endfor %}</td>
+  </tr>
+ {% endfor %}
+ </tbody>
+</table>
+{% endif %}
+{% endblock %}

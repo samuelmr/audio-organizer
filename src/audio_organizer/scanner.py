@@ -182,6 +182,8 @@ def _update(session: Session, file: AudioFile, result: _Result, *, first_time: b
     info = result.info or tags.AudioInfo()
     file.size = result.size
     file.mtime_ns = result.mtime_ns
+    if file.audio_hash and result.audio_hash and result.audio_hash != file.audio_hash:
+        set_values(session, file, "analysis", {})  # measured from audio that is gone
     file.audio_hash = result.audio_hash or file.audio_hash
     file.format = info.format
     file.duration = info.duration
