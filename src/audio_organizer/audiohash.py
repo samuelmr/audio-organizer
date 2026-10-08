@@ -30,7 +30,7 @@ def audio_hash(source: str | Path | BinaryIO) -> str:
         if len(head) >= 8 and head[4:8] == b"ftyp":
             ranges = _mp4_ranges(f)
         else:
-            ranges = [_id3_stream_range(f)]
+            ranges = [id3_stream_range(f)]
         total = sum(end - start for start, end in ranges)
         digest = hashlib.blake2b(total.to_bytes(8, "big"), digest_size=16)
         for offset, length in _samples(total):
@@ -68,7 +68,9 @@ def _size(f: BinaryIO) -> int:
     return size
 
 
-def _id3_stream_range(f) -> tuple[int, int]:
+def id3_stream_range(f) -> tuple[int, int]:
+    """(start, end) of the stream between leading ID3v2 tags and trailing ID3v1 / APEv2
+    tags."""
     size = _size(f)
     start = 0
     # ID3v2 tags at the start; some files carry several

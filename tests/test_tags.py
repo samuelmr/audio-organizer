@@ -1,5 +1,9 @@
+import subprocess
+
 import mutagen
+import mutagen.aac
 import pytest
+from conftest import needs_ffmpeg
 from mutagen.id3 import COMM, ID3
 
 from audio_organizer import tags
@@ -29,6 +33,26 @@ def test_adts_aac_with_id3_tag(copy_audio, tmp_path):
     assert tags.read(path).fields["title"] == "Born Slippy .NUXX"
     assert tags.read(path).fields["tracknumber"] == "8"
     assert audio_hash(path) == before
+
+
+@needs_ffmpeg
+def test_adts_length_counts_frames(tmp_path):
+    """mutagen estimates an ADTS stream's length from its first frames: a stream that
+    starts with silence (small frames) came out at 91 s instead of 6."""
+    path = tmp_path / "quiet start.aac"
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "anullsrc=d=3",
+         "-f", "lavfi", "-i", "anoisesrc=d=3:a=0.9",
+         "-filter_complex", "[0][1]concat=n=2:v=0:a=1", "-c:a", "aac", "-b:a", "128k",
+         str(path)],
+        check=True,
+    )  # fmt: skip
+    assert mutagen.aac.AAC(path).info.length > 20
+    info = tags.read(path)
+    assert 5.9 < info.duration < 6.2
+    assert 30_000 < info.bitrate < 200_000
+    with open(path, "rb") as f:
+        assert tags.read(f).duration == info.duration
 
 
 def test_read_m4a(copy_audio, tmp_path):

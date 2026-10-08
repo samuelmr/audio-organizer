@@ -12,6 +12,7 @@ has (2.3 for files without a tag, as more players read it), or the one asked for
 
 import base64
 import re
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import BinaryIO
@@ -35,7 +36,7 @@ from mutagen.id3 import (
 )
 from mutagen.mp4 import MP4Cover, MP4FreeForm, MP4Tags
 
-from . import images
+from . import audiohash, images
 
 FIELDS = (
     "artist",
@@ -192,6 +193,10 @@ def read(path: str | Path | BinaryIO) -> AudioInfo:
         bitrate=getattr(audio.info, "bitrate", None) or None,
         sample_rate=getattr(audio.info, "sample_rate", None) or None,
     )
+    if isinstance(audio, AAC) and audio.info._type == "ADTS":
+        measured = adts_length(path)
+        if measured:
+            info.duration, info.bitrate = measured
     if isinstance(tags, ID3):
         raw = _read_id3(tags)
     elif isinstance(tags, MP4Tags):
@@ -209,6 +214,46 @@ def read(path: str | Path | BinaryIO) -> AudioInfo:
     if picture is not None:
         info.fields[EMBEDDED_COVER] = images.format_size(images.dimensions(picture[1][:65536]))
     return info
+
+
+ADTS_SAMPLE_RATES = (
+    96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350,
+)  # fmt: skip
+
+
+def adts_length(source: str | Path | BinaryIO) -> tuple[float, int] | None:
+    """(Duration in seconds, bitrate) of a raw AAC stream (ADTS), from its frame headers.
+
+    ADTS has no index or length field, and mutagen estimates the length from the first
+    frames' bitrate, which can be off by minutes for streams that start quietly. Counting
+    every frame is exact, but reads the whole stream; it is done for ADTS files only.
+    None when no frames are found."""
+    context = open(source, "rb") if isinstance(source, str | Path) else nullcontext(source)
+    with context as f:
+        start, end = audiohash.id3_stream_range(f)
+        f.seek(start)
+        data = f.read(end - start)
+    pos = data.find(b"\xff")
+    while pos >= 0 and pos + 1 < len(data) and data[pos + 1] & 0xF6 != 0xF0:
+        pos = data.find(b"\xff", pos + 1)  # skip junk before the first frame
+    if pos < 0:
+        return None
+    first, samples, rate = pos, 0, 0
+    while pos + 7 <= len(data):
+        header = data[pos : pos + 7]
+        if header[0] != 0xFF or header[1] & 0xF6 != 0xF0:
+            break
+        length = (header[3] & 0x03) << 11 | header[4] << 3 | header[5] >> 5
+        rate_index = header[2] >> 2 & 0x0F
+        if length < 7 or rate_index >= len(ADTS_SAMPLE_RATES):
+            break
+        rate = ADTS_SAMPLE_RATES[rate_index]
+        samples += 1024 * ((header[6] & 0x03) + 1)
+        pos += length
+    if not samples:
+        return None
+    duration = samples / rate
+    return duration, round((min(pos, len(data)) - first) * 8 / duration)
 
 
 def front_picture(audio, tags) -> tuple[str, bytes] | None:
