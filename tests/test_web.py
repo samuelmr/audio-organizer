@@ -1,5 +1,6 @@
 import re
 import subprocess
+import time
 
 import pytest
 from conftest import make_audio
@@ -193,6 +194,85 @@ def test_sync_preview(web, Session):
     assert "3 upload" in page
     assert "Texas/Greatest Hits/11 Halo.mp3" in page
     assert web.get("/sync/nothing").status_code == 404
+
+
+@pytest.fixture
+def s3(monkeypatch):
+    import boto3
+    from moto import mock_aws
+
+    for name, value in {
+        "AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test",
+        "AWS_DEFAULT_REGION": "us-east-1",
+    }.items():  # fmt: skip
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv("AWS_PROFILE", raising=False)
+    with mock_aws():
+        client = boto3.client("s3")
+        client.create_bucket(Bucket="music")
+        yield client
+
+
+def _wait_for(web, job_url):
+    for _ in range(200):
+        state = web.get(job_url, headers={"Accept": "application/json"}).json()
+        if not state["active"]:
+            return state
+        time.sleep(0.05)
+    raise AssertionError(f"sync still running: {state}")
+
+
+def test_start_sync_from_the_web(web, Session, s3):
+    with Session() as session:
+        library = session.scalar(select(Library))
+        session.add(SyncTarget(name="backup", library=library, bucket="music", prefix=""))
+        session.commit()
+    page = web.get("/sync/backup").text
+    expected = re.search(r'name="expected" value="(\w+)"', page).group(1)
+    response = web.post("/sync/jobs", data={"target": "backup", "expected": expected},
+                        follow_redirects=False)  # fmt: skip
+    assert response.status_code == 303
+    job_url = response.headers["location"]
+    assert 'data-sync-job="' + job_url in web.get(job_url).text
+    state = _wait_for(web, job_url)
+    assert (state["status"], state["done"], state["total"], state["failed"]) == ("done", 3, 3, 0)
+    keys = {o["Key"] for o in s3.list_objects_v2(Bucket="music")["Contents"]}
+    assert "Texas/Greatest Hits/11 Halo.mp3" in keys
+    page = web.get("/sync/backup").text
+    assert "Nothing to do" in page and "Start sync" not in page and "Recent syncs" in page
+    assert "Done" in web.get(job_url).text
+
+
+def test_web_sync_refuses_a_changed_plan(web, Session, s3):
+    with Session() as session:
+        library = session.scalar(select(Library))
+        session.add(SyncTarget(name="backup", library=library, bucket="music", prefix=""))
+        session.commit()
+    response = web.post("/sync/jobs", data={"target": "backup", "expected": "outdated"})
+    state = _wait_for(web, str(response.url.path))
+    assert state["status"] == "changed" and state["label"] == "Not started"
+    assert not s3.list_objects_v2(Bucket="music").get("Contents")
+
+
+def test_web_sync_waits_for_a_running_sync(web, Session):
+    from audio_organizer import sync_jobs as jobs
+
+    with Session() as session:
+        library = session.scalar(select(Library))
+        target = SyncTarget(name="backup", library=library, bucket="music", prefix="")
+        session.add(target)
+        session.commit()
+        job = jobs.start(session, target, "cli")  # as if `aorg sync` were running
+        job_id = job.id
+    page = web.get("/sync/backup").text
+    assert "under way" in page and "Start sync" not in page
+    assert "syncing now" in web.get("/sync").text
+    response = web.post("/sync/jobs", data={"target": "backup", "expected": "x"})
+    assert response.url.path == f"/sync/jobs/{job_id}" and "already being synced" in response.text
+    response = web.post(f"/sync/jobs/{job_id}/stop")
+    assert "Stopping" in response.text
+    with Session() as session:
+        assert session.get(jobs.SyncJob, job_id).stop_requested
 
 
 def test_sync_target_with_slash_in_legacy_name_is_reachable(web, Session):

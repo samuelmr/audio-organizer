@@ -4,14 +4,26 @@
 {% if target %}
 <h1>Sync to {{ target.name }}</h1>
 <p class="path">s3://{{ target.bucket }}/{{ target.prefix }}{% if target.endpoint_url %} at {{ target.endpoint_url }}{% endif %}</p>
+{% if active %}
+<p class="message" role="status">A sync of this target is under way, started from the
+{{ active.origin }}. <a href="/sync/jobs/{{ active.id }}">Show its progress</a></p>
+{% else %}
 {% set counts = plan.counts() %}
 <p>
  {% if counts %}{% for kind, n in counts | dictsort %}{{ n }} {{ kind }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}Nothing to do{% endif %};
  {{ plan.unchanged }} up to date; {{ "%.0f" | format(plan.upload_bytes / 1e6) }} MB to upload.
- {% if plan.stale %}{{ plan.stale | length }} remote objects are no longer in the library.{% endif %}
+ {% if plan.stale %}{{ plan.stale | length }} remote objects are no longer in the library; they are kept (<code>aorg sync {{ target.name }} --delete</code> removes them).{% endif %}
 </p>
-<p class="hint">Run the sync with <code>aorg sync {{ target.name }}</code>.</p>
 {% if plan.actions %}
+<form method="post" action="/sync/jobs" class="notice">
+ <input type="hidden" name="target" value="{{ target.name }}">
+ <input type="hidden" name="expected" value="{{ plan.fingerprint() }}">
+ <p>Starting copies this plan to the bucket: {{ plan.actions | length }} actions,
+ {{ "%.0f" | format(plan.upload_bytes / 1e6) }} MB to upload. It runs in the background
+ while this server runs; stopping it, or stopping the server, loses nothing, and the next
+ sync carries on where it stopped.</p>
+ <button type="submit">Start sync</button>
+</form>
 <table>
  <thead><tr><th>Action</th><th>Object</th></tr></thead>
  <tbody>
@@ -20,11 +32,28 @@
 </table>
 {% if plan.actions | length > 500 %}<p>… and {{ plan.actions | length - 500 }} more.</p>{% endif %}
 {% endif %}
+{% endif %}
+{% if recent %}
+<h2>Recent syncs</h2>
+<table>
+ <thead><tr><th>Started</th><th>From</th><th>Status</th><th>Result</th></tr></thead>
+ <tbody>
+ {% for j in recent %}
+  <tr>
+   <td><a href="/sync/jobs/{{ j.id }}">{{ j.started_at.strftime("%Y-%m-%d %H:%M") }}</a></td>
+   <td>{{ j.origin }}</td>
+   <td class="status {{ j.status }}">{{ j.status }}</td>
+   <td>{{ j.message or "" }}</td>
+  </tr>
+ {% endfor %}
+ </tbody>
+</table>
+{% endif %}
 {% else %}
 <h1>Sync</h1>
 {% if targets %}
-<p>Choose a target to see what a sync would do. Planning checks every album folder for a
-cover image, which can take a while on a network share.</p>
+<p>Choose a target to see what a sync would do and start it. Planning checks every album
+folder for a cover image, which can take a while on a network share.</p>
 <table>
  <thead><tr><th>Target</th><th>Library</th><th>Bucket</th><th>Known in bucket</th><th></th></tr></thead>
  <tbody>
@@ -34,7 +63,7 @@ cover image, which can take a while on a network share.</p>
    <td><a href="/sync/{{ t.name | urlencode }}">{{ t.name }}</a></td>
    <td>{{ t.library.name }}</td>
    <td class="path">s3://{{ t.bucket }}/{{ t.prefix }}{% if t.endpoint_url %} at {{ t.endpoint_url }}{% endif %}</td>
-   <td>{% if objects %}{{ objects }} objects, last synced {{ last.strftime("%Y-%m-%d %H:%M") }}{% else %}never synced{% endif %}</td>
+   <td>{% if active[t.id] %}<a href="/sync/jobs/{{ active[t.id].id }}">syncing now</a>{% elif objects %}{{ objects }} objects, last synced {{ last.strftime("%Y-%m-%d %H:%M") }}{% else %}never synced{% endif %}</td>
    <td><a href="/sync/targets/{{ t.id }}">Edit</a></td>
   </tr>
  {% endfor %}

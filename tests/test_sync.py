@@ -228,3 +228,67 @@ def test_target_commands(setup, tmp_path):
     assert "nas" in runner.invoke(app, [*db, "target", "list"]).output
     assert runner.invoke(app, [*db, "target", "remove", "nas"]).exit_code == 0
     assert runner.invoke(app, [*db, "target", "list"]).output == ""
+
+
+def test_execute_stops_and_resumes(setup, s3, copy_audio):
+    session, root, target, store = setup
+    for n in range(5):
+        copy_audio("mp3b", root / f"Texas/Other/{n:02} Song.mp3")
+    scan(session, target.library)
+    plan = sy.plan(session, target)
+    result = sy.execute(session, target, store, plan.actions, workers=1,
+                        should_stop=lambda: True)  # fmt: skip
+    assert result.stopped and sum(result.done.values()) < len(plan.actions)
+    rest = sy.plan(session, target)
+    assert len(rest.actions) == len(plan.actions) - sum(result.done.values())
+    _sync(session, target, store)
+    assert not sy.plan(session, target).actions
+
+
+def test_plan_fingerprint(setup, s3):
+    session, root, target, store = setup
+    first = sy.plan(session, target).fingerprint()
+    assert sy.plan(session, target).fingerprint() == first
+    file = session.scalar(select(AudioFile))
+    set_value(session, file, "manual", "title", "Halo (edit)")
+    session.commit()
+    assert sy.plan(session, target).fingerprint() != first
+
+
+def test_jobs_lock_and_record_progress(setup, s3):
+    from audio_organizer import sync_jobs as jobs
+
+    session, root, target, store = setup
+    job = jobs.start(session, target, "cli")
+    with pytest.raises(jobs.SyncBusy):
+        jobs.start(session, target, "web")
+    with pytest.raises(jobs.SyncBusy):
+        sy.remove_target(session, target)
+    plan = sy.plan(session, target)
+    jobs.run(session, job, plan, store)
+    assert (job.status, job.done, job.total, job.failed) == ("done", len(plan.actions),
+                                                             len(plan.actions), 0)  # fmt: skip
+    assert job.bytes_done == plan.upload_bytes > 0
+    assert jobs.active_job(session, target) is None
+    jobs.start(session, target, "cli")  # free again
+
+
+def test_job_of_a_gone_process_is_interrupted(setup):
+    from audio_organizer import sync_jobs as jobs
+
+    session, root, target, store = setup
+    job = jobs.start(session, target, "cli")
+    job.pid = 2**22 + 12345  # no such process
+    session.commit()
+    assert jobs.active_job(session, target) is None
+    assert job.status == "interrupted"
+
+
+def test_stop_before_running(setup, s3):
+    from audio_organizer import sync_jobs as jobs
+
+    session, root, target, store = setup
+    job = jobs.start(session, target, "web")
+    jobs.request_stop(session, job)
+    assert jobs.run(session, job, sy.plan(session, target), store) is None
+    assert job.status == "stopped" and not s3.list_objects_v2(Bucket=BUCKET).get("Contents")

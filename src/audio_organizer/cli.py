@@ -22,6 +22,7 @@ from . import playlists as pl
 from . import ratings as rt
 from . import recordings as rec
 from . import sync as sy
+from . import sync_jobs as jobs
 from . import writing as wr
 from .db import make_sessionmaker
 from .models import AudioFile, Change, Changeset, Library, Playlist, SyncTarget
@@ -599,7 +600,10 @@ def target_remove(ctx: typer.Context, name: str) -> None:
     """Forget a target. Nothing in the bucket is deleted; if you add it again, run
     `aorg target reconcile` first so that the files are not uploaded twice."""
     with _session(ctx) as session:
-        objects = sy.remove_target(session, _target(session, name))
+        try:
+            objects = sy.remove_target(session, _target(session, name))
+        except jobs.SyncBusy as e:
+            raise typer.BadParameter(str(e)) from None
     typer.echo(f"Removed target {name}: forgot {objects} synced objects, the bucket is unchanged")
 
 
@@ -634,6 +638,9 @@ def sync_command(
     """Upload new and changed tracks and covers; update metadata and moves server-side."""
     with _session(ctx) as session:
         target = _target(session, name)
+        busy = jobs.active_job(session, target)
+        if busy is not None:
+            raise typer.BadParameter(str(jobs.SyncBusy(busy)))
         plan = sy.plan(session, target, delete_stale=delete)
         counts = ", ".join(f"{n} {kind}" for kind, n in sorted(plan.counts().items()))
         typer.echo(
@@ -664,8 +671,15 @@ def sync_command(
             elif done % 100 == 0:
                 typer.echo(f"  [{done}/{total}]", err=True)
 
-        result = sy.execute(session, target, sy.store_for(target), plan.actions,
-                            workers=workers, progress=progress)  # fmt: skip
+        try:
+            job = jobs.start(session, target, "cli")
+        except jobs.SyncBusy as e:
+            raise typer.BadParameter(str(e)) from None
+        result = jobs.run(session, job, plan, sy.store_for(target), workers=workers,
+                          on_action=progress)  # fmt: skip
+        if result is None or result.stopped:
+            typer.echo(job.message)
+            raise typer.Exit(1)
     done_counts = ", ".join(f"{n} {kind}" for kind, n in sorted(result.done.items()))
     typer.echo(f"Done: {done_counts or 'nothing'}; {len(result.errors)} errors")
     if result.errors:

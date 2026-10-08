@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Sync to {{ job.target.name }} – audio-organizer{% endblock %}
+{% block content %}
+<h1>Sync to <a href="/sync/{{ job.target.name | urlencode }}">{{ job.target.name }}</a></h1>
+<p class="path">s3://{{ job.target.bucket }}/{{ job.target.prefix }}{% if job.target.endpoint_url %} at {{ job.target.endpoint_url }}{% endif %}</p>
+
+<section class="sync-job" data-sync-job="/sync/jobs/{{ job.id }}" aria-live="polite">
+ <p><strong class="status {{ state.status }}" data-field="label">{{ state.label }}</strong>
+  <span data-field="message">{{ state.message or "" }}</span></p>
+ <progress data-field="progress" max="{{ state.total or 1 }}" value="{{ state.done }}"{% if state.status == "planning" %} hidden{% endif %}></progress>
+ <p data-field="counts">{{ state.counts }}</p>
+ <p class="path hint" data-field="current">{{ state.current or "" }}</p>
+ <p><small>Started from the {{ job.origin }} at {{ job.started_at.strftime("%Y-%m-%d %H:%M") }}</small></p>
+
+ {% if state.active %}
+ <form method="post" action="/sync/jobs/{{ job.id }}/stop" data-field="stop">
+  <button type="submit" class="danger"{% if job.stop_requested %} disabled{% endif %}>{% if job.stop_requested %}Stopping…{% else %}Stop{% endif %}</button>
+  <a href="/sync/jobs/{{ job.id }}" data-field="refresh">Refresh</a>
+ </form>
+ {% elif state.status in ("stopped", "interrupted", "changed", "failed") %}
+ <p><a href="/sync/{{ job.target.name | urlencode }}">Review the plan and sync again</a></p>
+ {% endif %}
+
+ <div data-field="errors"{% if not state.errors %} hidden{% endif %}>
+  <h2>Errors</h2>
+  <p class="hint">Failed files are left for the next sync. Only the first {{ max_errors }} are listed.</p>
+  <table>
+   <thead><tr><th>Action</th><th>Error</th></tr></thead>
+   <tbody>
+   {% for action, error in state.errors %}<tr><td class="path">{{ action }}</td><td class="error">{{ error }}</td></tr>{% endfor %}
+   </tbody>
+  </table>
+ </div>
+</section>
+<script src="{{ asset('sync.js') }}" defer></script>
+{% endblock %}

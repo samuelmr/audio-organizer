@@ -101,7 +101,8 @@ across folders show up together. It is also where changesets are easiest to revi
 select changes (or all, then deselect some) to approve or reject, try a dry run, apply
 and undo. The ▶ buttons on track, duplicate and changeset pages play the files in the
 browser, so copies can be compared by ear (MP3, M4A and AAC play everywhere; WMA does
-not). Playlists can be viewed, created and edited, and a sync target's plan previewed.
+not). Playlists can be viewed, created and edited. On the Sync page, a target's plan
+can be reviewed and started, and its progress followed.
 
 The web UI has no login, so it only listens on your own computer unless you give
 `--host`. It refuses form submissions that come from other websites.
@@ -395,6 +396,14 @@ HTML page.
     aorg sync backup --dry-run
     aorg sync backup
 
+A sync can also be started from the web UI: open the target on the Sync page, review the
+plan and press Start sync. It runs in the background of `aorg web` and its page shows the
+progress; if the files changed after the plan was shown, it does not start and asks you
+to review the plan again. Only one sync of a target runs at a time, whether started from
+the web UI or with `aorg sync`, and the web UI shows the progress of either. Stopping a
+sync, or stopping the server or the command, loses nothing: each object is recorded as
+it is synced, and the next sync carries on from there.
+
 The bucket looks like this (below the target's prefix, if any):
 
     Artist/Album/01 Title.mp3        tracks, at their library paths
@@ -495,6 +504,7 @@ Design principles:
 | `playlists.py` | Playlist rules, generation in one pass, import and export |
 | `playlist_formats.py` | M3U, JSON-LD and HTML playlist files |
 | `sync.py` | Planning and carrying out syncs to object storage |
+| `sync_jobs.py` | Sync runs as jobs: progress, one sync per target, background runs for the web UI |
 | `objectstore.py` | Object storage backends (S3-compatible) |
 | `cli.py` | The `aorg` command |
 | `web/` | The web UI: FastAPI app (`app.py`), Jinja2 templates, stylesheet |

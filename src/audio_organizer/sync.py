@@ -89,11 +89,20 @@ class Plan:
             counts[action.kind] = counts.get(action.kind, 0) + 1
         return counts
 
+    def fingerprint(self) -> str:
+        """Identifies what the plan would do, so that a sync started from a reviewed plan
+        can refuse to run when planning again gives something else."""
+        h = hashlib.sha1()
+        for a in sorted(self.actions, key=lambda a: (a.key, a.kind)):
+            h.update(f"{a.kind}\0{a.key}\0{a.source_key}\0{a.size}\0{a.meta_digest}\n".encode())
+        return h.hexdigest()
+
 
 @dataclass
 class SyncResult:
     done: dict[str, int] = field(default_factory=dict)
     errors: list[tuple[str, str]] = field(default_factory=list)
+    stopped: bool = False  # asked to stop before every action had run
 
 
 def store_for(target: SyncTarget) -> ObjectStore:
@@ -131,7 +140,12 @@ def remote_summary(session: Session, target: SyncTarget) -> tuple[int, datetime 
 
 def remove_target(session: Session, target: SyncTarget) -> int:
     """Forget a target and what was synced to it; the bucket itself is left alone.
-    Returns how many synced objects were forgotten."""
+    Returns how many synced objects were forgotten; SyncBusy while it is being synced."""
+    from .sync_jobs import SyncBusy, active_job  # sync_jobs builds on this module
+
+    busy = active_job(session, target)
+    if busy is not None:
+        raise SyncBusy(busy)
     objects, _ = remote_summary(session, target)
     session.execute(delete(RemoteObject).where(RemoteObject.target_id == target.id))
     session.delete(target)
@@ -380,9 +394,12 @@ def execute(
     *,
     workers: int = 4,
     progress: Callable[[Action, str | None], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> SyncResult:
     """Carry out planned actions. Storage operations run in parallel; the catalog is
-    updated as each one completes, so an interrupted sync resumes where it stopped."""
+    updated as each one completes, so an interrupted sync resumes where it stopped.
+    When should_stop() turns true, actions not yet started are dropped and the ones under
+    way are finished and recorded (result.stopped)."""
     result = SyncResult()
     since_commit = 0
 
@@ -422,6 +439,8 @@ def execute(
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures: dict[Future, Action] = {pool.submit(run, a): a for a in actions}
         for future in as_completed(futures):
+            if future.cancelled():
+                continue
             action = futures[future]
             error = None
             try:
@@ -437,6 +456,10 @@ def execute(
                 since_commit = 0
             if progress:
                 progress(action, error)
+            if should_stop and not result.stopped and should_stop():
+                result.stopped = True
+                for pending in futures:
+                    pending.cancel()  # only those not started; the others finish
     session.commit()
     return result
 

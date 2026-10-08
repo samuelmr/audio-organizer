@@ -234,6 +234,38 @@ class RemoteObject(Base):
     synced_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
+class SyncJob(Base):
+    """A sync run, started from the CLI or the web UI: its progress, so that any page can
+    show it, and a lock, so that two runs never sync the same target at once. A run whose
+    process has gone counts as interrupted; the next sync resumes from the catalog."""
+
+    __tablename__ = "sync_job"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    target_id: Mapped[int] = mapped_column(
+        ForeignKey("sync_target.id", ondelete="CASCADE"), index=True
+    )
+    origin: Mapped[str] = mapped_column(String(10))  # cli | web
+    # planning | running | done | failed | stopped | changed | interrupted
+    status: Mapped[str] = mapped_column(String(20))
+    stop_requested: Mapped[bool] = mapped_column(default=False)
+    host: Mapped[str] = mapped_column(String(255))  # where the run's process is
+    pid: Mapped[int] = mapped_column()
+    started_at: Mapped[datetime] = mapped_column(default=utcnow)
+    heartbeat_at: Mapped[datetime] = mapped_column(default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column()
+    total: Mapped[int] = mapped_column(default=0)  # actions
+    done: Mapped[int] = mapped_column(default=0)
+    failed: Mapped[int] = mapped_column(default=0)
+    bytes_total: Mapped[int] = mapped_column(BigInteger, default=0)  # to upload
+    bytes_done: Mapped[int] = mapped_column(BigInteger, default=0)
+    current: Mapped[str | None] = mapped_column(Text)  # the last action completed
+    message: Mapped[str | None] = mapped_column(Text)  # why it failed or what it did
+    errors: Mapped[list[Any]] = mapped_column(JSON, default=list)  # the first ERRORS_KEPT
+
+    target: Mapped[SyncTarget] = relationship()
+
+
 class Playlist(Base):
     """A smart playlist (a rule over the catalog) or a static, curated one.
 

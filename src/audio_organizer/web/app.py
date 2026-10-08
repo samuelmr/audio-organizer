@@ -17,6 +17,7 @@ from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
+    JSONResponse,
     PlainTextResponse,
     RedirectResponse,
     Response,
@@ -37,6 +38,7 @@ from .. import playlists as pl
 from .. import ratings as rt
 from .. import recordings as rec
 from .. import sync as sy
+from .. import sync_jobs as jobs
 from .. import writing as wr
 from ..models import (
     AudioFile,
@@ -46,6 +48,7 @@ from ..models import (
     EffectiveMetadata,
     Library,
     Playlist,
+    SyncJob,
     SyncTarget,
     TagSnapshot,
 )
@@ -976,9 +979,11 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
     def sync_targets(request: Request, session: Session = SessionDep):
         targets = session.scalars(select(SyncTarget).order_by(SyncTarget.name)).all()
         summaries = {t.id: sy.remote_summary(session, t) for t in targets}
+        active = {t.id: jobs.active_job(session, t) for t in targets}
         return render(
-            request, "sync.html", targets=targets, target=None, plan=None, summaries=summaries
-        )
+            request, "sync.html", targets=targets, target=None, plan=None, summaries=summaries,
+            active=active,
+        )  # fmt: skip
 
     @app.get("/sync/targets/new", response_class=HTMLResponse)
     def new_sync_target(request: Request, session: Session = SessionDep):
@@ -1043,20 +1048,59 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         if not (await request.form()).get("confirm"):
             return _redirect(f"/sync/targets/{target_id}", "Tick the box to remove the target")
         name = target.name
-        objects = sy.remove_target(session, target)
+        try:
+            objects = sy.remove_target(session, target)
+        except jobs.SyncBusy as e:
+            return _redirect(f"/sync/targets/{target_id}", str(e))
         return _redirect(
             "/sync", f"Removed target {name}: forgot {objects} synced objects, bucket unchanged"
         )
 
-    @app.get("/sync/{name:path}", response_class=HTMLResponse)
-    def sync_plan(request: Request, name: str, session: Session = SessionDep):
-        """What a sync would do. Planning looks for album covers in every folder, which
-        takes a while on a network share; running the sync is left to `aorg sync`."""
+    @app.post("/sync/jobs")
+    async def start_sync(request: Request, session: Session = SessionDep):
+        """Start syncing a target in the background, if the plan is still the one shown
+        (fingerprint "expected"), and go to its progress page."""
+        form = await request.form()
+        name = str(form.get("target", ""))
         target = session.scalar(select(SyncTarget).where(SyncTarget.name == name))
         if target is None:
             raise HTTPException(404, f"No sync target named {name}")
-        plan = sy.plan(session, target)
-        return render(request, "sync.html", targets=None, target=target, plan=plan)
+        try:
+            job = jobs.start_in_background(
+                session_factory, session, target, str(form.get("expected", "")) or None
+            )
+        except jobs.SyncBusy as e:
+            return _redirect(f"/sync/jobs/{e.job.id}", str(e))
+        return _redirect(f"/sync/jobs/{job.id}")
+
+    @app.get("/sync/jobs/{job_id:int}")
+    def sync_job(request: Request, job_id: int, session: Session = SessionDep):
+        """A sync's progress: a page, or JSON for its script to update the page with."""
+        job = jobs.refresh(session, _sync_job(session, job_id))
+        state = _job_state(job)
+        if "application/json" in request.headers.get("accept", ""):
+            return JSONResponse(state)
+        return render(request, "sync_job.html", job=job, state=state, max_errors=jobs.ERRORS_KEPT)
+
+    @app.post("/sync/jobs/{job_id:int}/stop")
+    def stop_sync(job_id: int, session: Session = SessionDep):
+        job = jobs.refresh(session, _sync_job(session, job_id))
+        jobs.request_stop(session, job)
+        return _redirect(f"/sync/jobs/{job_id}", "Stopping after the transfers under way")
+
+    @app.get("/sync/{name:path}", response_class=HTMLResponse)
+    def sync_plan(request: Request, name: str, session: Session = SessionDep):
+        """What a sync would do, with a button to start it. Planning looks for album
+        covers in every folder, which takes a while on a network share."""
+        target = session.scalar(select(SyncTarget).where(SyncTarget.name == name))
+        if target is None:
+            raise HTTPException(404, f"No sync target named {name}")
+        active = jobs.active_job(session, target)
+        plan = sy.plan(session, target) if active is None else None
+        return render(
+            request, "sync.html", targets=None, target=target, plan=plan, active=active,
+            recent=jobs.recent_jobs(session, target),
+        )  # fmt: skip
 
     return app
 
@@ -1069,6 +1113,43 @@ def _library(session: Session, name: str) -> Library:
     if library is None:
         raise HTTPException(404, f"No library named {name}")
     return library
+
+
+JOB_LABELS = {
+    "planning": "Planning",
+    "running": "Syncing",
+    "done": "Done",
+    "failed": "Failed",
+    "stopped": "Stopped",
+    "changed": "Not started",
+    "interrupted": "Interrupted",
+}
+
+
+def _job_state(job: SyncJob) -> dict:
+    """The job's state with the wording the page shows, so that the page's script and
+    the server-rendered page say the same."""
+    state = jobs.state(job)
+    label = JOB_LABELS.get(job.status, job.status)
+    if job.status == "running" and job.stop_requested:
+        label = "Stopping"
+    state["label"] = label
+    if job.status == "planning":
+        state["counts"] = "Checking the library and album covers; this can take a few minutes."
+    else:
+        failed = f", {job.failed} failed" if job.failed else ""
+        state["counts"] = (
+            f"{job.done} of {job.total} done{failed}; "
+            f"{job.bytes_done / 1e6:.0f} of {job.bytes_total / 1e6:.0f} MB uploaded"
+        )
+    return state
+
+
+def _sync_job(session: Session, job_id: int) -> SyncJob:
+    job = session.get(SyncJob, job_id)
+    if job is None:
+        raise HTTPException(404, "No such sync")
+    return job
 
 
 def _sync_target(session: Session, target_id: int) -> SyncTarget:

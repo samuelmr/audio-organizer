@@ -281,6 +281,11 @@ tr.group .by { color: var(--muted); font-weight: normal; margin-left: 0.5rem; }
 .status.applied { color: var(--ok); }
 .status.failed, .status.rejected { color: var(--bad); }
 .status.approved { color: var(--accent); }
+.status.done { color: var(--ok); }
+.status.interrupted, .status.stopped, .status.changed { color: var(--warn); }
+.status.running, .status.planning { color: var(--accent); }
+.sync-job progress { width: 100%; height: 1rem; accent-color: var(--accent); }
+.sync-job progress[hidden] { display: none; }
 .outcomes { border: 1px solid var(--line); border-radius: 0.6em; padding: 0 1rem 0.5rem; margin-bottom: 1rem; }
 .snapshot { display: grid; grid-template-columns: max-content 1fr; gap: 0.2rem 1rem; }
 .snapshot dt { color: var(--muted); }
