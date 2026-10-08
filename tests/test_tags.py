@@ -101,9 +101,9 @@ def test_odd_track_numbers_are_normalized(copy_audio, tmp_path):
 
 NEW_FIELDS = {
     "originaldate": "1994",
-    "albumartistsort": "Tenkanen, Aarne",
-    "artistsort": "Tenkanen, Aarne",
-    "composer": "Aarne Tenkanen",
+    "albumartistsort": "Morissette, Alanis",
+    "artistsort": "Morissette, Alanis",
+    "composer": "Alanis Morissette",
     "conductor": "Leif Segerstam",
     "grouping": "Rock'n'roll",
     "subtitle": "Live",

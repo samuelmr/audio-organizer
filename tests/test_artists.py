@@ -14,8 +14,8 @@ def library(Session, tmp_path):
     if shutil.which("ffmpeg") is None:
         pytest.skip("needs ffmpeg")
     root = tmp_path / "music"
-    make_audio(root / "Tenkanen, Aarne/Aarne Tenkanen_Paula.mp3", freq=400, seconds=0.3,
-               artist="Aarne Tenkanen", album="Aarne Tenkanen", title="Paula",
+    make_audio(root / "Morissette, Alanis/Alanis Morissette_Paula.mp3", freq=400, seconds=0.3,
+               artist="Alanis Morissette", album="Alanis Morissette", title="Paula",
                track="5")  # fmt: skip
     make_audio(root / "Pink Floyd/The Division Bell/01 Cluster One.mp3", freq=500, seconds=0.3,
                artist="Pink Floyd", album="The Division Bell", title="Cluster One",
@@ -34,32 +34,32 @@ def library(Session, tmp_path):
 def test_suggestions_and_sort_names(library):
     session, lib = library
     listed = {a.name: a for a in art.album_artists(session, lib)}
-    assert set(listed) == {"Aarne Tenkanen", "Pink Floyd"}  # compilations are left out
-    assert listed["Aarne Tenkanen"].suggestion == "Tenkanen, Aarne"
+    assert set(listed) == {"Alanis Morissette", "Pink Floyd"}  # compilations are left out
+    assert listed["Alanis Morissette"].suggestion == "Morissette, Alanis"
     assert listed["Pink Floyd"].suggestion is None  # not turned around by rule
 
     assert art.accept_suggestions(session, lib, list(listed.values())) == 1
     art.set_sort_name(session, lib, "Pink Floyd", "Floyd, Pink")
     session.commit()
     names = art.sort_names(session, lib)
-    assert art.sorted_name(names, "aarne tenkanen") == "Tenkanen, Aarne"
+    assert art.sorted_name(names, "alanis morissette") == "Morissette, Alanis"
     assert art.sorted_name(names, "Air") == "Air"
 
     art.set_sort_name(session, lib, "Pink Floyd", "")  # removes it
     session.commit()
     listed = {a.name: a for a in art.album_artists(session, lib)}
     assert listed["Pink Floyd"].sort_name is None
-    assert listed["Aarne Tenkanen"].suggestion is None  # it has a sort name now
+    assert listed["Alanis Morissette"].suggestion is None  # it has a sort name now
 
 
 def test_layout_with_sort_names(library):
     session, lib = library
-    art.set_sort_name(session, lib, "Aarne Tenkanen", "Tenkanen, Aarne")
+    art.set_sort_name(session, lib, "Alanis Morissette", "Morissette, Alanis")
     session.commit()
     plan = lo.plan(session, lib, "{albumartistsort}/{album}/{track} {title}")
     targets = sorted(m.target for a in plan.albums for m in a.moves)
     assert targets == [
-        "Tenkanen, Aarne/Aarne Tenkanen/05 Paula.mp3",
+        "Morissette, Alanis/Alanis Morissette/05 Paula.mp3",
         "Various Artists/Hits/01 Halo.mp3",
     ]
     assert plan.in_place == 1  # Pink Floyd, no sort name: filed under the name
