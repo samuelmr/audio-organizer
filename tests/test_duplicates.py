@@ -105,3 +105,35 @@ def test_trash_refuses_changed_file(library):
     outcomes = {o.change.file.path: o for o in ch.apply(session, changeset)}
     assert not outcomes["Texas/Texas_Halo.mp3"].ok
     assert (root / "Texas/Texas_Halo.mp3").exists()
+
+
+def test_trashed_path_is_free_for_another_file(library):
+    """A trashed file's catalog entry moves to its path in the trash, so a better copy can
+    take its place in the same changeset; undo restores both."""
+    session, lib, root = library
+    album = session.scalar(
+        select(AudioFile).where(AudioFile.path == "Texas/Greatest Hits/11 Halo.mp3")
+    )
+    flat = session.scalar(select(AudioFile).where(AudioFile.path == "Texas/Texas_Halo.mp3"))
+    changeset = ch.new_changeset(session, "Replace", "duplicates")
+    ch.propose_trash(changeset, album, replacement=flat, same="recording")
+    ch.propose_move(changeset, flat, album.path)
+    session.commit()
+    assert ch.describe(changeset.changes[0]) == (
+        "trash Texas/Greatest Hits/11 Halo.mp3 (same recording as Texas/Texas_Halo.mp3)"
+    )
+    ch.set_status(changeset.changes, "approved")
+    outcomes = ch.apply(session, changeset)
+    assert all(o.ok for o in outcomes), [o.message for o in outcomes]
+    trash_path = f"{ch.TRASH_DIR}/{changeset.id}/Texas/Greatest Hits/11 Halo.mp3"
+    assert (album.path, album.missing) == (trash_path, True)
+    assert flat.path == "Texas/Greatest Hits/11 Halo.mp3"
+    assert ch.move_source(changeset.changes[0]) == "Texas/Greatest Hits/11 Halo.mp3"
+    assert "mood" in tags.read(root / flat.path).fields  # the flat copy's tags
+
+    outcomes = ch.undo(session, changeset)
+    assert all(o.ok for o in outcomes), [o.message for o in outcomes]
+    assert (album.path, album.missing) == ("Texas/Greatest Hits/11 Halo.mp3", False)
+    assert flat.path == "Texas/Texas_Halo.mp3"
+    assert "mood" not in tags.read(root / album.path).fields
+    assert scan(session, lib).unchanged == 7

@@ -31,7 +31,7 @@
     {% if selectable %}<label for="change-{{ change.id }}" class="visually-hidden">Select: {{ describe(change) }}</label>{% endif %}
     {% set done = change.status == "applied" %}
     {% if change.kind == "trash" %}
-     <div class="file">{{ play(change.file.id, change.file.path) }} <span class="path">{{ change.file.path }}</span>
+     <div class="file">{{ play(change.file.id, move_source(change)) }} <span class="path">{{ move_source(change) }}</span>
       <span class="verdict trash">{{ "was trashed" if done else ("was restored" if change.status == "undone" else "will be trashed") }}</span></div>
      {% if change.payload.replacement %}
      <div class="file">{{ play(change.payload.replacement, change.payload.replacement_path) }} <span class="path">{{ change.payload.replacement_path }}</span>
