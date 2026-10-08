@@ -11,7 +11,15 @@ from .pathparse import normalize_name
 from .tags import FIELDS, NUMBER_FIELDS, parse_number, parse_year
 
 # Higher wins. A manual edit always wins and is never overwritten by scans.
-SOURCE_PRIORITY = {"manual": 100, "gnudb": 60, "tag": 50, "neighbours": 40, "path": 30}
+SOURCE_PRIORITY = {
+    "manual": 100,
+    "gnudb": 60,
+    "analysis": 55,  # measured from the audio (ReplayGain): newer than what tags say
+    "tag": 50,
+    "neighbours": 40,
+    "path": 30,
+}
+EFFECTIVE_COLUMNS = set(EffectiveMetadata.__table__.columns.keys())
 
 
 @dataclass
@@ -81,7 +89,9 @@ def refresh_effective(session: Session, file_ids: list[int]) -> None:
             for name, r in resolved.items()
         )
         effective: dict[str, object] = {
-            name: (resolved[name].value if name in resolved else None) for name in FIELDS
+            name: (resolved[name].value if name in resolved else None)
+            for name in FIELDS
+            if name in EFFECTIVE_COLUMNS  # the table holds the fields used in searches
         }
         for name in NUMBER_FIELDS:
             effective[name] = parse_number(effective[name])

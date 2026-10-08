@@ -99,6 +99,78 @@ def test_odd_track_numbers_are_normalized(copy_audio, tmp_path):
     assert tags.read(path).fields["tracknumber"] == "Satakuntalainen Osakunta"  # kept as it is
 
 
+NEW_FIELDS = {
+    "originaldate": "1994",
+    "albumartistsort": "Tenkanen, Aarne",
+    "artistsort": "Tenkanen, Aarne",
+    "composer": "Aarne Tenkanen",
+    "conductor": "Leif Segerstam",
+    "grouping": "Rock'n'roll",
+    "subtitle": "Live",
+    "language": "fin",
+    "mood": "Upbeat",
+    "rating": "4",
+    "discid": "870a280b",
+    "replaygain_track_gain": "-6.48 dB",
+    "replaygain_track_peak": "0.988525",
+    "replaygain_album_gain": "-7.10 dB",
+    "replaygain_album_peak": "1.000000",
+}
+
+
+@pytest.mark.parametrize("version", [3, 4])
+def test_new_fields_mp3(copy_audio, tmp_path, version):
+    path = copy_audio("mp3", tmp_path / "x.mp3")
+    tags.write(path, NEW_FIELDS, id3_version=version)
+    fields = tags.read(path).fields
+    assert {k: fields.get(k) for k in NEW_FIELDS} == NEW_FIELDS
+    id3 = ID3(path)
+    assert id3.version[:2] == (2, version)
+    assert id3.getall("POPM")[0].rating == 196
+    assert id3.getall("TSOP")  # kept in ID3v2.3 too, as iTunes does
+
+
+def test_id3v23_stays_v23_on_disk(copy_audio, tmp_path):
+    """Writing an ID3v2.3 file must use v2.3 frames: the year in TYER, not TDRC."""
+    path = copy_audio("mp3", tmp_path / "x.mp3")
+    tags.write(path, {"title": "Halo (Live)"})
+    raw = path.read_bytes()[:4096]
+    assert raw[3] == 3  # ID3v2.3 header
+    assert b"TYER" in raw and b"TDRC" not in raw
+    assert tags.read(path).fields["date"] == "2000"
+
+
+def test_upgrade_to_id3v24(copy_audio, tmp_path):
+    path = copy_audio("mp3", tmp_path / "x.mp3")
+    assert tags.id3_version(path) == 3
+    tags.write(path, {}, id3_version=4)
+    assert tags.id3_version(path) == 4
+    assert b"TDRC" in path.read_bytes()[:4096]
+    assert tags.read(path).fields["date"] == "2000"
+
+
+def test_new_fields_m4a(copy_audio, tmp_path):
+    path = copy_audio("m4a", tmp_path / "x.m4a")
+    tags.write(path, NEW_FIELDS)
+    fields = tags.read(path).fields
+    assert {k: fields.get(k) for k in NEW_FIELDS} == NEW_FIELDS
+
+
+def test_mood_goes_to_the_standard_tag(copy_audio, tmp_path):
+    path = copy_audio("mp3", tmp_path / "x.mp3")
+    tags.write(path, {"mood": "Mellow"})
+    id3 = ID3(path)
+    assert [f.text for f in id3.getall("TXXX") if f.desc == "MOOD"] == [["Mellow"]]
+    assert not id3.getall("COMM")  # no MusicMatch comment where there was none
+
+    id3.add(COMM(encoding=1, lang="eng", desc="MusicMatch_Mood", text=["Upbeat"]))
+    id3.save(v2_version=3)
+    assert tags.read(path).fields["mood"] == "Mellow"  # the standard tag wins
+    tags.write(path, {"mood": "Calm"})
+    id3 = ID3(path)
+    assert [f.text for f in id3.getall("COMM") if f.desc == "MusicMatch_Mood"] == [["Calm"]]
+
+
 def test_unknown_field_rejected(copy_audio, tmp_path):
     path = copy_audio("mp3", tmp_path / "x.mp3")
     try:

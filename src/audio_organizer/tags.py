@@ -1,9 +1,13 @@
 """Reading and writing tags as a flat dict of normalized fields.
 
 Field values are strings; multiple values are joined with "; ". Track and disc
-numbers are split into number and total and stripped of leading zeros.
-The mood/tempo/situation/preference comments written by MusicMatch Jukebox are
-read as fields of their own.
+numbers are split into number and total and stripped of leading zeros. Ratings are
+stars, "1" to "5". The mood/tempo/situation/preference comments written by MusicMatch
+Jukebox are read as fields of their own; mood is also read from, and written to, the
+standard MOOD tag, so that other players see it.
+
+ID3 tags are written as version 2.3 or 2.4: by default the version the file already
+has (2.3 for files without a tag, as more players read it), or the one asked for.
 """
 
 import re
@@ -13,7 +17,19 @@ from typing import BinaryIO
 
 import mutagen
 from mutagen.aac import AAC, AACError
-from mutagen.id3 import COMM, ID3, TCMP, TCON, TDRC, TPOS, TRCK, Frames, ID3NoHeaderError
+from mutagen.id3 import (
+    COMM,
+    ID3,
+    POPM,
+    TCMP,
+    TCON,
+    TDRC,
+    TPOS,
+    TRCK,
+    TXXX,
+    Frames,
+    ID3NoHeaderError,
+)
 from mutagen.mp4 import MP4FreeForm, MP4Tags
 
 FIELDS = (
@@ -26,15 +42,59 @@ FIELDS = (
     "discnumber",
     "disctotal",
     "date",
+    "originaldate",
     "genre",
     "compilation",
+    "albumartistsort",
+    "artistsort",
+    "composer",
+    "conductor",
+    "grouping",
+    "subtitle",
+    "language",
     "mood",
+    "rating",
     "tempo",
     "situation",
     "preference",
+    "discid",
+    "replaygain_track_gain",
+    "replaygain_track_peak",
+    "replaygain_album_gain",
+    "replaygain_album_peak",
 )
 
-ID3_TEXT = {"artist": "TPE1", "albumartist": "TPE2", "album": "TALB", "title": "TIT2"}
+# One field per ID3 text frame (ID3v2.3 TORY is read as TDOR)
+ID3_TEXT = {
+    "artist": "TPE1",
+    "albumartist": "TPE2",
+    "album": "TALB",
+    "title": "TIT2",
+    "originaldate": "TDOR",
+    "albumartistsort": "TSO2",
+    "artistsort": "TSOP",
+    "composer": "TCOM",
+    "conductor": "TPE3",
+    "grouping": "TIT1",
+    "subtitle": "TIT3",
+    "language": "TLAN",
+}
+# Fields in ID3 user text frames (TXXX), by description
+ID3_TXXX = {
+    "mood": "MOOD",
+    "discid": "DISCID",
+    "replaygain_track_gain": "REPLAYGAIN_TRACK_GAIN",
+    "replaygain_track_peak": "REPLAYGAIN_TRACK_PEAK",
+    "replaygain_album_gain": "REPLAYGAIN_ALBUM_GAIN",
+    "replaygain_album_peak": "REPLAYGAIN_ALBUM_PEAK",
+}
+# ID3v2.4 frames that iTunes and others also use in ID3v2.3, kept when saving 2.3
+V23_KEEP = ("TSOP", "TSOA", "TSOT")
+# Ratings in POPM frames: 0-255, read as 1-5 stars; written with Windows Media
+# Player's values and name, which most players read
+POPM_EMAIL = "Windows Media Player 9 Series"
+POPM_STARS = {1: 1, 2: 64, 3: 128, 4: 196, 5: 255}
+
 MP4_TEXT = {
     "artist": "\xa9ART",
     "albumartist": "aART",
@@ -42,6 +102,25 @@ MP4_TEXT = {
     "title": "\xa9nam",
     "date": "\xa9day",
     "genre": "\xa9gen",
+    "albumartistsort": "soaa",
+    "artistsort": "soar",
+    "composer": "\xa9wrt",
+    "grouping": "\xa9grp",
+}
+MP4_FREEFORM = "----:com.apple.iTunes:"
+# Fields in MP4 freeform atoms, by name (the conventions of iTunes, foobar2000, Picard)
+MP4_FREE = {
+    "originaldate": "ORIGINALDATE",
+    "conductor": "CONDUCTOR",
+    "subtitle": "SUBTITLE",
+    "language": "LANGUAGE",
+    "mood": "MOOD",
+    "rating": "RATING",
+    "discid": "DISCID",
+    "replaygain_track_gain": "replaygain_track_gain",
+    "replaygain_track_peak": "replaygain_track_peak",
+    "replaygain_album_gain": "replaygain_album_gain",
+    "replaygain_album_peak": "replaygain_album_peak",
 }
 MUSICMATCH = {
     "mood": "MusicMatch_Mood",
@@ -49,7 +128,6 @@ MUSICMATCH = {
     "situation": "MusicMatch_Situation",
     "preference": "MusicMatch_Preference",
 }
-MP4_FREEFORM = "----:com.apple.iTunes:"
 
 
 class UnsupportedFormat(Exception):
@@ -131,11 +209,35 @@ def _read_id3(tags: ID3) -> dict[str, list]:
         for name, desc in MUSICMATCH.items():
             if frame.desc == desc:
                 raw[name] = list(frame.text)
+    for name, desc in ID3_TXXX.items():
+        values = _txxx(tags, desc)
+        if values:
+            raw[name] = values  # the standard MOOD tag wins over MusicMatch's
+    if not _txxx(tags, "MOOD") and tags.getall("TMOO"):
+        raw["mood"] = _frame_text(tags, "TMOO")
+    ratings = [frame.rating for frame in tags.getall("POPM") if frame.rating]
+    if ratings:
+        raw["rating"] = [str(_stars(ratings[0]))]
     return raw
 
 
 def _frame_text(tags: ID3, frame_id: str) -> list:
     return [str(t) for frame in tags.getall(frame_id) for t in frame.text]
+
+
+def _txxx(tags: ID3, desc: str) -> list:
+    """The values of the user text frames with this description (case-insensitive)."""
+    return [
+        str(t)
+        for frame in tags.getall("TXXX")
+        if frame.desc.casefold() == desc.casefold()
+        for t in frame.text
+    ]
+
+
+def _stars(popm: int) -> int:
+    """A POPM rating (1-255) as 1-5 stars, the way Windows Media Player reads them."""
+    return 1 if popm < 32 else 2 if popm < 96 else 3 if popm < 160 else 4 if popm < 224 else 5
 
 
 def _read_mp4(tags: MP4Tags) -> dict[str, list]:
@@ -148,8 +250,23 @@ def _read_mp4(tags: MP4Tags) -> dict[str, list]:
     if tags.get("cpil"):
         raw["compilation"] = ["1"]
     for name, desc in MUSICMATCH.items():
-        raw[name] = [bytes(v).decode("utf-8", "replace") for v in tags.get(MP4_FREEFORM + desc, [])]
+        raw[name] = _freeform(tags, desc)
+    for name, key in MP4_FREE.items():
+        values = _freeform(tags, key)
+        if values:
+            raw[name] = values
     return raw
+
+
+def _freeform(tags: MP4Tags, name: str) -> list:
+    values = []
+    for atom, items in tags.items():
+        if (
+            atom.startswith(MP4_FREEFORM)
+            and atom[len(MP4_FREEFORM) :].casefold() == name.casefold()
+        ):
+            values += [bytes(v).decode("utf-8", "replace") for v in items]
+    return values
 
 
 def _put(fields: dict[str, str], name: str, values) -> None:
@@ -196,27 +313,46 @@ def _split_pair(fields: dict[str, str], number_key: str, total_key: str) -> None
         fields[total_key] = str(total)
 
 
-def write(path: str | Path, changes: dict[str, str | None]) -> None:
-    """Set the given fields (None removes the field), leaving all other tags as they are."""
+def id3_version(path: str | Path) -> int | None:
+    """The ID3v2 version of a file's tag (3 or 4), or None if it has none."""
+    _, tags = _load(path)
+    if isinstance(tags, ID3) and tags.version >= (2, 3, 0):
+        return 4 if tags.version >= (2, 4, 0) else 3
+    return None
+
+
+def write(
+    path: str | Path, changes: dict[str, str | None], *, id3_version: int | None = None
+) -> None:
+    """Set the given fields (None removes the field), leaving all other tags as they are.
+    ID3 tags are saved as id3_version (3 or 4), by default the version the file has."""
     unknown = set(changes) - set(FIELDS)
     if unknown:
         raise ValueError(f"Unknown fields: {', '.join(sorted(unknown))}")
+    if id3_version not in (None, 3, 4):
+        raise ValueError(f"ID3 version must be 3 or 4, not {id3_version}")
     audio, tags = _load(path)
     if audio is None:
         raise UnsupportedFormat(f"Not a recognized audio file: {path}")
     current = read(path).fields
     merged = {**current, **changes}
     if isinstance(audio, AAC):  # an ID3 tag in front of the stream; see _load
-        tags = tags if tags is not None else ID3()
+        had_tag = tags is not None
+        tags = tags if had_tag else ID3()
         _write_id3(tags, changes, merged)
-        tags.save(path, v2_version=4 if tags.version >= (2, 4, 0) else 3)
+        version = id3_version or (_version(tags) if had_tag else 3)
+        _prepare_id3(tags, version)
+        tags.save(path, v2_version=version)
         return
-    if tags is None:
+    had_tag = tags is not None
+    if not had_tag:
         audio.add_tags()
         tags = audio.tags
     if isinstance(tags, ID3):
         _write_id3(tags, changes, merged)
-        audio.save(v2_version=4 if tags.version >= (2, 4, 0) else 3)
+        version = id3_version or (_version(tags) if had_tag else 3)
+        _prepare_id3(tags, version)
+        audio.save(v2_version=version)
     elif isinstance(tags, MP4Tags):
         _write_mp4(tags, changes, merged)
         audio.save()
@@ -251,12 +387,32 @@ def _write_id3(tags: ID3, changes: dict[str, str | None], merged: dict[str, str 
             tags.delall("TCMP")
             if value is not None:
                 tags.add(TCMP(encoding=3, text=[value]))
-        elif name in MUSICMATCH:
+        elif name == "rating":
+            stars = int(value) if value and value.isdigit() and 1 <= int(value) <= 5 else None
+            frames = tags.getall("POPM")
+            for frame in frames:
+                del tags[frame.HashKey]
+            if stars:
+                email = frames[0].email if frames else POPM_EMAIL
+                count = frames[0].count if frames and hasattr(frames[0], "count") else 0
+                tags.add(POPM(email=email, rating=POPM_STARS[stars], count=count))
+        if name in ID3_TXXX:
+            desc = ID3_TXXX[name]
+            for frame in tags.getall("TXXX"):
+                if frame.desc.casefold() == desc.casefold():
+                    del tags[frame.HashKey]
+            if name == "mood":
+                tags.delall("TMOO")
+            if value is not None:
+                tags.add(TXXX(encoding=3, desc=desc, text=[value]))
+        if name in MUSICMATCH:
             desc = MUSICMATCH[name]
+            had = any(frame.desc == desc for frame in tags.getall("COMM"))
             for frame in tags.getall("COMM"):
                 if frame.desc == desc:
                     del tags[frame.HashKey]
-            if value is not None:
+            # Mood goes to the standard MOOD tag; MusicMatch's copy only if it had one
+            if value is not None and (name != "mood" or had):
                 tags.add(COMM(encoding=3, lang="eng", desc=desc, text=[value]))
     for number_key, total_key, frame_cls in (
         ("tracknumber", "tracktotal", TRCK),
@@ -267,6 +423,23 @@ def _write_id3(tags: ID3, changes: dict[str, str | None], merged: dict[str, str 
             pair = _join_pair(merged.get(number_key), merged.get(total_key))
             if pair:
                 tags.add(frame_cls(encoding=3, text=[pair]))
+
+
+def _version(tags: ID3) -> int:
+    return 4 if tags.version >= (2, 4, 0) else 3
+
+
+def _prepare_id3(tags: ID3, version: int) -> None:
+    """Make the frames fit the ID3 version: mutagen keeps tags as 2.4 in memory, so for
+    2.3 they are converted (TDRC to TYER, TDOR to TORY, ...); the sort frames that
+    iTunes and others also use in 2.3 are kept."""
+    if version == 3:
+        kept = [frame for key in V23_KEEP for frame in tags.getall(key)]
+        tags.update_to_v23()
+        for frame in kept:
+            tags.add(frame)
+    else:
+        tags.update_to_v24()
 
 
 def _write_mp4(
@@ -284,12 +457,12 @@ def _write_mp4(
                 tags.pop("cpil", None)
             else:
                 tags["cpil"] = True
-        elif name in MUSICMATCH:
-            atom = MP4_FREEFORM + MUSICMATCH[name]
-            if value is None:
-                tags.pop(atom, None)
-            else:
-                tags[atom] = [MP4FreeForm(value.encode("utf-8"))]
+        if name in MP4_FREE:
+            _set_freeform(tags, MP4_FREE[name], value)
+        if name in MUSICMATCH:
+            had = bool(_freeform(tags, MUSICMATCH[name]))
+            # Mood goes to the standard MOOD atom; MusicMatch's copy only if it had one
+            _set_freeform(tags, MUSICMATCH[name], value if name != "mood" or had else None)
     for number_key, total_key, atom in (
         ("tracknumber", "tracktotal", "trkn"),
         ("discnumber", "disctotal", "disk"),
@@ -301,6 +474,14 @@ def _write_mp4(
             else:
                 total = merged.get(total_key)
                 tags[atom] = [(int(number), int(total) if total and total.isdigit() else 0)]
+
+
+def _set_freeform(tags: MP4Tags, name: str, value: str | None) -> None:
+    for atom in [a for a in tags if a.startswith(MP4_FREEFORM)]:
+        if atom[len(MP4_FREEFORM) :].casefold() == name.casefold():
+            del tags[atom]
+    if value is not None:
+        tags[MP4_FREEFORM + name] = [MP4FreeForm(value.encode("utf-8"))]
 
 
 def _join_pair(number: str | None, total: str | None) -> str | None:
