@@ -24,6 +24,19 @@ Several chats may work on this repository at the same time. To keep them apart:
 - Never push unless the user asks.
 - Each worktree has its own `.venv`; `uv run` creates it on first use.
 
+## Finishing a feature
+
+When a feature is done and you ask whether to merge it, also give:
+
+- **Next steps**: what would logically come next, with a recommendation.
+- **Same chat or a new one**: continue here when the next step builds closely on what
+  this chat has just learned. Suggest a new chat when the conversation has grown long,
+  or the next step is unrelated; say what the new chat should read first (README.md,
+  the user's plan if they keep one, the relevant modules).
+- **Which model suits the next step**: the most capable model for work that needs
+  design decisions, unfamiliar territory or careful handling of the user's files; a
+  faster, cheaper model for well-specified, small changes such as UI polish or wording.
+
 ## Personal instructions
 
 Contributors can keep their own instructions (their music library, plans, credentials
