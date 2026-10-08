@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Maintain a music collection: catalog, metadata, duplicates, playlists and S3 sync"
 readme = "README.md"
 authors = [
-    { name = "Samuel Rinnetmäki", email = "samuel@iki.fi" }
+    { name = "Samuel Rinnetmäki", email = "info@ctrldash.app" }
 ]
 requires-python = ">=3.13"
 dependencies = [
