@@ -285,7 +285,7 @@ class LibrarySetting(Base):
 
 
 class ArtistSortName(Base):
-    """How an artist is sorted and filed, e.g. "Aarne Tenkanen" as "Tenkanen, Aarne".
+    """How an artist is sorted and filed, e.g. "Alanis Morissette" as "Morissette, Alanis".
     Set by the user, per library; artists without one are filed under their name."""
 
     __tablename__ = "artist_sort_name"

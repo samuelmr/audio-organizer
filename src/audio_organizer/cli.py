@@ -1105,7 +1105,9 @@ def artists_command(
     ctx: typer.Context,
     set_: Annotated[
         list[str] | None,
-        typer.Option("--set", help='Sort name: "Aarne Tenkanen=Tenkanen, Aarne"; empty removes'),
+        typer.Option(
+            "--set", help='Sort name: "Alanis Morissette=Morissette, Alanis"; empty removes'
+        ),
     ] = None,
     accept_suggestions: Annotated[
         bool, typer.Option("--accept-suggestions", help="Use all suggested sort names")
@@ -1116,10 +1118,10 @@ def artists_command(
     library: LibraryOption = None,
 ) -> None:
     """Artists' sort names, used by the layout fields {albumartistsort} and {artistsort}
-    (e.g. "Aarne Tenkanen" filed as "Tenkanen, Aarne").
+    (e.g. "Alanis Morissette" filed as "Morissette, Alanis").
 
-    Suggestions come from your folders: a folder "Tenkanen, Aarne" suggests that sort
-    name for "Aarne Tenkanen".
+    Suggestions come from your folders: a folder "Morissette, Alanis" suggests that sort
+    name for "Alanis Morissette".
     """
     with _session(ctx) as session:
         lib = _library(session, library)
@@ -1160,7 +1162,7 @@ def layout_command(
 
     Fields: {albumartist} (the artist when missing, "Various Artists" on compilations),
     {albumartistsort} and {artistsort} (the sort name set with `aorg artists`, e.g.
-    "Tenkanen, Aarne", else the name), {artist}, {album}, {title}, {genre}, {year},
+    "Morissette, Alanis", else the name), {artist}, {album}, {title}, {genre}, {year},
     {track} (two digits) and {disc} ("2-" on albums with several discs, else empty). The
     default is "{albumartist}/{album}/{disc}{track} {title}". `aorg reorganize` moves
     files into it.

@@ -5,8 +5,8 @@ effective metadata, e.g. the default "{albumartist}/{album}/{disc}{track} {title
 "Texas/The Greatest Hits/11 Halo.mp3". Fields:
 
     albumartist  album artist; the artist when missing; "Various Artists" on compilations
-    albumartistsort, artistsort   the artist's sort name if one is set ("Tenkanen,
-                 Aarne"; see artists.py), otherwise the name
+    albumartistsort, artistsort   the artist's sort name if one is set ("Morissette,
+                 Alanis"; see artists.py), otherwise the name
     artist, album, title, genre, year
     track        two digits, "07"
     disc         "2-" on albums with several discs, otherwise empty

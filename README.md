@@ -220,15 +220,15 @@ together: the artist of most of its tracks, or "Various Artists"; compilations a
 go under "Various Artists". Characters that file systems do not allow become `_`.
 
 `{albumartistsort}` and `{artistsort}` file artists under a sort name you have set,
-such as "Tenkanen, Aarne" for "Aarne Tenkanen", and under their name otherwise:
+such as "Morissette, Alanis" for "Alanis Morissette", and under their name otherwise:
 
     aorg artists                              # sort names, and suggested ones
-    aorg artists --set "Aarne Tenkanen=Tenkanen, Aarne"
+    aorg artists --set "Alanis Morissette=Morissette, Alanis"
     aorg artists --accept-suggestions
     aorg layout --set "{albumartistsort}/{album}/{disc}{track} {title}"
 
-Suggestions come from your folders: a folder named "Tenkanen, Aarne" suggests that sort
-name for the artist "Aarne Tenkanen". Names are never turned around by rule, which would
+Suggestions come from your folders: a folder named "Morissette, Alanis" suggests that sort
+name for the artist "Alanis Morissette". Names are never turned around by rule, which would
 also file bands under their last word. The web UI's Artists page lists the artists, with
 their suggestions to accept one by one or all at once.
 

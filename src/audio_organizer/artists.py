@@ -1,8 +1,8 @@
-"""Artists and their sort names ("Aarne Tenkanen" filed as "Tenkanen, Aarne").
+"""Artists and their sort names ("Alanis Morissette" filed as "Morissette, Alanis").
 
 Sort names are the user's: set one by one, or by accepting suggestions. Suggestions come
-from the library's own folders: a top folder "Tenkanen, Aarne" whose name, turned around,
-is an artist's name ("Aarne Tenkanen") suggests that sort name. Names are not turned
+from the library's own folders: a top folder "Morissette, Alanis" whose name, turned around,
+is an artist's name ("Alanis Morissette") suggests that sort name. Names are not turned
 around by rule, which would also file bands under their last word ("Floyd, Pink").
 """
 
