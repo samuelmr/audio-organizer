@@ -163,6 +163,11 @@ and the entry found is listed:
 its folder and file name (`path`) or your edit (`manual`), and the other candidates when
 they disagree.
 
+**Please support gnudb.** gnudb is not affiliated with audio-organizer, but it is a
+valuable resource, which Rene Mogensen operates as an individual. As the developer of
+audio-organizer I have donated 40 €. If you find audio-organizer valuable, please consider
+[contributing to gnudb.org](https://gnudb.org/donate.php) too.
+
 ### Web UI
 
     aorg web                          # then open http://127.0.0.1:8000/
