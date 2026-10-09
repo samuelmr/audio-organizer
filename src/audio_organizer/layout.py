@@ -35,7 +35,7 @@ from .models import AudioFile, Change, Changeset, EffectiveMetadata, Library, Li
 from .pathparse import normalize_name
 from .tracks import present
 
-DEFAULT_LAYOUT = "{albumartist}/{album}/{disc}{track} {title}"
+DEFAULT_LAYOUT = "{albumartistsort}/{album}/{disc}{track} {title}"
 TEMPLATE_FIELDS = (
     "albumartist", "albumartistsort", "artist", "artistsort", "album", "title", "genre", "year",
     "track", "disc",
