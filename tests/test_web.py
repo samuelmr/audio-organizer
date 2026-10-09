@@ -625,7 +625,7 @@ def test_covers_found_online(web, Session, tmp_path):
     assert "Texas – Greatest Hits, found online" in page and f"/cover-images/{stored.sha1}" in page
     assert web.get(f"/cover-images/{stored.sha1}").content == image.read_bytes()
     page = web.get("/libraries/music/covers", params={"min_pixels": 400}).text
-    assert "Greatest Hits, found online" not in page and "scan --deep --min-pixels 400" in page
+    assert "Greatest Hits, found online" not in page and "coverart --min-pixels 400" in page
 
     response = web.post("/libraries/music/covers", data={"folder": "Texas/Greatest Hits"})
     assert "Archive&#39;s image of Texas – Greatest Hits (300x300)" in response.text
@@ -702,4 +702,33 @@ def test_gnudb_button_and_lookup(web, monkeypatch):
     assert "no matching entry" in post().text
     results = []
     assert "Not an album folder" in post().text
+    assert asked == ["P!nk/Funhouse"] * 3
+
+
+def test_cover_lookup_button(web, monkeypatch):
+    from audio_organizer import coverart
+
+    page = web.get("/libraries/music", params={"folder": "P!nk/Funhouse"}).text
+    assert "Look up cover" in page
+    assert "Look up cover" not in web.get("/libraries/music").text
+
+    results = []
+    asked = []
+
+    def lookup(session, lib, folder):
+        asked.append(folder)
+        return results
+
+    monkeypatch.setattr(coverart, "lookup_folder", lookup)
+
+    def post():
+        return web.post("/libraries/music/coverart", data={"folder": "P!nk/Funhouse"})
+
+    album = type("Album", (), {"album": "Funhouse"})()
+    results.append((album, object()))
+    assert "Found a cover for Funhouse" in post().text
+    results[:] = [(album, None)]
+    assert "No cover found online" in post().text
+    results[:] = []
+    assert "No album here needs a cover" in post().text
     assert asked == ["P!nk/Funhouse"] * 3

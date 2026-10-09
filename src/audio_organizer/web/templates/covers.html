@@ -5,8 +5,8 @@
 <h1>Covers</h1>
 <p>Phones, car stereos and many players only show covers embedded in the files. These
 tracks have no embedded cover, or only a thumbnail smaller than {{ min_pixels }} pixels,
-and their album has a cover: the image in its folder, or one that <code>aorg scan
---deep</code> found online. Embedding copies the image into every such track, so a
+and their album has a cover: the image in its folder, or one that <code>aorg coverart</code> (or <code>aorg scan
+--with-covers</code>) found online. Embedding copies the image into every such track, so a
 large image makes every file bigger. A cover found online can also be saved as the
 folder's <code>cover.jpg</code>, for players that read folder images and for sync, when
 the folder holds just that album. Undoing the changeset removes the embedded covers and
@@ -65,7 +65,7 @@ when the changes are applied.</p>
 {% endif %}
 {% if found.missing %}
 <p class="hint">{{ found.missing | length }} albums here have no usable cover; <code>aorg
-scan --deep --min-pixels {{ min_pixels }}</code> looks them up online.</p>
+coverart --min-pixels {{ min_pixels }}</code> looks them up online.</p>
 {% endif %}
 {% if not found.folders and not found.too_small %}
 <p>No folders to show.</p>

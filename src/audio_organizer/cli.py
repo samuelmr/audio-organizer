@@ -168,20 +168,25 @@ def scan_command(
         bool,
         typer.Option(
             "--deep",
-            help="Also measure loudness (ReplayGain), look up albums in gnudb and missing "
-            "covers online",
+            help="Also measure the loudness of every file (ReplayGain); reads all files in full",
         ),
     ] = False,
     deep_limit: Annotated[
         int | None,
-        typer.Option(help="Measure at most this many files and look up this many albums"),
+        typer.Option(help="Measure at most this many files, and look up this many albums"),
     ] = None,
     with_gnudb: Annotated[
         bool,
         typer.Option(
             "--with-gnudb",
-            help="Also look up albums in gnudb (slow; best once the library is tidy), "
-            "with or without --deep",
+            help="Also look up albums in gnudb (slow; best once the library is tidy)",
+        ),
+    ] = False,
+    with_covers: Annotated[
+        bool,
+        typer.Option(
+            "--with-covers",
+            help="Also look up missing covers online (MusicBrainz, Cover Art Archive)",
         ),
     ] = False,
     min_pixels: Annotated[
@@ -192,16 +197,18 @@ def scan_command(
 
     With --deep, files are also read in full to measure their loudness: ReplayGain 2.0
     track gain and peak, and album gain and peak once all of an album's tracks are
-    measured. Albums whose tracks have no cover, or one smaller than --min-pixels on a
-    side, and no big enough image in their folder, are looked up in MusicBrainz and the
-    Cover Art Archive. The results are kept in the catalog, not written into the files
-    (see `aorg write-tags` and `aorg covers`). It takes long; it continues where an
-    interrupted run stopped, and --deep-limit splits it into parts.
+    measured. With --with-gnudb, complete single-disc album folders are looked up in
+    gnudb (needs your email address in AORG_GNUDB_EMAIL) for the album's title, year,
+    genre and track titles. With --with-covers, albums whose tracks have no cover, or
+    one smaller than --min-pixels on a side, and no big enough image in their folder,
+    are looked up in MusicBrainz and the Cover Art Archive. The options work with or
+    without each other, in that order. The results are kept in the catalog, not written
+    into the files (see `aorg write-tags` and `aorg covers`).
 
-    With --with-gnudb, with or without --deep, complete single-disc album folders are
-    looked up in gnudb (needs your email address in AORG_GNUDB_EMAIL) for the album's
-    title, year, genre and track titles. That adds seconds per album, so tidy the library
-    first, or use `aorg gnudb` on its own. --deep-limit also caps these lookups.
+    The lookups ask a service about one album at a time, which takes seconds per album,
+    so tidy the library first, or use `aorg gnudb` and `aorg coverart` on their own. It
+    takes long; it continues where an interrupted run stopped, and --deep-limit splits
+    it into parts.
     """
     started = time.monotonic()
     last_report = 0.0
@@ -237,8 +244,8 @@ def scan_command(
             _gnudb_lookups(ctx, library, deep_limit)
         else:
             typer.echo("Skipping gnudb: set AORG_GNUDB_EMAIL to your email address")
-    if deep:
-        _deep_covers(ctx, library, deep_limit, min_pixels)
+    if with_covers:
+        _cover_lookups(ctx, library, deep_limit, min_pixels)
 
 
 def _deep_scan(ctx: typer.Context, library: str | None, limit: int | None) -> None:
@@ -303,9 +310,9 @@ def gnudb_command(
         ),
     ] = None,
 ) -> None:
-    """Look up album folders in gnudb, without a deep scan.
+    """Look up album folders in gnudb, without a scan.
 
-    The same lookup as in `aorg scan --deep`, on its own and in parts: --limit 100 asks
+    The same lookup as in `aorg scan --with-gnudb`, on its own and in parts: --limit 100 asks
     about 100 albums, and the next run continues with the rest. gnudb needs your email
     address as a contact: set AORG_GNUDB_EMAIL. Requests are spread out (every few
     seconds), so 100 albums take 10 to 25 minutes.
@@ -344,7 +351,7 @@ def gnudb_command(
     typer.echo("Values are kept in the catalog; write them with `aorg write-tags`.")
 
 
-def _deep_covers(ctx: typer.Context, library: str | None, limit: int | None, min_pixels: int):
+def _cover_lookups(ctx: typer.Context, library: str | None, limit: int | None, min_pixels: int):
     started = time.monotonic()
     last_report = 0.0
 
@@ -374,6 +381,55 @@ def _deep_covers(ctx: typer.Context, library: str | None, limit: int | None, min
         typer.echo(f"Stopped: {stats.stopped}")
     if stats.found:
         typer.echo("Embed them with `aorg covers`.")
+
+
+@app.command("coverart")
+def coverart_command(
+    ctx: typer.Context,
+    library: Annotated[str | None, typer.Argument()] = None,
+    limit: Annotated[int | None, typer.Option(help="Look up at most this many albums")] = None,
+    path: Annotated[
+        str | None,
+        typer.Option(
+            help="Look up just this album folder now (relative to the library, or inside it)"
+        ),
+    ] = None,
+    min_pixels: Annotated[
+        int, typer.Option(help="Look up covers for tracks whose cover is smaller than this")
+    ] = cv.MIN_PIXELS,
+) -> None:
+    """Look up missing album covers online, without a scan.
+
+    The same lookup as in `aorg scan --with-covers`, on its own and in parts: --limit 100
+    asks about 100 albums, and the next run continues with the rest. Covers are fetched
+    from MusicBrainz and the Cover Art Archive (at most a request a second). With --path,
+    one folder is looked up at once, even if it was looked up before. Embed what was
+    found with `aorg covers`.
+    """
+    if path is None:
+        _cover_lookups(ctx, library, limit, min_pixels)
+        return
+    with _session(ctx) as session:
+        lib = _library(session, library)
+        try:
+            results = coverart.lookup_folder(session, lib, path, min_pixels=min_pixels)
+        except coverart.CoverArtError as e:
+            typer.echo(f"Cover Art Archive: {e}", err=True)
+            raise typer.Exit(1) from None
+    if not results:
+        typer.echo(
+            f"{path}: no album there needs a cover (it has one, embedded, as an image in the "
+            f"folder or found online, of at least {min_pixels} pixels), or it lacks an artist "
+            "and album",
+            err=True,
+        )
+        raise typer.Exit(1)
+    for album, found in results:
+        if found is None:
+            typer.echo(f"{album.artist} – {album.album}: no cover found")
+        else:
+            typer.echo(f"{album.artist} – {album.album}: found a cover ({found.release_group})")
+    typer.echo("Embed it with `aorg covers`.")
 
 
 @app.command("stats")
@@ -1478,11 +1534,11 @@ def covers_command(
     """Embed covers into tracks that have none, or only a thumbnail.
 
     The cover is the folder's image (cover/folder/front.jpg or .png, or the folder's only
-    image), or when the folder has no image of at least --min-pixels, one that `aorg scan
-    --deep` found online. It is copied into every such track, so large images make every
-    file bigger. A cover found online is also saved as the folder's cover.jpg when the
-    folder holds just that album. Run `aorg scan --reread` once first if the catalog is
-    older than cover detection.
+    image), or when the folder has no image of at least --min-pixels, one that `aorg
+    coverart` (or `aorg scan --with-covers`) found online. It is copied into every such
+    track, so large images make every file bigger. A cover found online is also saved as
+    the folder's cover.jpg when the folder holds just that album. Run `aorg scan --reread`
+    once first if the catalog is older than cover detection.
     """
     with _session(ctx) as session:
         lib = _library(session, library)

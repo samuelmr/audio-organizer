@@ -364,7 +364,7 @@ class CoverImage(Base):
 
 
 class CoverLookup(Base):
-    """The outcome of looking up an album's cover online, so that the deep scan asks only
+    """The outcome of looking up an album's cover online, so that a scan asks only
     once. Albums are keyed by artist and title (pathparse.normalize_name), not by folder,
     so copies of an album share the lookup and it survives reorganizing."""
 
@@ -383,7 +383,7 @@ class CoverLookup(Base):
 
 
 class GnudbLookup(Base):
-    """The outcome of looking up an album folder in gnudb, so that the deep scan asks only
+    """The outcome of looking up an album folder in gnudb, so that a scan asks only
     once. Keyed by folder and album title; a folder whose track count changed is looked
     up again."""
 

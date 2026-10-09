@@ -8,6 +8,7 @@ playlists) that look at each track once.
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import PurePosixPath
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -48,6 +49,18 @@ class Track:
         if name == "bitrate":
             return str(self.bitrate // 1000) if self.bitrate else None
         return None
+
+
+def relative_folder(library, path: str) -> str:
+    """A folder as a path relative to the library root, POSIX style: the given path may
+    also be absolute, inside the root. ValueError when it is outside."""
+    given = PurePosixPath(path)
+    if given.is_absolute():
+        try:
+            given = given.relative_to(library.root)
+        except ValueError:
+            raise ValueError(f"{path} is not inside the library {library.root}") from None
+    return str(given).strip("/")
 
 
 def present(library_id: int):

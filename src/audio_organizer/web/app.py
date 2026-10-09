@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from .. import album_merge as am
 from .. import artists as art
 from .. import changes as ch
-from .. import covers, gnudb, loudness, tags
+from .. import coverart, covers, gnudb, loudness, tags
 from .. import duplicates as du
 from .. import layout as lo
 from .. import neighbours as nb
@@ -191,14 +191,14 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
                   "artist": artist, "folder": folder}  # fmt: skip
         # The folder gnudb can be asked about: the one shown, or the one holding the album
         folders = {str(PurePosixPath(file.path).parent) for file, _ in rows}
-        gnudb_folder = (
+        album_folder = (
             folder.strip("/") if folder is not None
             else folders.pop() if album is not None and total == len(rows) and len(folders) == 1
             else None
         )  # fmt: skip
         return render(
             request, "library.html", library=lib, rows=rows, total=total, sort=sort,
-            gnudb_folder=gnudb_folder,
+            album_folder=album_folder,
             page=page, pages=pages, sorts=list(SORTS), filters=list(FILTERS), params=params,
             **params,
         )  # fmt: skip
@@ -301,6 +301,31 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             return _redirect(back, "gnudb has no matching entry for this album")
         return _redirect(
             back, f"Found in gnudb: {', '.join(a.album for a in found)}; not yet in the files"
+        )
+
+    @app.post("/libraries/{name}/coverart")
+    async def coverart_lookup(request: Request, name: str, session: Session = SessionDep):
+        """Look up the missing cover of one album folder online. It waits for the answer."""
+        lib = _library(session, name)
+        form = await request.form()
+        folder = str(form.get("folder", "")).strip("/")
+        back = _url(f"/libraries/{lib.name}", folder=folder or None)
+        try:
+            results = coverart.lookup_folder(session, lib, folder)
+        except coverart.CoverArtError as e:
+            return _redirect(back, f"Cover Art Archive: {e}")
+        if not results:
+            return _redirect(
+                back,
+                "No album here needs a cover: it has one (embedded, in the folder or found "
+                "online), or its tracks lack artist and album",
+            )
+        found = [album for album, cover in results if cover]
+        if not found:
+            return _redirect(back, "No cover found online for this album")
+        return _redirect(
+            back,
+            f"Found a cover for {', '.join(a.album for a in found)}; embed it on the Covers page",
         )
 
     @app.post("/tracks/{file_id}/write")

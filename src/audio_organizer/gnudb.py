@@ -32,7 +32,7 @@ from .coverart import comparable_title
 from .covers import album_key
 from .models import AudioFile, EffectiveMetadata, GnudbLookup, Library, utcnow
 from .pathparse import normalize_name
-from .tracks import present
+from .tracks import present, relative_folder
 
 HOST, PORT = "gnudb.gnudb.org", 8880
 FRAMES = 75  # CD frames per second
@@ -426,26 +426,17 @@ class LookupStats:
     stopped: str | None = None  # why the lookups stopped early
 
 
-def relative_folder(library: Library, path: str) -> str:
-    """The folder as a path relative to the library root: the given path may also be
-    absolute, inside the root."""
-    root = PurePosixPath(library.root)
-    given = PurePosixPath(path)
-    if given.is_absolute():
-        try:
-            given = given.relative_to(root)
-        except ValueError:
-            raise GnudbError(f"{path} is not inside the library {library.root}") from None
-    return str(given).strip("/")
-
-
 def lookup_folder(
     session: Session, library: Library, folder: str, *, client: Client | None = None
 ) -> list[tuple[Folder, Entry | None]]:
     """Look up one album folder now, even if it was looked up before. Returns each
     album in it with the entry found, or None; an empty list when the folder holds no
     album that can be looked up (see folders)."""
-    found = folders(session, library, relative_folder(library, folder))
+    try:
+        folder = relative_folder(library, folder)
+    except ValueError as e:
+        raise GnudbError(str(e)) from None
+    found = folders(session, library, folder)
     if not found:
         return []
     owned = client is None

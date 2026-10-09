@@ -5,7 +5,7 @@ and serves each cover in several sizes, so only as many pixels as wanted are dow
 (gnudb has no images; Wikipedia's covers are hard to match to albums and to license.)
 
 Found covers are kept in the catalog (CoverImage), not in the library, and every lookup
-is remembered (CoverLookup), so a deep scan asks once per album. `aorg covers` then
+is remembered (CoverLookup), so a lookup asks once per album. `aorg covers` then
 proposes embedding them. MusicBrainz asks clients to identify themselves with a contact
 address and to send at most one request a second.
 """
@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 from . import __version__, covers, images
 from .models import CoverLookup, Library, utcnow
 from .pathparse import normalize_name
+from .tracks import relative_folder
 
 SEARCH_URL = "https://musicbrainz.org/ws/2/release-group/"
 COVER_URL = "https://coverartarchive.org/release-group/{mbid}/front{size}"
@@ -202,6 +203,40 @@ def lookup_library(
             stats.stopped = "three lookups in a row failed; is the network down?"
             break
     return stats
+
+
+def lookup_folder(
+    session: Session,
+    library: Library,
+    folder: str,
+    *,
+    min_pixels: int = covers.MIN_PIXELS,
+    client: Client | None = None,
+) -> list[tuple[covers.Album, Found | None]]:
+    """Look up the covers of the albums in one folder now, even if they were looked up
+    before. Returns each album that needs a cover (none usable, embedded or in the
+    folder) with the cover found, or None; an empty list when none does."""
+    try:
+        folder = relative_folder(library, folder)
+    except ValueError as e:
+        raise CoverArtError(str(e)) from None
+    client = client or Client()
+    survey = covers.survey(
+        session,
+        library,
+        path_prefix=folder + "/" if folder else None,
+        min_pixels=min_pixels,
+        save_images=False,
+    )
+    results = []
+    for album in survey.missing:
+        if album.folder != folder or not album.key:
+            continue
+        found = find(client, album.artist, album.album, min_pixels)
+        _record(session, album, found, min_pixels)
+        session.commit()
+        results.append((album, found))
+    return results
 
 
 def _record(session: Session, album: covers.Album, found: Found | None, min_pixels: int) -> None:

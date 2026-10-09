@@ -58,61 +58,69 @@ The first scan reads every file; later scans only read new and changed ones, so 
 After updating `aorg`, `aorg scan --reread` reads every file again once, so that tags a
 newer version reads (such as ratings, sort names or embedded covers) are in the catalog.
 
-A *deep* scan also measures the loudness of every file not measured yet, for ReplayGain,
-and looks up missing album covers online. `--with-gnudb`, with or without `--deep`, also
-looks up album folders in gnudb:
+A scan can also do slower work, each part asked for with its own option:
 
-    aorg scan --deep                  # continues where an interrupted run stopped
-    aorg scan --deep --deep-limit 500 # or in parts
-    aorg scan --deep --with-gnudb     # also look up albums in gnudb (much slower)
-    aorg scan --with-gnudb            # a normal scan and the gnudb lookups, no loudness
-    aorg scan --deep --min-pixels 500 # covers smaller than 500 px count as missing
+    aorg scan --deep                  # measure loudness (ReplayGain) of every file
+    aorg scan --with-covers           # look up missing album covers online
+    aorg scan --with-gnudb            # look up albums in gnudb
+    aorg scan --deep --with-covers --with-gnudb   # all of them
+    aorg scan --deep --deep-limit 500 # in parts: at most 500 files, and 500 albums per lookup
+    aorg scan --with-covers --min-pixels 500      # covers smaller than 500 px count as missing
 
-The steps of `--deep` and `--with-gnudb` run one after another, each finishing before the next starts, and all of them
-continue where an interrupted run stopped:
+The options are independent. When several are given, the steps run one after another,
+each finishing before the next starts, and every one continues where an interrupted run
+stopped:
 
 1. the normal scan of new and changed files;
-2. loudness of the files not measured yet (about a second per file from a network share,
-   so a library of 100,000 tracks takes about a day);
-3. only with `--with-gnudb` (which also works without `--deep`): gnudb lookups of the album folders not looked up yet (6 to 15
-   seconds per album, see below), skipped without `AORG_GNUDB_EMAIL`;
-4. cover lookups in MusicBrainz for the albums not looked up yet (at least a second each).
+2. `--deep`: loudness of the files not measured yet (about a second per file from a
+   network share, so a library of 100,000 tracks takes about a day);
+3. `--with-gnudb`: gnudb lookups of the album folders not looked up yet (6 to 15 seconds
+   per album, see below), skipped without `AORG_GNUDB_EMAIL`;
+4. `--with-covers`: cover lookups in MusicBrainz for the albums not looked up yet (a few
+   seconds per album).
 
-`--deep-limit N` caps steps 2–4 each (step 3 even without `--deep`): N files measured, N albums asked of gnudb, N albums
-of MusicBrainz. **With `--with-gnudb` a deep scan takes much longer**: thousands of albums
-add hours to the loudness step's day, because `aorg` asks gnudb for one album at a time.
-gnudb is off by default because it works best on a tidy library: albums are found by
-their folder, artist, title and track count, so duplicates, loose tracks and misnamed
-folders give misses and wasted requests. Remove duplicates, put tracks into their album
-folders and rename them first, then look the albums up.
+`--deep-limit N` caps each step: N files measured, N albums asked of gnudb, N albums of
+MusicBrainz. **With `--with-gnudb` or `--with-covers` a scan takes much longer**: they
+ask a web service about one album at a time, and politely, so thousands of albums take
+hours each, on top of the loudness step's day. They are off by default because they work
+best on a tidy library: albums are found by their folder, artist, title and track count,
+so duplicates, loose tracks and misnamed folders give misses and wasted requests. Remove
+duplicates, put tracks into their album folders and rename them first, then look the
+albums up, in parts with `aorg gnudb` and `aorg coverart` (below).
 
-It reads every file in full, so the first one takes long (about 1 file per second from
-a network share). It uses ReplayGain 2.0 (EBU R128 loudness, -18 LUFS): track gain and
-peak for each file, and album gain and peak once all of an album's tracks (the files of
-one folder with the same album tag) are measured. The album gain is computed from the
-tracks' loudness rather than by measuring the whole album again, which is usually within
-a few tenths of a dB. The results stay in the catalog until you write them into the
-files (see [Writing tags](#writing-tags)); a file whose audio changes is measured again.
+**Loudness.** `--deep` reads every file in full, so the first one takes long. It uses
+ReplayGain 2.0 (EBU R128 loudness, -18 LUFS): track gain and peak for each file, and
+album gain and peak once all of an album's tracks (the files of one folder with the same
+album tag) are measured. The album gain is computed from the tracks' loudness rather than
+by measuring the whole album again, which is usually within a few tenths of a dB. The
+results stay in the catalog until you write them into the files (see
+[Writing tags](#writing-tags)); a file whose audio changes is measured again.
 
-Albums whose tracks have no embedded cover, or one smaller than `--min-pixels` (200 by
-default) on a side, and whose folder has no image at least that big, are looked up in
-[MusicBrainz](https://musicbrainz.org) and their front cover fetched from the
+**Covers.** Albums whose tracks have no embedded cover, or one smaller than `--min-pixels`
+(200 by default) on a side, and whose folder has no image at least that big, are looked up
+in [MusicBrainz](https://musicbrainz.org) and their front cover fetched from the
 [Cover Art Archive](https://coverartarchive.org), in the smallest size that is big
 enough (250, 500 or 1200 pixels, else the original). An album is found by its album
 artist (or the tracks' common artist, else "Various Artists") and title. The covers are
 kept in the catalog until you embed them and save them in their folders (see
 [Covers](#covers)); each album is looked up once, and again only for a larger
 `--min-pixels`. MusicBrainz asks for a contact address in every request: `aorg` sends
-the one in `AORG_CONTACT`, else the package author's.
+the one in `AORG_CONTACT`, else the package author's. To look up covers apart from a
+scan, in parts or for one album, use `aorg coverart`, or the *Look up cover* button above
+the tracks of an album or folder in the web UI (it waits for the answer, a few seconds).
+A single album is looked up again even if nothing was found before:
 
-Complete single-disc album folders (all tracks present, numbered 1..n or not at all, with
-a known album artist and title) are looked up in [gnudb](https://gnudb.org), the free
-CDDB database, by a table of contents made from the tracks' durations. A gnudb entry is
-accepted only when its artist, album title and track count agree with the folder's and
-most of its track titles with the tracks'. Its album, year, genre and track titles are
-kept in the catalog as `gnudb` values, which rank above tags in the effective values (and
-show as disputed where they differ), until you write them into the files. Each folder is
-looked up once, and again when its track count changes.
+    aorg coverart --limit 100         # ask about 100 albums; the next run continues
+    aorg coverart --path "Texas/Greatest Hits"
+
+**gnudb.** Complete single-disc album folders (all tracks present, numbered 1..n or not
+at all, with a known album artist and title) are looked up in [gnudb](https://gnudb.org),
+the free CDDB database, by a table of contents made from the tracks' durations. A gnudb
+entry is accepted only when its artist, album title and track count agree with the
+folder's and most of its track titles with the tracks'. Its album, year, genre and track
+titles are kept in the catalog as `gnudb` values, which rank above tags in the effective
+values (and show as disputed where they differ), until you write them into the files.
+Each folder is looked up once, and again when its track count changes.
 
 gnudb asks every client for a contact address, and refuses those that give none. Set
 `AORG_GNUDB_EMAIL` to your own email address (`AORG_CONTACT` is used if it is not set);
@@ -120,11 +128,11 @@ without one the gnudb lookups are skipped. To be kind to gnudb, which may block 
 address that sends too many requests, `aorg` waits three seconds between requests, and
 stops at the first refusal. An album takes one request to find candidates and up to four
 more to read them, so 6 to 15 seconds: about 10 to 25 minutes for 100 albums, and a few
-hours for thousands. To spread that over several days, or to run it apart from the long
-loudness step, use `aorg gnudb`, and to look up one album at once, give its folder (or use
-the *Look up in gnudb* button above the tracks of an album or folder in the web UI; it
-waits for the answer, a few seconds). The one album is looked up again even if it was
-looked up before, and the entry found is listed:
+hours for thousands. To spread that over several days, or to run it apart from a scan,
+use `aorg gnudb`, and to look up one album at once, give its folder (or use the *Look up
+in gnudb* button above the tracks of an album or folder in the web UI; it waits for the
+answer, a few seconds). The one album is looked up again even if it was looked up before,
+and the entry found is listed:
 
     aorg gnudb --limit 100            # ask about 100 albums; the next run continues
     aorg gnudb --path "Texas/Greatest Hits"
@@ -223,7 +231,7 @@ Phones, car stereos and many players only show covers embedded in the files:
 
 The cover is the folder's image, `cover`, `folder` or `front` (`.jpg`, `.jpeg` or
 `.png`), or its only image; when the folder has none at least `--min-pixels` (200 by
-default) on a side, it is the cover a deep scan found online. Smaller images, such as
+default) on a side, it is the cover found online (`aorg coverart`, or `aorg scan --with-covers`). Smaller images, such as
 Windows Media Player's `AlbumArtSmall.jpg`, are thumbnails: listed but not embedded,
 and an embedded thumbnail is replaced (undo puts it back). The image is copied into
 every track, so mind large images. A file whose cover is big enough is never given
@@ -238,7 +246,7 @@ replaced (undo puts it back); other images are left alone, as `cover.jpg` comes 
 With `--no-save-images` covers are only embedded.
 
 Catalogs made before `aorg` read the size of embedded covers know only that a file has
-one; the next deep scan reads their sizes (only the tags, not the whole files).
+one; the next cover lookup reads their sizes (only the tags, not the whole files).
 
 ### Duplicates
 
@@ -542,10 +550,10 @@ Design principles:
 | `leftovers.py` | Litter in folders without music, and trashing it |
 | `layout.py` | The folder layout template, and moving files into it |
 | `artists.py` | Artists' sort names and suggestions for them |
-| `loudness.py` | ReplayGain 2.0: measuring tracks with ffmpeg, album gains, deep scan |
+| `loudness.py` | ReplayGain 2.0: measuring tracks with ffmpeg, album gains (`scan --deep`) |
 | `covers.py` | Embedded cover images: reading, embedding, replacing thumbnails; which tracks get which cover |
-| `gnudb.py` | Looking up album folders in gnudb (cddbp, pseudo-TOC from durations) in the deep scan |
-| `coverart.py` | Looking up album covers online (MusicBrainz, Cover Art Archive) in the deep scan |
+| `gnudb.py` | Looking up album folders in gnudb (cddbp, pseudo-TOC from durations), `aorg gnudb`, `scan --with-gnudb` |
+| `coverart.py` | Looking up album covers online (MusicBrainz, Cover Art Archive), `aorg coverart`, `scan --with-covers` |
 | `images.py` | Size and type of JPEG and PNG images from their headers |
 | `writing.py` | Writing values not yet in the files, in batches |
 | `ratings.py` | Star ratings from MusicMatch preferences |

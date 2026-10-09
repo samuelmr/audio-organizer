@@ -207,8 +207,42 @@ def test_cli_min_pixels(library, monkeypatch):
     monkeypatch.setattr(coverart, "Client", lambda: FakeClient({"Funhouse": jpeg}))
     monkeypatch.setattr("audio_organizer.loudness.measure_library", _no_measuring)
     result = CliRunner().invoke(app, ["--db", db, "scan", "--deep", "--min-pixels", "300"])
-    assert result.exit_code == 0, result.output
+    assert "Covers" not in result.output  # a deep scan alone does not ask online
+    result = CliRunner().invoke(app, ["--db", db, "scan", "--with-covers", "--min-pixels", "300"])
+    assert result.exit_code == 0, result.output  # and --with-covers needs no --deep
     assert "Covers: 1 found, 1 not found, 0 errors, of 2 albums" in result.output
+    assert "Measuring" not in result.output
+
+
+def test_lookup_one_folder_again(library):
+    session, lib, root, tmp_path = library
+    jpeg = _image(tmp_path / "found.jpg", "500x500").read_bytes()
+    coverart.lookup_library(session, lib, client=FakeClient({}))  # nothing found for either
+    client = FakeClient({"Funhouse": jpeg})
+
+    [(album, found)] = coverart.lookup_folder(
+        session, lib, str(root) + "/P!nk/Funhouse/", client=client
+    )  # absolute, and looked up before
+    assert album.album == "Funhouse" and found.release_group == "mbid-Funhouse"
+    assert client.searches == [("P!nk", "Funhouse")]
+    assert coverart.lookup_folder(session, lib, "P!nk/Funhouse", client=client) == []  # has one
+    assert coverart.lookup_folder(session, lib, "Texas", client=client) == []  # no album there
+    with pytest.raises(coverart.CoverArtError, match="not inside"):
+        coverart.lookup_folder(session, lib, "/elsewhere/Texas", client=client)
+
+
+def test_cli_coverart(library, monkeypatch):
+    session, lib, root, tmp_path = library
+    db = str(session.get_bind().url)
+    jpeg = _image(tmp_path / "found.jpg", "500x500").read_bytes()
+    monkeypatch.setattr(coverart, "Client", lambda: FakeClient({"Funhouse": jpeg}))
+    result = CliRunner().invoke(app, ["--db", db, "coverart", "--path", "P!nk/Funhouse"])
+    assert result.exit_code == 0, result.output
+    assert "P!nk – Funhouse: found a cover (mbid-Funhouse)" in result.output
+    result = CliRunner().invoke(app, ["--db", db, "coverart", "--path", "Texas"])
+    assert result.exit_code == 1 and "no album there needs a cover" in result.output
+    result = CliRunner().invoke(app, ["--db", db, "coverart", "--limit", "1"])
+    assert "Covers: 0 found, 1 not found" in result.output  # the other album, Greatest Hits
 
 
 def _no_measuring(session, lib, **kwargs):

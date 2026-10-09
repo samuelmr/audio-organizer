@@ -16,11 +16,16 @@
  <h1>{{ library.name }}</h1>
 {% endif %}
 
-{% if gnudb_folder is not none and total %}
+{% if album_folder is not none and total %}
 <form method="post" action="{{ base }}/gnudb">
- <input type="hidden" name="folder" value="{{ gnudb_folder }}">
+ <input type="hidden" name="folder" value="{{ album_folder }}">
  <p><button>Look up in gnudb</button>
  <span class="hint">Asks gnudb for this album's title, year, genre and track titles (takes a few seconds). The values stay in the catalog until you write them to the files.</span></p>
+</form>
+<form method="post" action="{{ base }}/coverart">
+ <input type="hidden" name="folder" value="{{ album_folder }}">
+ <p><button>Look up cover</button>
+ <span class="hint">Looks for a front cover online if this album has none (takes a few seconds). Embed what is found on the <a href="{{ base }}/covers">Covers</a> page.</span></p>
 </form>
 {% endif %}
 
