@@ -5,6 +5,28 @@ tracks and playlists to S3-compatible object storage. Made to be used whenever y
 hundreds of thousands of tracks, with you reviewing every change before it touches a
 file.
 
+## Contents
+
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Usage](#usage)
+  - [Scanning](#scanning)
+  - [Web UI](#web-ui)
+  - [Editing metadata](#editing-metadata)
+  - [Writing tags](#writing-tags)
+  - [Ratings from MusicMatch preferences](#ratings-from-musicmatch-preferences)
+  - [Covers](#covers)
+  - [Duplicates](#duplicates)
+  - [Recordings in several encodings](#recordings-in-several-encodings)
+  - [Trash](#trash)
+  - [Album folders](#album-folders)
+  - [Loose tracks](#loose-tracks)
+  - [Leftover files](#leftover-files)
+  - [Folder layout](#folder-layout)
+  - [Playlists](#playlists)
+  - [Syncing to object storage](#syncing-to-object-storage)
+- [Contributing](#contributing)
+
 ## Installation
 
 Requires [uv](https://docs.astral.sh/uv/) (it installs Python 3.13 if needed). From a
