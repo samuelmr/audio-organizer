@@ -638,6 +638,37 @@ def changes_apply(
         _report(ch.apply(session, _changeset(session, changeset_id), dry_run=dry_run))
 
 
+@changes_app.command("retry")
+def changes_retry(
+    ctx: typer.Context,
+    changeset_id: int,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Only show what would be done")
+    ] = False,
+) -> None:
+    """Try the failed changes of a changeset again (other approved changes are applied too)."""
+    with _session(ctx) as session:
+        changeset = _changeset(session, changeset_id)
+        if dry_run:
+            failed = [c for c in changeset.changes if c.status == "failed"]
+            outcomes = [ch.Outcome(c, True, "would retry " + ch.describe(c)) for c in failed]
+        else:
+            ch.retry_failed(changeset)
+            outcomes = ch.apply(session, changeset)
+        _report(outcomes)
+
+
+@changes_app.command("delete")
+def changes_delete(ctx: typer.Context, changeset_id: int) -> None:
+    """Delete a changeset that has no applied changes (undo those first)."""
+    with _session(ctx) as session:
+        try:
+            ch.delete_changeset(session, _changeset(session, changeset_id))
+        except ch.ChangeError as e:
+            raise typer.BadParameter(str(e)) from e
+        typer.echo(f"Deleted changeset {changeset_id}")
+
+
 @changes_app.command("undo")
 def changes_undo(
     ctx: typer.Context,

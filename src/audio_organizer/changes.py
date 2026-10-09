@@ -265,6 +265,27 @@ def set_status(changes: list[Change], status: str) -> int:
     return count
 
 
+def retry_failed(changeset: Changeset) -> int:
+    """Return failed changes to approved so that applying the changeset tries them again.
+    The cause (a file edited elsewhere, a full disk) may be gone by now."""
+    count = 0
+    for change in changeset.changes:
+        if change.status == "failed":
+            change.status, change.error = "approved", None
+            count += 1
+    return count
+
+
+def delete_changeset(session: Session, changeset: Changeset) -> None:
+    """Forget a changeset. Applied changes keep what undo needs in the changeset, so those
+    must be undone first."""
+    applied = sum(1 for c in changeset.changes if c.status == "applied")
+    if applied:
+        raise ChangeError(f"{applied} changes are still applied; undo them first")
+    session.delete(changeset)
+    session.commit()
+
+
 def describe(change: Change) -> str:
     if change.kind == "move":
         return f"move {move_source(change)} -> {change.payload['to']}"

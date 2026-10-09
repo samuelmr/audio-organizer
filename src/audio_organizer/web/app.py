@@ -968,6 +968,25 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             outcomes=outcomes, outcome_title="Dry run" if dry_run else "Applied",
         )  # fmt: skip
 
+    @app.post("/changes/{changeset_id}/retry", response_class=HTMLResponse)
+    def changeset_retry(request: Request, changeset_id: int, session: Session = SessionDep):
+        changeset = _changeset(session, changeset_id)
+        ch.retry_failed(changeset)
+        outcomes = ch.apply(session, changeset)
+        return render(
+            request, "changeset.html", changeset=changeset, describe=ch.describe,
+            outcomes=outcomes, outcome_title="Retried",
+        )  # fmt: skip
+
+    @app.post("/changes/{changeset_id}/delete")
+    def changeset_delete(changeset_id: int, session: Session = SessionDep):
+        changeset = _changeset(session, changeset_id)
+        try:
+            ch.delete_changeset(session, changeset)
+        except ch.ChangeError as e:
+            return _redirect(f"/changes/{changeset_id}", str(e))
+        return _redirect("/changes", f"Changeset {changeset_id} deleted")
+
     @app.post("/changes/{changeset_id}/undo", response_class=HTMLResponse)
     def changeset_undo(request: Request, changeset_id: int, session: Session = SessionDep):
         changeset = _changeset(session, changeset_id)

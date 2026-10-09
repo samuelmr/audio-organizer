@@ -202,6 +202,8 @@ your files until you approve and apply it:
     aorg changes apply 1 --dry-run
     aorg changes apply 1
     aorg changes undo 1               # restores the tags and reverts your edit
+    aorg changes retry 1              # try the failed changes again
+    aorg changes delete 1             # forget a changeset (undo applied changes first)
 
 `aorg` never writes to a file that has changed since it was last scanned; rescan first.
 The tags each file had when it was first scanned are kept in the catalog.

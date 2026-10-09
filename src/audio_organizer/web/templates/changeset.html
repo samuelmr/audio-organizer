@@ -92,8 +92,17 @@
  <form method="post" action="/changes/{{ changeset.id }}/apply" class="inline">
   <button class="primary">Apply approved changes</button>
  </form>
+ {% if changeset.changes | selectattr("status", "equalto", "failed") | list %}
+ <form method="post" action="/changes/{{ changeset.id }}/retry" class="inline">
+  <button class="primary">Retry failed changes</button>
+ </form>
+ {% endif %}
  <form method="post" action="/changes/{{ changeset.id }}/undo" class="inline">
   <button>Undo applied changes</button>
+ </form>
+ <form method="post" action="/changes/{{ changeset.id }}/delete" class="inline"
+  onsubmit="return confirm('Delete this changeset?')">
+  <button>Delete changeset</button>
  </form>
 </div>
 {% endblock %}

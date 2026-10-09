@@ -5,7 +5,7 @@ from sqlalchemy import select
 
 from audio_organizer import changes as ch
 from audio_organizer import tags
-from audio_organizer.models import AudioFile, Library
+from audio_organizer.models import AudioFile, Changeset, Library
 from audio_organizer.provenance import resolve, set_value
 from audio_organizer.scanner import scan
 
@@ -97,3 +97,35 @@ def test_move_refuses_to_overwrite(catalog, copy_audio):
     ch.set_status([change], "approved")
     [outcome] = ch.apply(session, changeset)
     assert not outcome.ok and "already exists" in outcome.message
+
+
+def test_retry_failed_change_after_cause_is_gone(catalog, copy_audio):
+    session, root, file = catalog
+    blocker = root / "Texas/other.mp3"
+    copy_audio("mp3b", blocker)
+    changeset = ch.new_changeset(session, "reorganize", "manual")
+    change = ch.propose_move(changeset, file, "Texas/other.mp3")
+    ch.set_status([change], "approved")
+    [outcome] = ch.apply(session, changeset)
+    assert not outcome.ok and change.status == "failed"
+
+    blocker.unlink()
+    assert ch.retry_failed(changeset) == 1
+    assert (change.status, change.error) == ("approved", None)
+    [outcome] = ch.apply(session, changeset)
+    assert outcome.ok, outcome.message
+    assert (root / "Texas/other.mp3").exists()
+
+
+def test_delete_changeset_only_without_applied_changes(catalog):
+    session, root, file = catalog
+    changeset = ch.new_changeset(session, "reorganize", "manual")
+    change = ch.propose_move(changeset, file, "Texas/Halo.mp3")
+    ch.set_status([change], "approved")
+    ch.apply(session, changeset)
+    with pytest.raises(ch.ChangeError, match="undo"):
+        ch.delete_changeset(session, changeset)
+
+    ch.undo(session, changeset)
+    ch.delete_changeset(session, changeset)
+    assert session.scalars(select(Changeset)).all() == []
