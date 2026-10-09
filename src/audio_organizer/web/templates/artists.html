@@ -6,7 +6,8 @@
 <p>A sort name files an artist under another form of the name, e.g. "Alanis Morissette" as
 "Morissette, Alanis". It is used by the <a href="{{ base }}/layout">layout</a> fields
 <code>{albumartistsort}</code> and <code>{artistsort}</code>. Suggestions come from your
-folders: a folder "Morissette, Alanis" suggests that sort name for "Alanis Morissette".</p>
+folders: a folder "Morissette, Alanis" suggests that sort name for "Alanis Morissette".
+"Keep as is" saves the name itself as the sort name, so none is suggested for it.</p>
 <p class="hint">{{ count }} album artists: {{ named }} with a sort name, {{ suggested }}
 with a suggestion.</p>
 
@@ -44,7 +45,7 @@ with a suggestion.</p>
      <input type="hidden" name="artist" value="{{ a.name }}">
      <input type="hidden" name="show" value="{{ show }}">
      <input type="hidden" name="q" value="{{ q }}">
-     <input name="sort_name" value="{{ a.sort_name or '' }}" placeholder="{{ a.suggestion or a.name }}" aria-label="Sort name of {{ a.name }}">
+     <input name="sort_name" value="{{ a.sort_name or a.suggestion or '' }}" placeholder="same as the name" aria-label="Sort name of {{ a.name }}">
      <button>Save</button>
     </form>
    </td>
@@ -56,6 +57,15 @@ with a suggestion.</p>
      <input type="hidden" name="show" value="{{ show }}">
      <input type="hidden" name="q" value="{{ q }}">
      <button aria-label="Use {{ a.suggestion }} for {{ a.name }}">Use “{{ a.suggestion }}”</button>
+    </form>
+    {% endif %}
+    {% if not a.sort_name %}
+    <form method="post" action="{{ base }}/artists" class="inline">
+     <input type="hidden" name="artist" value="{{ a.name }}">
+     <input type="hidden" name="sort_name" value="{{ a.name }}">
+     <input type="hidden" name="show" value="{{ show }}">
+     <input type="hidden" name="q" value="{{ q }}">
+     <button aria-label="Keep {{ a.name }} as it is">Keep as is</button>
     </form>
     {% endif %}
    </td>

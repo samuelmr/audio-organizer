@@ -22,7 +22,7 @@ from .tracks import present
 class Artist:
     name: str
     tracks: int
-    sort_name: str | None  # set by the user
+    sort_name: str | None  # set by the user; the name itself when kept as it is
     suggestion: str | None  # from a folder name, when no sort name is set
 
     @property
@@ -48,7 +48,8 @@ def sorted_name(names: dict[str, str], name: str | None) -> str | None:
 
 
 def set_sort_name(session: Session, library: Library, name: str, sort_name: str | None) -> None:
-    """Set an artist's sort name; None or an empty one removes it."""
+    """Set an artist's sort name; None or an empty one removes it. A sort name equal to the
+    name is kept: it records that the name is right as it is, so no suggestion follows."""
     key = normalize_name(name)
     session.execute(
         delete(ArtistSortName).where(
@@ -56,7 +57,7 @@ def set_sort_name(session: Session, library: Library, name: str, sort_name: str 
         )
     )
     sort_name = (sort_name or "").strip()
-    if sort_name and sort_name != name:
+    if sort_name:
         session.add(ArtistSortName(library_id=library.id, key=key, name=name, sort_name=sort_name))
 
 

@@ -217,8 +217,10 @@ such as "Morissette, Alanis" for "Alanis Morissette", and under their name other
 
 Suggestions come from your folders: a folder named "Morissette, Alanis" suggests that sort
 name for the artist "Alanis Morissette". Names are never turned around by rule, which would
-also file bands under their last word. The web UI's Artists page lists the artists, with
-their suggestions to accept one by one or all at once.
+also file bands under their last word. To stop suggestions for an artist whose name is right
+as it is, set the name as its own sort name (`--set "Yello=Yello"`). The web UI's Artists
+page lists the artists, with their suggestions to accept one by one or all at once, and a
+"Keep as is" button for the same purpose.
 
 Files move album by album, and an album's cover image goes with it when its last track
 leaves a folder. Files lacking a field the template needs stay where they are, and so do

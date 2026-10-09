@@ -647,6 +647,11 @@ def test_artists_page(web):
     assert "Saved the sort name of Texas" in page and 'value="Texas (band)"' in page
     page = web.post("/libraries/music/artists", data={"accept": "all", "show": "suggested"}).text
     assert "Accepted 0 suggested sort names" in page
+    page = web.post(
+        "/libraries/music/artists", data={"artist": "P!nk", "sort_name": "P!nk", "show": "named"}
+    ).text
+    assert 'aria-label="Keep ' not in page  # both artists have a sort name now
+    assert 'value="P!nk"' in page
 
 
 def test_layout_page(web):

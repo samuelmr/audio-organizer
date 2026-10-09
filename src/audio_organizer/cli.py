@@ -1657,7 +1657,8 @@ def artists_command(
     (e.g. "Alanis Morissette" filed as "Morissette, Alanis").
 
     Suggestions come from your folders: a folder "Morissette, Alanis" suggests that sort
-    name for "Alanis Morissette".
+    name for "Alanis Morissette". Setting an artist's own name ("Yello=Yello") keeps it as
+    it is and stops suggestions for it.
     """
     with _session(ctx) as session:
         lib = _library(session, library)
@@ -1678,7 +1679,9 @@ def artists_command(
             f"{len(suggested)} with a suggested one."
         )
         for artist in artists:
-            if artist.sort_name:
+            if artist.sort_name == artist.name:
+                typer.echo(f"  {artist.name}  (as is)")
+            elif artist.sort_name:
                 typer.echo(f"  {artist.name}  ->  {artist.sort_name}")
             elif artist.suggestion:
                 typer.echo(f"  {artist.name}  ->  {artist.suggestion}  (suggested)")

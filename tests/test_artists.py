@@ -52,6 +52,23 @@ def test_suggestions_and_sort_names(library):
     assert listed["Alanis Morissette"].suggestion is None  # it has a sort name now
 
 
+def test_keep_as_is_stops_suggestions(library):
+    session, lib = library
+    art.set_sort_name(session, lib, "Alanis Morissette", "Alanis Morissette")
+    session.commit()
+    listed = {a.name: a for a in art.album_artists(session, lib)}
+    assert listed["Alanis Morissette"].sort_name == "Alanis Morissette"
+    assert listed["Alanis Morissette"].suggestion is None
+    assert art.accept_suggestions(session, lib, list(listed.values())) == 0
+    assert art.sorted_name(art.sort_names(session, lib), "Alanis Morissette") == (
+        "Alanis Morissette"
+    )
+    art.set_sort_name(session, lib, "Alanis Morissette", "")  # clearing brings it back
+    session.commit()
+    listed = {a.name: a for a in art.album_artists(session, lib)}
+    assert listed["Alanis Morissette"].suggestion == "Morissette, Alanis"
+
+
 def test_layout_with_sort_names(library):
     session, lib = library
     art.set_sort_name(session, lib, "Alanis Morissette", "Morissette, Alanis")
