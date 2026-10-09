@@ -254,6 +254,11 @@ def test_cli_gnudb_limit_and_with_gnudb(library, monkeypatch):
     CliRunner().invoke(app, ["--db", db, "scan", "--deep", "--with-gnudb", "--deep-limit", "2"])
     assert asked == [7, 2]
 
+    result = CliRunner().invoke(app, ["--db", db, "scan", "--with-gnudb"])  # without --deep
+    assert "gnudb: 1 found" in result.output and "Measured" not in result.output
+    assert asked == [7, 2, None]
+    asked.pop()
+
     monkeypatch.delenv("AORG_GNUDB_EMAIL")
     result = CliRunner().invoke(app, ["--db", db, "scan", "--deep", "--with-gnudb"])
     assert "Skipping gnudb" in result.output and asked == [7, 2]

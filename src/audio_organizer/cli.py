@@ -180,7 +180,8 @@ def scan_command(
         bool,
         typer.Option(
             "--with-gnudb",
-            help="With --deep, also look up albums in gnudb (slow; best once the library is tidy)",
+            help="Also look up albums in gnudb (slow; best once the library is tidy), "
+            "with or without --deep",
         ),
     ] = False,
     min_pixels: Annotated[
@@ -194,12 +195,13 @@ def scan_command(
     measured. Albums whose tracks have no cover, or one smaller than --min-pixels on a
     side, and no big enough image in their folder, are looked up in MusicBrainz and the
     Cover Art Archive. The results are kept in the catalog, not written into the files
-    (see `aorg write-tags` and `aorg covers`). Complete single-disc album folders are
-    looked up in gnudb only with --with-gnudb (needs your email address in
-    AORG_GNUDB_EMAIL), for the album's title, year, genre and track titles. That adds
-    seconds per album; tidy the library first, or use `aorg gnudb` on its own. It takes
-    long; it continues where an interrupted run stopped, and --deep-limit splits it into
-    parts.
+    (see `aorg write-tags` and `aorg covers`). It takes long; it continues where an
+    interrupted run stopped, and --deep-limit splits it into parts.
+
+    With --with-gnudb, with or without --deep, complete single-disc album folders are
+    looked up in gnudb (needs your email address in AORG_GNUDB_EMAIL) for the album's
+    title, year, genre and track titles. That adds seconds per album, so tidy the library
+    first, or use `aorg gnudb` on its own. --deep-limit also caps these lookups.
     """
     started = time.monotonic()
     last_report = 0.0
@@ -230,11 +232,12 @@ def scan_command(
         typer.echo(f"  ... and {len(stats.errors) - 20} more")
     if deep:
         _deep_scan(ctx, library, deep_limit)
-        if with_gnudb:
-            if gnudb.has_email():
-                _gnudb_lookups(ctx, library, deep_limit)
-            else:
-                typer.echo("Skipping gnudb: set AORG_GNUDB_EMAIL to your email address")
+    if with_gnudb:
+        if gnudb.has_email():
+            _gnudb_lookups(ctx, library, deep_limit)
+        else:
+            typer.echo("Skipping gnudb: set AORG_GNUDB_EMAIL to your email address")
+    if deep:
         _deep_covers(ctx, library, deep_limit, min_pixels)
 
 

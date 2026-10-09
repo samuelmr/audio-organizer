@@ -59,25 +59,26 @@ After updating `aorg`, `aorg scan --reread` reads every file again once, so that
 newer version reads (such as ratings, sort names or embedded covers) are in the catalog.
 
 A *deep* scan also measures the loudness of every file not measured yet, for ReplayGain,
-and looks up missing album covers online; with `--with-gnudb` it also looks up album
-folders in gnudb:
+and looks up missing album covers online. `--with-gnudb`, with or without `--deep`, also
+looks up album folders in gnudb:
 
     aorg scan --deep                  # continues where an interrupted run stopped
     aorg scan --deep --deep-limit 500 # or in parts
     aorg scan --deep --with-gnudb     # also look up albums in gnudb (much slower)
+    aorg scan --with-gnudb            # a normal scan and the gnudb lookups, no loudness
     aorg scan --deep --min-pixels 500 # covers smaller than 500 px count as missing
 
-The steps run one after another, each finishing before the next starts, and all of them
+The steps of `--deep` and `--with-gnudb` run one after another, each finishing before the next starts, and all of them
 continue where an interrupted run stopped:
 
 1. the normal scan of new and changed files;
 2. loudness of the files not measured yet (about a second per file from a network share,
    so a library of 100,000 tracks takes about a day);
-3. only with `--with-gnudb`: gnudb lookups of the album folders not looked up yet (6 to 15
+3. only with `--with-gnudb` (which also works without `--deep`): gnudb lookups of the album folders not looked up yet (6 to 15
    seconds per album, see below), skipped without `AORG_GNUDB_EMAIL`;
 4. cover lookups in MusicBrainz for the albums not looked up yet (at least a second each).
 
-`--deep-limit N` caps steps 2–4 each: N files measured, N albums asked of gnudb, N albums
+`--deep-limit N` caps steps 2–4 each (step 3 even without `--deep`): N files measured, N albums asked of gnudb, N albums
 of MusicBrainz. **With `--with-gnudb` a deep scan takes much longer**: thousands of albums
 add hours to the loudness step's day, because `aorg` asks gnudb for one album at a time.
 gnudb is off by default because it works best on a tidy library: albums are found by
