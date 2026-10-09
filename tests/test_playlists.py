@@ -264,3 +264,15 @@ def test_static_playlist_keeps_entry_of_deleted_file(catalog):
     scan(session, library)
     [generated] = pl.generate(session, library)
     assert generated.tracks == [] and generated.unresolved == 1
+
+
+def test_generated_shuffle_changes_between_runs():
+    playlist = Playlist(name="Mix", rule="format=mp3", sort="shuffle")
+    tracks = [track(f"x/{i}.mp3", title=f"T{i}") for i in range(30)]
+    orders = set()
+    for _ in range(3):
+        playlists = pl.PlaylistSet([playlist])
+        for t in tracks:
+            playlists.feed(t)
+        orders.add(tuple(t.path for t in playlists.results()[0].tracks))
+    assert len(orders) > 1

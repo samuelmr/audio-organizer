@@ -2,7 +2,7 @@
 
 A smart playlist's rule is a list of conditions that must all hold, e.g.
 
-    genre=Rock|Pop preference="Very Good|Excellent" year>=1990 title!~live
+    genre=Rock|Pop rating>=4 year>=1990 title!~live
 
 Operators: = (equals), != (does not equal), ~ (contains), !~ (does not contain), all
 case-insensitive, with alternatives separated by |; and >, >=, <, <= for numbers. An
@@ -18,6 +18,7 @@ the cost does not grow with the number of playlists.
 import hashlib
 import os
 import re
+import secrets
 import shlex
 import unicodedata
 from collections.abc import Iterable
@@ -128,9 +129,13 @@ class GeneratedPlaylist:
 
 
 class PlaylistSet:
-    """Generates many playlists in one pass: feed() every track, then results()."""
+    """Generates many playlists in one pass: feed() every track, then results().
+
+    Shuffled playlists get a new order each time a set is made (a fresh random salt), so
+    regenerating a playlist reshuffles it; within one set the order is fixed."""
 
     def __init__(self, playlists: Iterable[Playlist]) -> None:
+        self.salt = secrets.token_hex(8)
         self.smart: list[tuple[Playlist, list[Condition]]] = []
         self.static: list[Playlist] = []
         self.members: dict[int, list[tuple[int, int]]] = {}  # file id -> (playlist id, pos)
@@ -175,12 +180,16 @@ class PlaylistSet:
                 if key[1] is not None:
                     name = name.replace("{" + playlist.group_by + "}", self.group_names[key])
                 tracks = _dedupe(self.matches.get(key, []))
-                tracks = order(tracks, playlist.sort, seed=name)[: playlist.max_tracks]
+                tracks = order(tracks, playlist.sort, seed=f"{self.salt}\0{name}")[
+                    : playlist.max_tracks
+                ]
                 results.append(GeneratedPlaylist(name, playlist, tracks))
         for playlist in self.static:
             found = self.static_tracks.get(playlist.id, {})
             tracks = [found[e.position] for e in playlist.entries if e.position in found]
-            tracks = order(tracks, playlist.sort, seed=playlist.name)[: playlist.max_tracks]
+            tracks = order(tracks, playlist.sort, seed=f"{self.salt}\0{playlist.name}")[
+                : playlist.max_tracks
+            ]
             results.append(
                 GeneratedPlaylist(
                     playlist.name, playlist, tracks, len(playlist.entries) - len(found)

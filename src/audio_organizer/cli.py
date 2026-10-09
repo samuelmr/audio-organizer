@@ -897,7 +897,7 @@ def playlists_create(
 
     A rule is a list of conditions that must all hold:
 
-    `genre=Rock|Pop  preference="Very Good|Excellent"  year>=1990  title!~live`
+    `genre=Rock|Pop  rating>=4  year>=1990  title!~live`
 
     **=** equals, **!=** does not equal, **~** contains, **!~** does not contain (all
     case-insensitive; alternatives separated by |; an empty value means a missing
@@ -906,10 +906,10 @@ def playlists_create(
 
     With --group-by, one playlist is made per value of the field, and the name must
     contain the field in braces: `aorg playlists create "Best Of {mood}" --group-by mood
-    --rule 'preference="Very Good|Excellent"'`
+    --rule 'rating>=4'`
 
     Smart playlists hold one copy of each song (identical audio, or the same artist and
-    title) and are shuffled by default, in an order that stays the same between runs.
+    title) and are shuffled by default, in a new order each time they are generated.
     """
     with _session(ctx) as session:
         lib = _library(session, library)

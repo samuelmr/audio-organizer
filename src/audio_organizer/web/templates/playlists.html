@@ -22,7 +22,7 @@
 {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
 <form method="post" action="/libraries/{{ library.name }}/playlists" class="stacked">
  <label>Name <input name="playlist_name" required value="{{ form.playlist_name or '' }}" placeholder="Best Of {mood}"></label>
- <label>Rule <input name="rule" value="{{ form.rule or '' }}" placeholder='preference="Very Good|Excellent"'>
+ <label>Rule <input name="rule" value="{{ form.rule or '' }}" placeholder='rating>=4'>
   <small>Leave empty for a static playlist. Conditions that must all hold: <code>field=a|b</code>, <code>!=</code>, <code>~</code> (contains), <code>!~</code>, <code>&gt;=</code> etc. for numbers; e.g. <code>genre=Rock year&gt;=1990</code>.</small></label>
  <label>One playlist per value of <input name="group_by" value="{{ form.group_by or '' }}" placeholder="mood">
   <small>The name must then contain the field in braces, e.g. "Best Of {mood}".</small></label>
