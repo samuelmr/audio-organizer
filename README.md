@@ -12,19 +12,19 @@ file.
 - [Usage](#usage)
   - [Scanning](#scanning)
   - [Web UI](#web-ui)
-  - [Editing metadata](#editing-metadata)
-  - [Writing tags](#writing-tags)
-  - [Ratings from MusicMatch preferences](#ratings-from-musicmatch-preferences)
-  - [Covers](#covers)
-  - [Duplicates](#duplicates)
-  - [Tracks in several encodings](#tracks-in-several-encodings)
-  - [Trash](#trash)
+  - [Folder layout](#folder-layout)
   - [Album folders](#album-folders)
   - [Loose tracks](#loose-tracks)
+  - [Duplicates](#duplicates)
+  - [Tracks in several encodings](#tracks-in-several-encodings)
   - [Leftover files](#leftover-files)
-  - [Folder layout](#folder-layout)
+  - [Editing metadata](#editing-metadata)
+  - [Covers](#covers)
+  - [Ratings from MusicMatch preferences](#ratings-from-musicmatch-preferences)
+  - [Writing tags](#writing-tags)
   - [Playlists](#playlists)
   - [Syncing to object storage](#syncing-to-object-storage)
+  - [Trash](#trash)
 - [Contributing](#contributing)
 
 ## Installation
@@ -190,111 +190,80 @@ can be reviewed and started, and its progress followed.
 The web UI has no login, so it only listens on your own computer unless you give
 `--host`. It refuses form submissions that come from other websites.
 
-### Editing metadata
+### Folder layout
 
-Edits are stored in the catalog and proposed as a *changeset*. Nothing is written to
-your files until you approve and apply it:
+The layout is a template of where files belong, filled in from their metadata. The
+default is the iTunes-style `{albumartist}/{album}/{disc}{track} {title}`:
 
-    aorg edit "Texas/Texas_Halo.mp3" --set album="Greatest Hits" --set tracknumber=11
-    aorg changes list
-    aorg changes show 1
-    aorg changes approve 1            # all changes in changeset 1, or: approve 1 3 4
-    aorg changes apply 1 --dry-run
-    aorg changes apply 1
-    aorg changes undo 1               # restores the tags and reverts your edit
-    aorg changes retry 1              # try the failed changes again
-    aorg changes delete 1             # forget a changeset (undo applied changes first)
+    aorg layout                               # show it
+    aorg layout --set "{albumartist}/{year} {album}/{track} {title}"
+    aorg reorganize                           # what would move
+    aorg reorganize --path "Elfman, Danny" --propose
+    aorg reorganize --propose --limit 20      # or the next 20 albums
 
-`aorg` never writes to a file that has changed since it was last scanned; rescan first.
-The tags each file had when it was first scanned are kept in the catalog.
+Fields: `{albumartist}`, `{artist}`, `{album}`, `{title}`, `{genre}`, `{year}`, `{track}`
+(two digits) and `{disc}` ("2-" on albums with several discs, otherwise empty). Without
+an album artist tag, the album artist is decided per album, so its tracks stay
+together: the artist of most of its tracks, or "Various Artists"; compilations always
+go under "Various Artists". Characters that file systems do not allow become `_`.
 
-Besides title, artist, album, track and disc numbers, year and genre, these fields can
-be read and edited: original year, album artist and artist sort names, composer,
-conductor, grouping, subtitle, language, mood, a 1–5 star rating, the gnudb disc ID and
-ReplayGain values. They are written in the usual tags for MP3 (ID3), M4A and FLAC/Ogg,
-so that other players read them; moods also go to the standard MOOD tag rather than only
-the MusicMatch comment they may have come from.
+`{albumartistsort}` and `{artistsort}` file artists under a sort name you have set,
+such as "Morissette, Alanis" for "Alanis Morissette", and under their name otherwise:
 
-On a track's page in the web UI:
+    aorg artists                              # sort names, and suggested ones
+    aorg artists --set "Alanis Morissette=Morissette, Alanis"
+    aorg artists --accept-suggestions
+    aorg layout --set "{albumartistsort}/{album}/{disc}{track} {title}"
 
-- **Measure ReplayGain** measures the track's loudness with ffmpeg and stores the track
-  gain and peak (and the album's, once all its tracks are measured) in the catalog.
-  Values that are not yet in the file are marked, and **Write them to the file**
-  proposes writing them.
-- When writing to MP3 files, you can keep their ID3 version or write ID3v2.3 or 2.4.
-  ID3v2.3 is read by more players and devices; both keep all of the fields above.
-- **Cover** shows the cover embedded in the file and the image in its folder, and can
-  embed the folder's image in a file that has none.
+Suggestions come from your folders: a folder named "Morissette, Alanis" suggests that sort
+name for the artist "Alanis Morissette". Names are never turned around by rule, which would
+also file bands under their last word. The web UI's Artists page lists the artists, with
+their suggestions to accept one by one or all at once.
 
-### Writing tags
+Files move album by album, and an album's cover image goes with it when its last track
+leaves a folder. Files lacking a field the template needs stay where they are, and so do
+conflicts: a path that is taken, or that several files would get. These are mostly
+duplicates, so clean up duplicates and album folders first. Names that differ only in
+letter case are left alone. The web UI's Layout page does the same, and lets you propose
+a single album.
 
-Edits, measurements and lookups are kept in the catalog until written into the files;
-values only inferred from file and folder names are not written. To write them in bulk:
+### Album folders
 
-    aorg write-tags                           # what is waiting to be written
-    aorg write-tags --only replaygain --path "Texas" --propose
-    aorg write-tags --propose --limit 200 --id3-version 3
+The same album often sits in several folders ("Texas/Greatest Hits" and
+"Texas/The Greatest Hits", or a fragment in another artist's folder). `aorg merge-albums`
+finds pairs of album folders that share identical tracks and have the same album name
+(or share at least half of their tracks):
 
-`--only` takes field names or their beginnings (`replaygain` covers all ReplayGain
-fields), `--id3-version` writes MP3 tags as ID3v2.3 or 2.4 (by default each file keeps
-its own), and each batch becomes a changeset to review. The web UI's Write tags page
-does the same.
+    aorg merge-albums                         # candidates
+    aorg merge-albums --propose --limit 20    # a changeset for a batch of safe merges
+    aorg merge-albums --from "Texas/Greatest Hits" --into "Texas/The Greatest Hits"
 
-By default only what the tags lack is written, so a gnudb value that differs from a tag
-is left out: the tag is the stronger evidence. To review those, add `--prefer-gnudb`
-(on the Write tags page: *Replace tags that differ from gnudb's values*; the *Review what
-gnudb found* link above an album's tracks opens it for that album). The listing then
-shows each tag and the gnudb value that would replace it. Choose the fields you trust
-(`--only genre,album`, or by clicking a field on the page), and the files (`--path` is
-an album's folder, say), propose the changeset, and approve or reject its changes file by
-file before anything is written:
+Merging one folder into another trashes its copies of tracks the other already has (that
+copy is kept and playlists switch to it) and moves its other tracks over. A track whose
+number the other folder already uses on the same disc is a *clash*, which usually means
+a different recording or edition; it stays where it is. Batches only include pairs with
+the same album name and no clashes; merge the others one by one in the direction you
+choose, here or on the web UI's Album folders page. To go the other way after proposing
+a merge, reject its changeset (or undo it, if applied) and propose the other direction.
 
-    aorg write-tags --prefer-gnudb --path "Texas/Greatest Hits"       # what would change
-    aorg write-tags --prefer-gnudb --only album,genre --propose       # for review
+### Loose tracks
 
-Your own edits are never replaced, and neither are tag values that gnudb only spells
-differently (case, punctuation, "02" for "2"). Once written, the tag and gnudb agree, and
-the track is no longer disputed.
+Flat folders ("Williams, John/John Williams_Cantina Band.mp3") often hold tracks whose
+album folder exists, with a gap where they belong. `aorg neighbours` puts them back:
 
-### Ratings from MusicMatch preferences
+    aorg neighbours                           # what would move
+    aorg neighbours --path "Williams, John" --propose
+    aorg neighbours --propose --limit 100     # whole albums, up to 100 tracks
 
-MusicMatch Jukebox kept a "preference" for tracks (Excellent, Very Good, Good, Fair,
-Poor, Bad Taste). They can become 1–5 star ratings that other players read:
-
-    aorg ratings                              # preferences, with the stars they map to
-    aorg ratings --set "Good=" --set "Bad Taste=1" --apply
-    aorg write-tags --only rating --propose
-
-The default mapping is Excellent ★★★★★, Very Good ★★★★, Good ★★★, Fair ★★, Poor and Bad
-Taste ★; an empty value gives no rating. A rating already in a file is kept. The web
-UI's Ratings page does the same. Smart playlists can then use rules such as `rating>=4`.
-
-### Covers
-
-Phones, car stereos and many players only show covers embedded in the files:
-
-    aorg covers                               # tracks without a cover, and the cover
-    aorg covers --path "Björk" --propose      # embed it into those tracks
-    aorg covers --min-pixels 500 --propose    # also replace covers under 500 px
-
-The cover is the folder's image, `cover`, `folder` or `front` (`.jpg`, `.jpeg` or
-`.png`), or its only image; when the folder has none at least `--min-pixels` (200 by
-default) on a side, it is the cover found online (`aorg coverart`, or `aorg scan --with-covers`). Smaller images, such as
-Windows Media Player's `AlbumArtSmall.jpg`, are thumbnails: listed but not embedded,
-and an embedded thumbnail is replaced (undo puts it back). The image is copied into
-every track, so mind large images. A file whose cover is big enough is never given
-another one. The web UI's Covers page does the same, also for single folders, and a
-track's page can embed its folder's cover into that one file.
-
-A cover found online is also saved as the folder's `cover.jpg` (`cover.png` for a PNG),
-so that players that read folder images and [sync](#syncing-to-object-storage) have it
-too; also for albums whose tracks already have it embedded. That happens only when the
-folder holds just that album and has no image big enough. A smaller `cover.jpg` is
-replaced (undo puts it back); other images are left alone, as `cover.jpg` comes first.
-With `--no-save-images` covers are only embedded.
-
-Catalogs made before `aorg` read the size of embedded covers know only that a file has
-one; the next cover lookup reads their sizes (only the tags, not the whole files).
+A loose track (in an artist folder or "Unknown Album") joins an album folder when its
+album tag names exactly one album folder of its artist (ignoring case, punctuation and a
+leading "The"), and its track number and title are not there yet. It is named like the
+album's other tracks ("07 Title.mp3", or "1-07 Title.mp3" on multi-disc albums), and
+gets the album tags those all agree on: album name, album artist, year, track and disc
+totals, and the genre if it has none. Two loose tracks claiming the same number are left
+alone, and so are tracks with no album tag or track number. Clean up duplicates and
+encodings first: loose copies of tracks an album already has are theirs. The web UI's
+Loose tracks page does the same, album by album.
 
 ### Duplicates
 
@@ -343,52 +312,6 @@ The web UI's Encodings page does the same, and there you can choose which file t
 Earlier versions of `aorg` read the length of raw AAC (`.aac`) files wrongly, by up to
 minutes; if your catalog was made with one, run `aorg scan --reread` once first.
 
-### Trash
-
-Trashed files are moved to `.aorg-trash/` in the library folder, and undoing the
-changeset brings them back. They are only deleted when you empty the trash:
-
-    aorg trash                                # what is in it
-    aorg trash empty
-
-### Album folders
-
-The same album often sits in several folders ("Texas/Greatest Hits" and
-"Texas/The Greatest Hits", or a fragment in another artist's folder). `aorg merge-albums`
-finds pairs of album folders that share identical tracks and have the same album name
-(or share at least half of their tracks):
-
-    aorg merge-albums                         # candidates
-    aorg merge-albums --propose --limit 20    # a changeset for a batch of safe merges
-    aorg merge-albums --from "Texas/Greatest Hits" --into "Texas/The Greatest Hits"
-
-Merging one folder into another trashes its copies of tracks the other already has (that
-copy is kept and playlists switch to it) and moves its other tracks over. A track whose
-number the other folder already uses on the same disc is a *clash*, which usually means
-a different recording or edition; it stays where it is. Batches only include pairs with
-the same album name and no clashes; merge the others one by one in the direction you
-choose, here or on the web UI's Album folders page. To go the other way after proposing
-a merge, reject its changeset (or undo it, if applied) and propose the other direction.
-
-### Loose tracks
-
-Old flat folders ("Williams, John/John Williams_Cantina Band.mp3") often hold tracks whose
-album folder exists, with a gap where they belong. `aorg neighbours` puts them back:
-
-    aorg neighbours                           # what would move
-    aorg neighbours --path "Williams, John" --propose
-    aorg neighbours --propose --limit 100     # whole albums, up to 100 tracks
-
-A loose track (in an artist folder or "Unknown Album") joins an album folder when its
-album tag names exactly one album folder of its artist (ignoring case, punctuation and a
-leading "The"), and its track number and title are not there yet. It is named like the
-album's other tracks ("07 Title.mp3", or "1-07 Title.mp3" on multi-disc albums), and
-gets the album tags those all agree on: album name, album artist, year, track and disc
-totals, and the genre if it has none. Two loose tracks claiming the same number are left
-alone, and so are tracks with no album tag or track number. Clean up duplicates and
-encodings first: loose copies of tracks an album already has are theirs. The web UI's
-Loose tracks page does the same, album by album.
-
 ### Leftover files
 
 Merging albums and trashing duplicates empties folders, but Folder.jpg, desktop.ini and
@@ -409,42 +332,111 @@ The same run looks at album folders: one without a cover.jpg or cover.png, but w
 another image (AlbumArtSmall.jpg, Folder.jpg), gets a proposal to rename the biggest
 image to cover.jpg (or cover.png for a PNG), the name sync and the players look for.
 
-### Folder layout
+### Editing metadata
 
-The layout is a template of where files belong, filled in from their metadata. The
-default is the iTunes-style `{albumartist}/{album}/{disc}{track} {title}`:
+Edits are stored in the catalog and proposed as a *changeset*. Nothing is written to
+your files until you approve and apply it:
 
-    aorg layout                               # show it
-    aorg layout --set "{albumartist}/{year} {album}/{track} {title}"
-    aorg reorganize                           # what would move
-    aorg reorganize --path "Elfman, Danny" --propose
-    aorg reorganize --propose --limit 20      # or the next 20 albums
+    aorg edit "Texas/Texas_Halo.mp3" --set album="Greatest Hits" --set tracknumber=11
+    aorg changes list
+    aorg changes show 1
+    aorg changes approve 1            # all changes in changeset 1, or: approve 1 3 4
+    aorg changes apply 1 --dry-run
+    aorg changes apply 1
+    aorg changes undo 1               # restores the tags and reverts your edit
+    aorg changes retry 1              # try the failed changes again
+    aorg changes delete 1             # forget a changeset (undo applied changes first)
 
-Fields: `{albumartist}`, `{artist}`, `{album}`, `{title}`, `{genre}`, `{year}`, `{track}`
-(two digits) and `{disc}` ("2-" on albums with several discs, otherwise empty). Without
-an album artist tag, the album artist is decided per album, so its tracks stay
-together: the artist of most of its tracks, or "Various Artists"; compilations always
-go under "Various Artists". Characters that file systems do not allow become `_`.
+`aorg` never writes to a file that has changed since it was last scanned; rescan first.
+The tags each file had when it was first scanned are kept in the catalog.
 
-`{albumartistsort}` and `{artistsort}` file artists under a sort name you have set,
-such as "Morissette, Alanis" for "Alanis Morissette", and under their name otherwise:
+Besides title, artist, album, track and disc numbers, year and genre, these fields can
+be read and edited: original year, album artist and artist sort names, composer,
+conductor, grouping, subtitle, language, mood, a 1–5 star rating, the gnudb disc ID and
+ReplayGain values. They are written in the usual tags for MP3 (ID3), M4A and FLAC/Ogg,
+so that other players read them; moods also go to the standard MOOD tag rather than only
+the MusicMatch comment they may have come from.
 
-    aorg artists                              # sort names, and suggested ones
-    aorg artists --set "Alanis Morissette=Morissette, Alanis"
-    aorg artists --accept-suggestions
-    aorg layout --set "{albumartistsort}/{album}/{disc}{track} {title}"
+On a track's page in the web UI:
 
-Suggestions come from your folders: a folder named "Morissette, Alanis" suggests that sort
-name for the artist "Alanis Morissette". Names are never turned around by rule, which would
-also file bands under their last word. The web UI's Artists page lists the artists, with
-their suggestions to accept one by one or all at once.
+- **Measure ReplayGain** measures the track's loudness with ffmpeg and stores the track
+  gain and peak (and the album's, once all its tracks are measured) in the catalog.
+  Values that are not yet in the file are marked, and **Write them to the file**
+  proposes writing them.
+- When writing to MP3 files, you can keep their ID3 version or write ID3v2.3 or 2.4.
+  ID3v2.3 is read by more players and devices; both keep all of the fields above.
+- **Cover** shows the cover embedded in the file and the image in its folder, and can
+  embed the folder's image in a file that has none.
 
-Files move album by album, and an album's cover image goes with it when its last track
-leaves a folder. Files lacking a field the template needs stay where they are, and so do
-conflicts: a path that is taken, or that several files would get. These are mostly
-duplicates, so clean up duplicates and album folders first. Names that differ only in
-letter case are left alone. The web UI's Layout page does the same, and lets you propose
-a single album.
+### Covers
+
+Phones, car stereos and many players only show covers embedded in the files:
+
+    aorg covers                               # tracks without a cover, and the cover
+    aorg covers --path "Björk" --propose      # embed it into those tracks
+    aorg covers --min-pixels 500 --propose    # also replace covers under 500 px
+
+The cover is the folder's image, `cover`, `folder` or `front` (`.jpg`, `.jpeg` or
+`.png`), or its only image; when the folder has none at least `--min-pixels` (200 by
+default) on a side, it is the cover found online (`aorg coverart`, or `aorg scan --with-covers`). Smaller images, such as
+Windows Media Player's `AlbumArtSmall.jpg`, are thumbnails: listed but not embedded,
+and an embedded thumbnail is replaced (undo puts it back). The image is copied into
+every track, so mind large images. A file whose cover is big enough is never given
+another one. The web UI's Covers page does the same, also for single folders, and a
+track's page can embed its folder's cover into that one file.
+
+A cover found online is also saved as the folder's `cover.jpg` (`cover.png` for a PNG),
+so that players that read folder images and [sync](#syncing-to-object-storage) have it
+too; also for albums whose tracks already have it embedded. That happens only when the
+folder holds just that album and has no image big enough. A smaller `cover.jpg` is
+replaced (undo puts it back); other images are left alone, as `cover.jpg` comes first.
+With `--no-save-images` covers are only embedded.
+
+Catalogs made before `aorg` read the size of embedded covers know only that a file has
+one; the next cover lookup reads their sizes (only the tags, not the whole files).
+
+### Ratings from MusicMatch preferences
+
+MusicMatch Jukebox kept a "preference" for tracks (Excellent, Very Good, Good, Fair,
+Poor, Bad Taste). They can become 1–5 star ratings that other players read:
+
+    aorg ratings                              # preferences, with the stars they map to
+    aorg ratings --set "Good=" --set "Bad Taste=1" --apply
+    aorg write-tags --only rating --propose
+
+The default mapping is Excellent ★★★★★, Very Good ★★★★, Good ★★★, Fair ★★, Poor and Bad
+Taste ★; an empty value gives no rating. A rating already in a file is kept. The web
+UI's Ratings page does the same. Smart playlists can then use rules such as `rating>=4`.
+
+### Writing tags
+
+Edits, measurements and lookups are kept in the catalog until written into the files;
+values only inferred from file and folder names are not written. To write them in bulk:
+
+    aorg write-tags                           # what is waiting to be written
+    aorg write-tags --only replaygain --path "Texas" --propose
+    aorg write-tags --propose --limit 200 --id3-version 3
+
+`--only` takes field names or their beginnings (`replaygain` covers all ReplayGain
+fields), `--id3-version` writes MP3 tags as ID3v2.3 or 2.4 (by default each file keeps
+its own), and each batch becomes a changeset to review. The web UI's Write tags page
+does the same.
+
+By default only what the tags lack is written, so a gnudb value that differs from a tag
+is left out: the tag is the stronger evidence. To review those, add `--prefer-gnudb`
+(on the Write tags page: *Replace tags that differ from gnudb's values*; the *Review what
+gnudb found* link above an album's tracks opens it for that album). The listing then
+shows each tag and the gnudb value that would replace it. Choose the fields you trust
+(`--only genre,album`, or by clicking a field on the page), and the files (`--path` is
+an album's folder, say), propose the changeset, and approve or reject its changes file by
+file before anything is written:
+
+    aorg write-tags --prefer-gnudb --path "Texas/Greatest Hits"       # what would change
+    aorg write-tags --prefer-gnudb --only album,genre --propose       # for review
+
+Your own edits are never replaced, and neither are tag values that gnudb only spells
+differently (case, punctuation, "02" for "2"). Once written, the tag and gnudb agree, and
+the track is no longer disputed.
 
 ### Playlists
 
@@ -552,6 +544,14 @@ in the library, such as the files of a deleted playlist, are kept unless you add
 
 `reconcile` matches what is already in the bucket against your library, so music
 uploaded by other tools is not uploaded again. It changes nothing in the bucket.
+
+### Trash
+
+Trashed files are moved to `.aorg-trash/` in the library folder, and undoing the
+changeset brings them back. They are only deleted when you empty the trash:
+
+    aorg trash                                # what is in it
+    aorg trash empty
 
 ## Contributing
 
