@@ -1,4 +1,5 @@
 import re
+import sqlite3
 import subprocess
 import threading
 import time
@@ -7,6 +8,7 @@ import pytest
 from conftest import make_audio
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 
 from audio_organizer import covers, tags
 from audio_organizer.models import AudioFile, CoverLookup, Library, SyncTarget
@@ -787,3 +789,13 @@ def test_albums_list_shows_folders(web):
     page = web.get("/libraries/music/albums").text
     assert f'href="{(web.root / "P!nk/Funhouse").as_uri()}"' in page
     assert "P!nk/Funhouse/" in page
+
+
+def test_locked_database_asks_to_retry(web, monkeypatch):
+    def locked(*args, **kwargs):
+        raise OperationalError("INSERT", {}, sqlite3.OperationalError("database is locked"))
+
+    monkeypatch.setattr("audio_organizer.web.app.du.survey", locked)
+    response = web.get("/libraries/music/duplicates")
+    assert response.status_code == 503
+    assert "busy" in response.text

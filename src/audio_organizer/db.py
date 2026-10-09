@@ -26,8 +26,16 @@ def default_db_url() -> str:
     return f"sqlite:///{path}"
 
 
+# Seconds a SQLite connection waits for another writer before giving up
+BUSY_TIMEOUT = 30
+
+
 def make_engine(url: str | None = None) -> Engine:
-    engine = create_engine(url or default_db_url())
+    url = url or default_db_url()
+    # SQLite allows one writer at a time; wait for a long scan or sync to release its lock
+    # instead of failing after the default 5 seconds
+    connect_args = {"timeout": BUSY_TIMEOUT} if url.startswith("sqlite") else {}
+    engine = create_engine(url, connect_args=connect_args)
     if engine.dialect.name == "sqlite":
 
         @event.listens_for(engine, "connect")

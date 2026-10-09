@@ -25,6 +25,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import String, func, or_, select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
 from .. import album_merge as am
@@ -129,6 +130,20 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             if source and urlsplit(source).netloc != request.headers.get("host"):
                 return PlainTextResponse("Cross-site request refused", status_code=403)
         return await call_next(request)
+
+    @app.exception_handler(OperationalError)
+    async def database_busy(request: Request, exc: OperationalError):
+        """Another process (a scan or sync from the command line) holds the write lock:
+        say so and ask to retry, instead of a server error."""
+        if "database is locked" not in str(exc):
+            raise exc
+        return HTMLResponse(
+            "<!DOCTYPE html><title>Catalog busy</title>"
+            "<p>The catalog is busy: another aorg process (a scan or sync?) is writing to it. "
+            "Nothing was changed. Wait for it to finish, then go back and try again.</p>",
+            status_code=503,
+            headers={"Retry-After": "10"},
+        )
 
     # ---- libraries and tracks ------------------------------------------------------------
 
