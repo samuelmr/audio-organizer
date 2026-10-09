@@ -11,8 +11,9 @@ of its track titles do too. Accepted entries are stored as values from the sourc
 gnudb answers only registered applications: the hello names the developer's email
 address (AORG_GNUDB_EMAIL, else AORG_CONTACT), which must be the one the application
 was registered with. The HTTP interface is often unreachable, so this speaks cddbp
-(protocol level 6) on port 8880, one session for all lookups, at most one request a
-second. A 5xx refusal of the hello ends the lookups, since every request would fail.
+(protocol level 6) on port 8880, one session for all lookups, at most one request every
+three seconds. A refused connection or a 5xx refusal of the hello ends the lookups, since
+every further request would fail, and retrying only adds to what got the address blocked.
 """
 
 import os
@@ -36,7 +37,7 @@ from .tracks import present
 HOST, PORT = "gnudb.gnudb.org", 8880
 FRAMES = 75  # CD frames per second
 LEAD_IN = 150  # the first track starts 2 seconds in
-PAUSE = 1.0  # seconds between requests
+PAUSE = 3.0  # seconds between requests; gnudb may block an address that looks like a bot
 APPLICATION = "audio-organizer"
 MIN_TITLE_MATCH = 0.5  # of the folder's titled tracks that a candidate must agree with
 VARIOUS = {"various", "various artists", "va", "varios"}
@@ -183,6 +184,10 @@ class Client:
         user, _, host = (self.contact or email()).partition("@")
         try:
             self._socket = socket.create_connection((self.host, self.port), timeout=self.timeout)
+        except ConnectionRefusedError:
+            raise GnudbRefused(
+                f"{self.host}: connection refused (is this address blocked?)"
+            ) from None
         except OSError as e:
             raise GnudbError(f"{self.host}: {e}") from None
         self._lines = self._socket.makefile("r", encoding="utf-8", errors="replace", newline="\n")

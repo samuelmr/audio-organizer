@@ -120,6 +120,12 @@ def test_refused_application_stops(server):
             c.query([150], 10)
 
 
+def test_refused_connection_stops():
+    with gnudb.Client("127.0.0.1", 1, pause=0, contact="a@b.c") as c:  # nothing listens there
+        with pytest.raises(gnudb.GnudbRefused, match="blocked"):
+            c.query([150], 10)
+
+
 def test_email_is_needed(monkeypatch):
     monkeypatch.delenv("AORG_GNUDB_EMAIL", raising=False)
     monkeypatch.delenv("AORG_CONTACT", raising=False)
