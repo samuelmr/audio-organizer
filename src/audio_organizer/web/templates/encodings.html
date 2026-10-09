@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% from "_macros.html" import play %}
-{% block title %}Recordings – audio-organizer{% endblock %}
+{% block title %}Encodings – audio-organizer{% endblock %}
 {% block content %}
 {% set base = '/libraries/' ~ library.name %}
-<h1>Recordings in several encodings</h1>
+<h1>Encodings</h1>
 <p>{{ found.groups }} tracks are in the library in more than one encoding: the same
 recording, ripped or converted again (same title and number in an album folder, or a loose
 copy of an album's track, with durations within two seconds).
@@ -19,7 +19,7 @@ Left alone: {{ found.versions | length }} with different durations (listed below
 {{ found.compilations }} whose album copy is only on a compilation besides the artist's own
 folder, {{ found.pending }} with changes waiting for review.</p>
 
-<form class="search" method="get" action="{{ base }}/recordings">
+<form class="search" method="get" action="{{ base }}/encodings">
  <input type="search" name="path" value="{{ path }}" placeholder="Only under a path, e.g. Yello" aria-label="Path">
  <label>Batch of <input name="limit" inputmode="numeric" size="4" value="{{ limit }}"> tracks</label>
  <label><input type="checkbox" name="replace" value="true" {% if replace %}checked{% endif %}> include loose copies replacing the album's</label>
@@ -28,7 +28,7 @@ folder, {{ found.pending }} with changes waiting for review.</p>
 </form>
 
 {% if batch %}
-<form method="post" action="{{ base }}/recordings">
+<form method="post" action="{{ base }}/encodings">
  <input type="hidden" name="path" value="{{ path }}">
  {% if replace %}<input type="hidden" name="replace" value="true">{% endif %}
  {% if compilations %}<input type="hidden" name="compilations" value="true">{% endif %}

@@ -32,11 +32,11 @@ from .. import artists as art
 from .. import changes as ch
 from .. import coverart, covers, gnudb, loudness, tags
 from .. import duplicates as du
+from .. import encodings as rec
 from .. import layout as lo
 from .. import neighbours as nb
 from .. import playlists as pl
 from .. import ratings as rt
-from .. import recordings as rec
 from .. import sync as sy
 from .. import sync_jobs as jobs
 from .. import writing as wr
@@ -549,10 +549,10 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         changeset = du.propose(session, batch, f"Trash loose copies of {len(batch)} tracks{where}")
         return _redirect(f"/changes/{changeset.id}", "Proposed; review and approve the changes")
 
-    # ---- recordings in several encodings ------------------------------------------------
+    # ---- encodings ------------------------------------------------------------------
 
-    @app.get("/libraries/{name}/recordings", response_class=HTMLResponse)
-    def recordings(
+    @app.get("/libraries/{name}/encodings", response_class=HTMLResponse)
+    def encodings(
         request: Request,
         name: str,
         path: str = "",
@@ -566,13 +566,13 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             session, lib, path_prefix=path or None, include_compilations=compilations
         )
         return render(
-            request, "recordings.html", library=lib, found=found,
+            request, "encodings.html", library=lib, found=found,
             batch=rec.batch(found.proposals, max(limit, 1), replace=replace), path=path,
             limit=limit, replace=replace, compilations=compilations,
         )  # fmt: skip
 
-    @app.post("/libraries/{name}/recordings")
-    async def propose_recordings(request: Request, name: str, session: Session = SessionDep):
+    @app.post("/libraries/{name}/encodings")
+    async def propose_encodings(request: Request, name: str, session: Session = SessionDep):
         """Propose the tracks shown on the page (one "keep-<id kept by default>" field
         each, the id of the file to keep), so the batch is what the user saw and chose."""
         lib = _library(session, name)
@@ -590,7 +590,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         shown = [p for p in found.proposals if str(p.keep.file.id) in keep_ids]
         batch = rec.choose(shown, keep_ids)
         if not batch:
-            return _redirect(f"/libraries/{lib.name}/recordings", "Nothing to propose")
+            return _redirect(f"/libraries/{lib.name}/encodings", "Nothing to propose")
         where = f" in {path}" if path else ""
         changeset = rec.propose(
             session, batch, f"Keep the best encoding of {len(batch)} tracks{where}"

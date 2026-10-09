@@ -17,7 +17,7 @@ file.
   - [Ratings from MusicMatch preferences](#ratings-from-musicmatch-preferences)
   - [Covers](#covers)
   - [Duplicates](#duplicates)
-  - [Recordings in several encodings](#recordings-in-several-encodings)
+  - [Tracks in several encodings](#tracks-in-several-encodings)
   - [Trash](#trash)
   - [Album folders](#album-folders)
   - [Loose tracks](#loose-tracks)
@@ -314,16 +314,16 @@ copy is on a compilation while another copy is in the artist's own folder (add
 `--include-compilations` to include them). The web UI's Duplicates page does the same,
 and there you can choose another copy to keep for any track, and listen to the copies.
 
-### Recordings in several encodings
+### Tracks in several encodings
 
 A track ripped or converted twice is the same recording, but its audio differs, so it is
 not a duplicate: an album as both MP3 and AAC, an iTunes copy at another bitrate, a loose
-MP3 of an album's track. `aorg recordings` finds them and proposes keeping the best
+MP3 of an album's track. `aorg encodings` finds them and proposes keeping the best
 encoding:
 
-    aorg recordings                           # what would be proposed
-    aorg recordings --path "Yello" --propose
-    aorg recordings --propose --limit 100
+    aorg encodings                           # what would be proposed
+    aorg encodings --path "Yello" --propose
+    aorg encodings --propose --limit 100
 
 Files count as one recording when they are in one album folder with the same title (and
 track number), or when a loose file has the artist and title of a track in exactly one
@@ -338,7 +338,7 @@ When a loose file is better than the album's copy (say, 320 kbps against 160), i
 replace the album's copy, taking its name and album tags. Those are proposed only with
 `--replace`, after you have listened to them. Loose files whose album copy is only on a
 compilation are left alone unless you add `--include-compilations`, as with duplicates.
-The web UI's Recordings page does the same, and there you can choose which file to keep.
+The web UI's Encodings page does the same, and there you can choose which file to keep.
 
 Earlier versions of `aorg` read the length of raw AAC (`.aac`) files wrongly, by up to
 minutes; if your catalog was made with one, run `aorg scan --reread` once first.
@@ -386,7 +386,7 @@ album's other tracks ("07 Title.mp3", or "1-07 Title.mp3" on multi-disc albums),
 gets the album tags those all agree on: album name, album artist, year, track and disc
 totals, and the genre if it has none. Two loose tracks claiming the same number are left
 alone, and so are tracks with no album tag or track number. Clean up duplicates and
-recordings first: loose copies of tracks an album already has are theirs. The web UI's
+encodings first: loose copies of tracks an album already has are theirs. The web UI's
 Loose tracks page does the same, album by album.
 
 ### Leftover files
@@ -592,7 +592,7 @@ Design principles:
 | `blockfile.py` | Block-cached reading of a file, for few network round trips |
 | `changes.py` | Changesets (each records the feature that proposed it): propose, approve, apply, undo; retag, move and trash |
 | `duplicates.py` | Identical copies and what to keep |
-| `recordings.py` | One recording in several encodings, and which to keep |
+| `encodings.py` | One track in several encodings, and which to keep |
 | `album_merge.py` | Album folders holding the same album, and merging them |
 | `neighbours.py` | Loose tracks that belong in an album folder, and moving them there |
 | `leftovers.py` | Litter in folders without music, and trashing it |

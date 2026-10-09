@@ -11,7 +11,7 @@ an artist folder or "Unknown Album") is proposed to join an album folder when
 - no other loose track claims the same number.
 
 Tracks with identical audio in an album folder are left to `duplicates`, and another
-encoding of a track already there is the album's own track (see `recordings`).
+encoding of a track already there is the album's own track (see `encodings`).
 
 The track is named like its new neighbours ("07 Title.mp3", or "1-07 Title.mp3") and
 gets the album-wide tags they agree on (album artist, year, totals, ...), so it sits in
@@ -28,10 +28,10 @@ from sqlalchemy.orm import Session
 
 from . import changes as ch
 from . import duplicates as du
+from .encodings import Track, load_tracks
 from .layout import file_name
 from .models import Change, Changeset, Library
 from .pathparse import normalize_name
-from .recordings import Track, load_tracks
 
 # Album-wide tags a moved track takes from its neighbours, when they all agree; a genre
 # only when it has none, as genres can differ from track to track

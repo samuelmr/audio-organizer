@@ -3,7 +3,7 @@ from conftest import make_audio
 from sqlalchemy import select
 
 from audio_organizer import changes as ch
-from audio_organizer import recordings as rec
+from audio_organizer import encodings as rec
 from audio_organizer import tags
 from audio_organizer.models import AudioFile, Library
 from audio_organizer.scanner import scan

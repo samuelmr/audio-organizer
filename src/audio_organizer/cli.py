@@ -15,12 +15,12 @@ from . import artists as art
 from . import changes as ch
 from . import covers as cv
 from . import duplicates as du
+from . import encodings as rec
 from . import layout as lo
 from . import leftovers as lf
 from . import neighbours as nb
 from . import playlists as pl
 from . import ratings as rt
-from . import recordings as rec
 from . import sync as sy
 from . import sync_jobs as jobs
 from . import writing as wr
@@ -1185,8 +1185,8 @@ def _encoding(file: AudioFile) -> str:
     return f"{file.format} {round((file.bitrate or 0) / 1000)} kbps, {file.duration or 0:.0f} s"
 
 
-@app.command("recordings")
-def recordings(
+@app.command("encodings")
+def encodings(
     ctx: typer.Context,
     path: Annotated[
         str | None, typer.Option(help="Only copies under this path, e.g. an artist folder")
@@ -1210,7 +1210,7 @@ def recordings(
 ) -> None:
     """Find tracks encoded more than once and propose to keep the best encoding.
 
-    Files are one recording in different encodings when they are in one album folder
+    Files are one track in different encodings when they are in one album folder
     with the same title and number, or lie loose with the artist and title of a track
     in one album folder, and their durations are within two seconds. The lossless or
     highest-bitrate copy is kept (WMA last), in the place of the album's copy; the others
@@ -1359,7 +1359,7 @@ def neighbours(
     album tag names exactly one album folder of its artist, and its track number and
     title are not there yet. It is named like the album's other tracks and gets the
     album-wide tags they agree on (album artist, year, track total, ...). Run `aorg dupes`
-    and `aorg recordings` first: loose copies of tracks already in an album are theirs.
+    and `aorg encodings` first: loose copies of tracks already in an album are theirs.
     """
     with _session(ctx) as session:
         lib = _library(session, library)
