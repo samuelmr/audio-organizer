@@ -247,9 +247,27 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             .offset((page - 1) * PAGE_SIZE)
             .limit(PAGE_SIZE)
         ).all()
+        # The folders of each album shown, to tell copies of one album apart
+        keys = {(r.album.lower(), (r.albumartist or "").lower()) for r in rows}
+        paths: dict[tuple[str, str], list[str]] = {}
+        for album, albumartist, path in session.execute(
+            select(
+                func.lower(M.album), func.lower(func.coalesce(M.albumartist, "")), AudioFile.path
+            )
+            .join(AudioFile, M.file_id == AudioFile.id)
+            .where(present(lib.id), func.lower(M.album).in_({k[0] for k in keys}))
+        ):
+            if (album, albumartist) in keys:
+                paths.setdefault((album, albumartist), []).append(path)
+        folders = {
+            (r.album, r.albumartist): _folder_links(
+                lib, paths.get((r.album.lower(), (r.albumartist or "").lower()), [])
+            )
+            for r in rows
+        }
         return render(
             request, "albums.html", library=lib, rows=rows, total=total, q=q, page=page,
-            pages=pages,
+            pages=pages, folders=folders,
         )  # fmt: skip
 
     @app.get("/tracks/{file_id}", response_class=HTMLResponse)

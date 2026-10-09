@@ -776,3 +776,9 @@ def test_message_links_stay_on_the_site(web):
         "/libraries/music", params={"msg": "Hi", "msg_href": "//evil.example", "msg_link": "Go"}
     )
     assert "evil.example" not in page.text
+
+
+def test_albums_list_shows_folders(web):
+    page = web.get("/libraries/music/albums").text
+    assert f'href="{(web.root / "P!nk/Funhouse").as_uri()}"' in page
+    assert "P!nk/Funhouse/" in page
