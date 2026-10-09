@@ -229,7 +229,7 @@ def test_cli_gnudb_needs_an_email(library, monkeypatch):
     assert "AORG_GNUDB_EMAIL" in result.output
 
 
-def test_cli_gnudb_limit_and_no_gnudb(library, monkeypatch):
+def test_cli_gnudb_limit_and_with_gnudb(library, monkeypatch):
     session, lib = library
     db = str(session.get_bind().url)
     monkeypatch.setenv("AORG_GNUDB_EMAIL", "me@example.org")
@@ -249,15 +249,43 @@ def test_cli_gnudb_limit_and_no_gnudb(library, monkeypatch):
     assert result.exit_code == 0, result.output
     assert "gnudb: 1 found, 1 not found" in result.output and asked == [7]
 
-    result = CliRunner().invoke(app, ["--db", db, "scan", "--deep", "--no-gnudb"])
+    result = CliRunner().invoke(app, ["--db", db, "scan", "--deep"])  # not by default
     assert "gnudb" not in result.output and asked == [7]
-    CliRunner().invoke(app, ["--db", db, "scan", "--deep", "--deep-limit", "2"])
+    CliRunner().invoke(app, ["--db", db, "scan", "--deep", "--with-gnudb", "--deep-limit", "2"])
     assert asked == [7, 2]
 
     monkeypatch.delenv("AORG_GNUDB_EMAIL")
-    monkeypatch.delenv("AORG_CONTACT", raising=False)
-    result = CliRunner().invoke(app, ["--db", db, "scan", "--deep"])
+    result = CliRunner().invoke(app, ["--db", db, "scan", "--deep", "--with-gnudb"])
     assert "Skipping gnudb" in result.output and asked == [7, 2]
+
+
+def test_lookup_one_folder_again(library, client, server):
+    session, lib = library
+    gnudb.lookup_library(session, lib, client=client)
+    [(album, entry)] = gnudb.lookup_folder(
+        session, lib, str(lib.root) + "/Texas/Greatest Hits/", client=client
+    )  # absolute, and looked up before
+    assert entry and entry.discid == "940aac0b" and album.album == "Greatest Hits"
+    assert len([c for c in server.commands if c.startswith("cddb query")]) == 2
+    assert gnudb.lookup_folder(session, lib, "Texas", client=client) == []  # no album there
+    with pytest.raises(gnudb.GnudbError, match="not inside"):
+        gnudb.lookup_folder(session, lib, "/elsewhere/Texas", client=client)
+
+
+def test_cli_gnudb_path(library, monkeypatch):
+    session, lib = library
+    db = str(session.get_bind().url)
+    monkeypatch.setenv("AORG_GNUDB_EMAIL", "me@example.org")
+    entry = gnudb.Entry("pop", "940aac0b", "Texas", "Greatest Hits", "2000", "Pop", ["Halo"])
+    folder = gnudb.Folder("Texas/Greatest Hits", "Texas", "Greatest Hits", [], [], [])
+    monkeypatch.setattr(gnudb, "lookup_folder", lambda s, lib, path: [(folder, entry)])
+    result = CliRunner().invoke(app, ["--db", db, "gnudb", "--path", "Texas/Greatest Hits"])
+    assert result.exit_code == 0, result.output
+    assert "found Texas – Greatest Hits (2000, Pop, disc 940aac0b)" in result.output
+    assert "1. Halo" in result.output
+    monkeypatch.setattr(gnudb, "lookup_folder", lambda s, lib, path: [])
+    result = CliRunner().invoke(app, ["--db", db, "gnudb", "--path", "Texas"])
+    assert result.exit_code == 1 and "not an album folder" in result.output
 
 
 def _no_measuring(session, lib, **kwargs):

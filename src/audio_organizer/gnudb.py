@@ -335,21 +335,24 @@ def match(client, folder: Folder) -> Entry | None:
 # --- the library ------------------------------------------------------------------------
 
 
-def folders(session: Session, library: Library) -> list[Folder]:
+def folders(session: Session, library: Library, only: str | None = None) -> list[Folder]:
     """The album folders that can be looked up: the files of one folder with the same
     album, a single disc whose track numbers are 1..n (or missing), all with a duration
-    and with an album artist (or one common artist) and album title."""
+    and with an album artist (or one common artist) and album title. With only, just the
+    folder with that path (relative to the library root, POSIX)."""
     query = (
         select(AudioFile, EffectiveMetadata)
         .join(EffectiveMetadata, EffectiveMetadata.file_id == AudioFile.id)
         .where(present(library.id), EffectiveMetadata.album.is_not(None))
         .order_by(AudioFile.path)
     )
+    if only is not None:
+        query = query.where(AudioFile.path.startswith(only.strip("/") + "/", autoescape=True))
     groups: dict[tuple[str, str], list] = defaultdict(list)
     for file, meta in session.execute(query):
-        groups[(str(PurePosixPath(file.path).parent), normalize_name(meta.album))].append(
-            (file, meta)
-        )
+        parent = str(PurePosixPath(file.path).parent)
+        if only is None or parent == only.strip("/"):
+            groups[(parent, normalize_name(meta.album))].append((file, meta))
     result = []
     for (folder, _), members in groups.items():
         if len(members) < 2 or any(not f.duration for f, _ in members):
@@ -421,6 +424,45 @@ class LookupStats:
     not_found: int = 0
     errors: list[tuple[str, str]] = field(default_factory=list)
     stopped: str | None = None  # why the lookups stopped early
+
+
+def relative_folder(library: Library, path: str) -> str:
+    """The folder as a path relative to the library root: the given path may also be
+    absolute, inside the root."""
+    root = PurePosixPath(library.root)
+    given = PurePosixPath(path)
+    if given.is_absolute():
+        try:
+            given = given.relative_to(root)
+        except ValueError:
+            raise GnudbError(f"{path} is not inside the library {library.root}") from None
+    return str(given).strip("/")
+
+
+def lookup_folder(
+    session: Session, library: Library, folder: str, *, client: Client | None = None
+) -> list[tuple[Folder, Entry | None]]:
+    """Look up one album folder now, even if it was looked up before. Returns each
+    album in it with the entry found, or None; an empty list when the folder holds no
+    album that can be looked up (see folders)."""
+    found = folders(session, library, relative_folder(library, folder))
+    if not found:
+        return []
+    owned = client is None
+    client = client or Client()
+    results = []
+    try:
+        for album in found:
+            entry = match(client, album)
+            if entry:
+                apply(session, album, entry)
+            _record(session, library, album, entry)
+            session.commit()
+            results.append((album, entry))
+    finally:
+        if owned:
+            client.close()
+    return results
 
 
 def lookup_library(

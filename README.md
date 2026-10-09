@@ -59,11 +59,12 @@ After updating `aorg`, `aorg scan --reread` reads every file again once, so that
 newer version reads (such as ratings, sort names or embedded covers) are in the catalog.
 
 A *deep* scan also measures the loudness of every file not measured yet, for ReplayGain,
-looks up album folders in gnudb, and looks up missing album covers online:
+and looks up missing album covers online; with `--with-gnudb` it also looks up album
+folders in gnudb:
 
     aorg scan --deep                  # continues where an interrupted run stopped
     aorg scan --deep --deep-limit 500 # or in parts
-    aorg scan --deep --no-gnudb       # without the gnudb lookups
+    aorg scan --deep --with-gnudb     # also look up albums in gnudb (much slower)
     aorg scan --deep --min-pixels 500 # covers smaller than 500 px count as missing
 
 The steps run one after another, each finishing before the next starts, and all of them
@@ -72,12 +73,17 @@ continue where an interrupted run stopped:
 1. the normal scan of new and changed files;
 2. loudness of the files not measured yet (about a second per file from a network share,
    so a library of 100,000 tracks takes about a day);
-3. gnudb lookups of the album folders not looked up yet (a few seconds per album, see
-   below), skipped without `AORG_GNUDB_EMAIL` or with `--no-gnudb`;
+3. only with `--with-gnudb`: gnudb lookups of the album folders not looked up yet (6 to 15
+   seconds per album, see below), skipped without `AORG_GNUDB_EMAIL`;
 4. cover lookups in MusicBrainz for the albums not looked up yet (at least a second each).
 
 `--deep-limit N` caps steps 2–4 each: N files measured, N albums asked of gnudb, N albums
-of MusicBrainz.
+of MusicBrainz. **With `--with-gnudb` a deep scan takes much longer**: thousands of albums
+add hours to the loudness step's day, because `aorg` asks gnudb for one album at a time.
+gnudb is off by default because it works best on a tidy library: albums are found by
+their folder, artist, title and track count, so duplicates, loose tracks and misnamed
+folders give misses and wasted requests. Remove duplicates, put tracks into their album
+folders and rename them first, then look the albums up.
 
 It reads every file in full, so the first one takes long (about 1 file per second from
 a network share). It uses ReplayGain 2.0 (EBU R128 loudness, -18 LUFS): track gain and
@@ -114,10 +120,13 @@ address that sends too many requests, `aorg` waits three seconds between request
 stops at the first refusal. An album takes one request to find candidates and up to four
 more to read them, so 6 to 15 seconds: about 10 to 25 minutes for 100 albums, and a few
 hours for thousands. To spread that over several days, or to run it apart from the long
-loudness step, use `aorg gnudb`:
+loudness step, use `aorg gnudb`, and to look up one album at once, give its folder (or use
+the *Look up in gnudb* button above the tracks of an album or folder in the web UI; it
+waits for the answer, a few seconds). The one album is looked up again even if it was
+looked up before, and the entry found is listed:
 
     aorg gnudb --limit 100            # ask about 100 albums; the next run continues
-    aorg scan --deep --no-gnudb       # a deep scan that leaves gnudb alone
+    aorg gnudb --path "Texas/Greatest Hits"
 
 `aorg show` lists each field with where its value comes from: the file's tags (`tag`),
 its folder and file name (`path`) or your edit (`manual`), and the other candidates when

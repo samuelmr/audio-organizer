@@ -9,7 +9,7 @@ create_app() takes the session factory, so the same app can serve a local catalo
 import unicodedata
 from collections.abc import Iterator
 from math import ceil
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Annotated
 from urllib.parse import quote, urlencode, urlsplit
 
@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from .. import album_merge as am
 from .. import artists as art
 from .. import changes as ch
-from .. import covers, loudness, tags
+from .. import covers, gnudb, loudness, tags
 from .. import duplicates as du
 from .. import layout as lo
 from .. import neighbours as nb
@@ -189,8 +189,16 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         ).all()
         params = {"q": q, "show": show, "album": album, "albumartist": albumartist,
                   "artist": artist, "folder": folder}  # fmt: skip
+        # The folder gnudb can be asked about: the one shown, or the one holding the album
+        folders = {str(PurePosixPath(file.path).parent) for file, _ in rows}
+        gnudb_folder = (
+            folder.strip("/") if folder is not None
+            else folders.pop() if album is not None and total == len(rows) and len(folders) == 1
+            else None
+        )  # fmt: skip
         return render(
             request, "library.html", library=lib, rows=rows, total=total, sort=sort,
+            gnudb_folder=gnudb_folder,
             page=page, pages=pages, sorts=list(SORTS), filters=list(FILTERS), params=params,
             **params,
         )  # fmt: skip
@@ -268,6 +276,32 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
     def _id3_version(form) -> int | None:
         value = str(form.get("id3_version", ""))
         return int(value) if value in ("3", "4") else None
+
+    @app.post("/libraries/{name}/gnudb")
+    async def gnudb_lookup(request: Request, name: str, session: Session = SessionDep):
+        """Look up one album folder in gnudb. It waits for the answer, a few seconds."""
+        lib = _library(session, name)
+        form = await request.form()
+        folder = str(form.get("folder", "")).strip("/")
+        back = _url(f"/libraries/{lib.name}", folder=folder or None)
+        if not gnudb.has_email():
+            return _redirect(back, "Set AORG_GNUDB_EMAIL to your email address first")
+        try:
+            results = gnudb.lookup_folder(session, lib, folder)
+        except gnudb.GnudbError as e:
+            return _redirect(back, f"gnudb: {e}")
+        if not results:
+            return _redirect(
+                back,
+                "Not an album folder gnudb can be asked about: it needs all the tracks of a "
+                "single disc, numbered 1..n, with an artist and album title",
+            )
+        found = [album for album, entry in results if entry]
+        if not found:
+            return _redirect(back, "gnudb has no matching entry for this album")
+        return _redirect(
+            back, f"Found in gnudb: {', '.join(a.album for a in found)}; not yet in the files"
+        )
 
     @app.post("/tracks/{file_id}/write")
     async def write_track(request: Request, file_id: int, session: Session = SessionDep):

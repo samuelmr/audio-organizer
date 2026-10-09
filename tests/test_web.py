@@ -672,3 +672,34 @@ def test_album_merges_page(web):
     )
     assert response.status_code == 400
     assert web.post("/libraries/music/album-merges", data={}).url.path.endswith("album-merges")
+
+
+def test_gnudb_button_and_lookup(web, monkeypatch):
+    from audio_organizer import gnudb
+
+    assert "Look up in gnudb" not in web.get("/libraries/music").text
+    for params in ({"folder": "P!nk/Funhouse"}, {"album": "Funhouse"}):
+        page = web.get("/libraries/music", params=params).text
+        assert 'name="folder" value="P!nk/Funhouse"' in page
+
+    def post():
+        return web.post("/libraries/music/gnudb", data={"folder": "P!nk/Funhouse"})
+
+    assert "Set AORG_GNUDB_EMAIL" in post().text  # redirected back with a message
+    monkeypatch.setenv("AORG_GNUDB_EMAIL", "me@example.org")
+    album = gnudb.Folder("P!nk/Funhouse", "P!nk", "Funhouse", [], [], [])
+    entry = gnudb.Entry("pop", "1", "P!nk", "Funhouse", "2008", "Pop", ["So What"])
+    asked = []
+
+    def lookup(session, lib, folder):
+        asked.append(folder)
+        return results
+
+    monkeypatch.setattr(gnudb, "lookup_folder", lookup)
+    results = [(album, entry)]
+    assert "Found in gnudb: Funhouse" in post().text
+    results = [(album, None)]
+    assert "no matching entry" in post().text
+    results = []
+    assert "Not an album folder" in post().text
+    assert asked == ["P!nk/Funhouse"] * 3

@@ -176,8 +176,12 @@ def scan_command(
         int | None,
         typer.Option(help="Measure at most this many files and look up this many albums"),
     ] = None,
-    no_gnudb: Annotated[
-        bool, typer.Option("--no-gnudb", help="With --deep, do not look up albums in gnudb")
+    with_gnudb: Annotated[
+        bool,
+        typer.Option(
+            "--with-gnudb",
+            help="With --deep, also look up albums in gnudb (slow; best once the library is tidy)",
+        ),
     ] = False,
     min_pixels: Annotated[
         int, typer.Option(help="Look up covers for tracks whose cover is smaller than this")
@@ -191,10 +195,11 @@ def scan_command(
     side, and no big enough image in their folder, are looked up in MusicBrainz and the
     Cover Art Archive. The results are kept in the catalog, not written into the files
     (see `aorg write-tags` and `aorg covers`). Complete single-disc album folders are
-    looked up in gnudb (needs your email address in AORG_GNUDB_EMAIL; see `aorg gnudb`,
-    and --no-gnudb to skip it) for the album's title, year, genre and track titles.
-    It takes long; it continues where an
-    interrupted run stopped, and --deep-limit splits it into parts.
+    looked up in gnudb only with --with-gnudb (needs your email address in
+    AORG_GNUDB_EMAIL), for the album's title, year, genre and track titles. That adds
+    seconds per album; tidy the library first, or use `aorg gnudb` on its own. It takes
+    long; it continues where an interrupted run stopped, and --deep-limit splits it into
+    parts.
     """
     started = time.monotonic()
     last_report = 0.0
@@ -225,7 +230,7 @@ def scan_command(
         typer.echo(f"  ... and {len(stats.errors) - 20} more")
     if deep:
         _deep_scan(ctx, library, deep_limit)
-        if not no_gnudb:
+        if with_gnudb:
             if gnudb.has_email():
                 _gnudb_lookups(ctx, library, deep_limit)
             else:
@@ -288,6 +293,12 @@ def gnudb_command(
     ctx: typer.Context,
     library: Annotated[str | None, typer.Argument()] = None,
     limit: Annotated[int | None, typer.Option(help="Look up at most this many albums")] = None,
+    path: Annotated[
+        str | None,
+        typer.Option(
+            help="Look up just this album folder now (relative to the library, or inside it)"
+        ),
+    ] = None,
 ) -> None:
     """Look up album folders in gnudb, without a deep scan.
 
@@ -295,10 +306,39 @@ def gnudb_command(
     about 100 albums, and the next run continues with the rest. gnudb needs your email
     address as a contact: set AORG_GNUDB_EMAIL. Requests are spread out (every few
     seconds), so 100 albums take 10 to 25 minutes.
+
+    With --path, one folder is looked up at once, even if it was looked up before.
     """
     if not gnudb.has_email():
         raise typer.BadParameter("set AORG_GNUDB_EMAIL to your email address")
-    _gnudb_lookups(ctx, library, limit)
+    if path is None:
+        _gnudb_lookups(ctx, library, limit)
+        return
+    with _session(ctx) as session:
+        lib = _library(session, library)
+        try:
+            results = gnudb.lookup_folder(session, lib, path)
+        except gnudb.GnudbError as e:
+            typer.echo(f"gnudb: {e}", err=True)
+            raise typer.Exit(1) from None
+    if not results:
+        typer.echo(
+            f"{path}: not an album folder that can be looked up: it needs all the tracks of a "
+            "single disc (numbered 1..n), with a duration, an artist and an album title",
+            err=True,
+        )
+        raise typer.Exit(1)
+    for album, entry in results:
+        if entry is None:
+            typer.echo(f"{album.artist} – {album.album}: no matching entry in gnudb")
+            continue
+        typer.echo(
+            f"{album.artist} – {album.album}: found {entry.artist} – {entry.album}"
+            f" ({entry.year or 'no year'}, {entry.genre or 'no genre'}, disc {entry.discid})"
+        )
+        for number, title in enumerate(entry.titles, start=1):
+            typer.echo(f"  {number:2}. {title}")
+    typer.echo("Values are kept in the catalog; write them with `aorg write-tags`.")
 
 
 def _deep_covers(ctx: typer.Context, library: str | None, limit: int | None, min_pixels: int):
