@@ -732,3 +732,26 @@ def test_cover_lookup_button(web, monkeypatch):
     results[:] = []
     assert "No album here needs a cover" in post().text
     assert asked == ["P!nk/Funhouse"] * 3
+
+
+def test_review_gnudb_values_on_the_write_tags_page(web, Session):
+    from audio_organizer import provenance
+
+    with Session() as session:
+        file = session.scalar(select(AudioFile).where(AudioFile.path.contains("So What")))
+        provenance.set_value(session, file, "gnudb", "title", "So What Now")
+        session.commit()
+    base = "/libraries/music/write-tags"
+    plain = web.get(base, params={"path": "P!nk/"}).text
+    assert "0 files have values not yet in them" in plain  # a lookup below the tag is no value
+    page = web.get(base, params={"path": "P!nk/", "prefer_gnudb": "true"}).text
+    assert 'class="old">So What</span> → So What Now' in page
+    assert 'name="prefer_gnudb" value="true" checked' in page
+    response = web.post(
+        base, data={"path": "P!nk/", "prefer_gnudb": "true"}, follow_redirects=False
+    )
+    assert response.status_code == 303 and response.headers["location"].startswith("/changes/")
+    assert (
+        "Write gnudb&#39;s values to the tags of 1 files"
+        in web.get(response.headers["location"].split("?")[0]).text
+    )

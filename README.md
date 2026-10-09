@@ -238,6 +238,22 @@ fields), `--id3-version` writes MP3 tags as ID3v2.3 or 2.4 (by default each file
 its own), and each batch becomes a changeset to review. The web UI's Write tags page
 does the same.
 
+By default only what the tags lack is written, so a gnudb value that differs from a tag
+is left out: the tag is the stronger evidence. To review those, add `--prefer-gnudb`
+(on the Write tags page: *Replace tags that differ from gnudb's values*; the *Review what
+gnudb found* link above an album's tracks opens it for that album). The listing then
+shows each tag and the gnudb value that would replace it. Choose the fields you trust
+(`--only genre,album`, or by clicking a field on the page), and the files (`--path` is
+an album's folder, say), propose the changeset, and approve or reject its changes file by
+file before anything is written:
+
+    aorg write-tags --prefer-gnudb --path "Texas/Greatest Hits"       # what would change
+    aorg write-tags --prefer-gnudb --only album,genre --propose       # for review
+
+Your own edits are never replaced, and neither are tag values that gnudb only spells
+differently (case, punctuation, "02" for "2"). Once written, the tag and gnudb agree, and
+the track is no longer disputed.
+
 ### Ratings from MusicMatch preferences
 
 MusicMatch Jukebox kept a "preference" for tracks (Excellent, Very Good, Good, Fair,

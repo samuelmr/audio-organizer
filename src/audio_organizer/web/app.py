@@ -695,15 +695,19 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         path: str = "",
         only: str = "",
         limit: int = 100,
+        prefer_gnudb: bool = False,
         session: Session = SessionDep,
     ):
         lib = _library(session, name)
-        found = wr.survey(session, lib, path_prefix=path or None, only=_only(only))
+        found = wr.survey(
+            session, lib, path_prefix=path or None, only=_only(only),
+            prefer=("gnudb",) if prefer_gnudb else (),
+        )  # fmt: skip
         unmeasured = len(loudness.unmeasured(session, lib))
         return render(
             request, "write_tags.html", library=lib, found=found,
             batch=found.files[: max(limit, 1)], path=path, only=only, limit=limit,
-            unmeasured=unmeasured,
+            prefer_gnudb=prefer_gnudb, unmeasured=unmeasured,
         )  # fmt: skip
 
     @app.post("/libraries/{name}/write-tags")
@@ -713,15 +717,20 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         only: Annotated[str, Form()] = "",
         limit: Annotated[int, Form()] = 100,
         id3_version: Annotated[str, Form()] = "",
+        prefer_gnudb: Annotated[bool, Form()] = False,
         session: Session = SessionDep,
     ):
         lib = _library(session, name)
-        found = wr.survey(session, lib, path_prefix=path or None, only=_only(only))
+        found = wr.survey(
+            session, lib, path_prefix=path or None, only=_only(only),
+            prefer=("gnudb",) if prefer_gnudb else (),
+        )  # fmt: skip
         batch = found.files[: max(limit, 1)]
         if not batch:
             return _redirect(f"/libraries/{lib.name}/write-tags", "Nothing to write")
         version = int(id3_version) if id3_version in ("3", "4") else None
-        changeset = wr.propose(session, batch, f"Write tags of {len(batch)} files", version)
+        what = "Write gnudb's values to" if prefer_gnudb else "Write"
+        changeset = wr.propose(session, batch, f"{what} the tags of {len(batch)} files", version)
         return _redirect(f"/changes/{changeset.id}", "Review the changes to the files")
 
     # ---- ratings and covers --------------------------------------------------------------

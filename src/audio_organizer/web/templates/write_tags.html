@@ -16,7 +16,7 @@ run <code>aorg scan --deep</code> to measure them (it reads every file, which ta
  <thead><tr><th>Field</th><th class="num">Files</th></tr></thead>
  <tbody>
  {% for field, n in found.by_field.most_common() %}
-  <tr><td><a href="{{ url(base ~ '/write-tags', path=path, only=field, limit=limit) }}">{{ field }}</a></td><td class="num">{{ n }}</td></tr>
+  <tr><td><a href="{{ url(base ~ '/write-tags', path=path, only=field, limit=limit, prefer_gnudb=prefer_gnudb or none) }}">{{ field }}</a></td><td class="num">{{ n }}</td></tr>
  {% endfor %}
  </tbody>
 </table>
@@ -25,6 +25,7 @@ run <code>aorg scan --deep</code> to measure them (it reads every file, which ta
 <form class="search" method="get" action="{{ base }}/write-tags">
  <input type="search" name="path" value="{{ path }}" placeholder="Only files under a path" aria-label="Path">
  <input name="only" value="{{ only }}" placeholder="Only fields, e.g. replaygain, rating" aria-label="Only these fields">
+ <label title="gnudb's values rank below the tags; this replaces the tags where they differ"><input type="checkbox" name="prefer_gnudb" value="true" {% if prefer_gnudb %}checked{% endif %}> Replace tags that differ from gnudb's values</label>
  <label>Batch of <input name="limit" inputmode="numeric" size="4" value="{{ limit }}"> files</label>
  <button>Show</button>
 </form>
@@ -34,6 +35,7 @@ run <code>aorg scan --deep</code> to measure them (it reads every file, which ta
  <input type="hidden" name="path" value="{{ path }}">
  <input type="hidden" name="only" value="{{ only }}">
  <input type="hidden" name="limit" value="{{ limit }}">
+ {% if prefer_gnudb %}<input type="hidden" name="prefer_gnudb" value="true">{% endif %}
  <label>MP3 tags as
   <select name="id3_version">
    <option value="">each file's own ID3 version</option>
@@ -49,7 +51,7 @@ run <code>aorg scan --deep</code> to measure them (it reads every file, which ta
  {% for pending in batch %}
   <tr>
    <td class="path"><a href="/tracks/{{ pending.file.id }}">{{ pending.file.path }}</a></td>
-   <td>{% for name, value in pending.fields.items() %}{{ name }}: {{ value }}{% if not loop.last %}<br>{% endif %}{% endfor %}</td>
+   <td>{% for name, value in pending.fields.items() %}{{ name }}: {% if prefer_gnudb and pending.before.get(name) %}<span class="old">{{ pending.before[name] }}</span> → {% endif %}{{ value }}{% if not loop.last %}<br>{% endif %}{% endfor %}</td>
   </tr>
  {% endfor %}
  </tbody>

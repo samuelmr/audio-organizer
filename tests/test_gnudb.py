@@ -5,7 +5,8 @@ import pytest
 from sqlalchemy import select
 from typer.testing import CliRunner
 
-from audio_organizer import coverart, gnudb, provenance, tags
+from audio_organizer import changes as ch
+from audio_organizer import coverart, gnudb, provenance, tags, writing
 from audio_organizer.cli import app
 from audio_organizer.models import AudioFile, FieldValue, GnudbLookup, Library
 from audio_organizer.scanner import scan
@@ -335,3 +336,53 @@ def test_gnudb_fills_gaps_but_tags_win(library, client):
     }
     assert rows["Texas/Greatest Hits/01 Halo.mp3"].date == "2000-03-02"  # the tag, not "2000"
     assert rows["Texas/Greatest Hits/02 Insane.mp3"].genre == "Pop"  # no tag: gnudb fills it
+
+
+def test_review_gnudb_values_that_differ_from_tags(library, client):
+    session, lib = library
+    halo = lib.root + "/Texas/Greatest Hits/01 Halo.mp3"
+    tags.write(halo, {"title": "Halo Remixed"})
+    scan(session, lib)
+    gnudb.lookup_library(session, lib, client=client)
+
+    plain = writing.survey(session, lib, only=["title"])
+    assert plain.files == []  # the tag outranks gnudb's "Halo"; nothing is written by default
+
+    found = writing.survey(session, lib, only=["title"], prefer=("gnudb",))
+    [pending] = found.files
+    assert pending.file.path.endswith("01 Halo.mp3")
+    assert pending.fields == {"title": "Halo"} and pending.before == {"title": "Halo Remixed"}
+
+    changeset = writing.propose(session, found.files, "Write gnudb's values")
+    ch.set_status(changeset.changes, "approved")
+    assert all(o.ok for o in ch.apply(session, changeset))
+    assert tags.read(halo).fields["title"] == "Halo"
+    session.expire_all()
+    assert writing.survey(session, lib, only=["title"], prefer=("gnudb",)).files == []
+
+
+def test_preferring_gnudb_keeps_the_users_edits_and_spelling_of_numbers(library, client):
+    session, lib = library
+    gnudb.lookup_library(session, lib, client=client)
+    halo = session.scalar(select(AudioFile).where(AudioFile.path.contains("01 Halo")))
+    provenance.set_value(session, halo, "manual", "title", "My Halo")
+    tags.write(lib.root + "/" + halo.path, {"tracknumber": "01"})  # gnudb says "1"
+    scan(session, lib)
+    session.expire_all()
+    found = writing.survey(session, lib, only=["title", "tracknumber"], prefer=("gnudb",))
+    fields = {p.file.path: p.fields for p in found.files}
+    assert fields["Texas/Greatest Hits/01 Halo.mp3"] == {"title": "My Halo"}  # an edit, not gnudb's
+
+
+def test_cli_write_tags_prefer_gnudb(library, client):
+    session, lib = library
+    tags.write(lib.root + "/Texas/Greatest Hits/01 Halo.mp3", {"title": "Halo Remixed"})
+    scan(session, lib)
+    gnudb.lookup_library(session, lib, client=client)
+    db = str(session.get_bind().url)
+    args = ["--db", db, "write-tags", "--only", "title"]
+    assert "0 files have values" in CliRunner().invoke(app, args).output
+    result = CliRunner().invoke(app, [*args, "--prefer-gnudb"])
+    assert "title: 'Halo Remixed' -> 'Halo'" in result.output
+    result = CliRunner().invoke(app, [*args, "--prefer-gnudb", "--propose"])
+    assert "Changeset" in result.output

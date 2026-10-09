@@ -8,6 +8,7 @@ scanned, so edits made elsewhere are never silently overwritten.
 
 import os
 import shutil
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -16,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from . import covers, pathparse, tags
 from .models import AudioFile, Change, Changeset, CoverImage, Library, PlaylistEntry, utcnow
-from .provenance import resolve, set_value, set_values
+from .provenance import comparable, resolve, set_value, set_values
 
 # Trashed files are kept here, inside the library root, until `aorg trash empty`. The
 # scanner skips folders whose names start with a dot.
@@ -192,18 +193,33 @@ def propose_save_image(
 WRITTEN_SOURCES = ("manual", "analysis", "gnudb", "rule")
 
 
-def unwritten(file: AudioFile) -> dict[str, str]:
+def unwritten(file: AudioFile, prefer: Iterable[str] = ()) -> dict[str, str]:
     """The fields whose chosen value is an edit, a measurement or a lookup that differs
-    from what the file's tags say: values not yet written into the file."""
+    from what the file's tags say: values not yet written into the file.
+
+    A lookup ranks below the tags, so where it differs it is not the chosen value. With
+    prefer, naming such sources (e.g. "gnudb"), their values are taken instead of the
+    tags' (not instead of the user's edits, and not where they only spell a number or a
+    date differently)."""
     resolved = resolve(file.values)
     current = {fv.field: fv.value for fv in file.values if fv.source == "tag"}
-    return {
-        name: resolved[name].value
-        for name in tags.FIELDS
-        if name in resolved
-        and resolved[name].source in WRITTEN_SOURCES
-        and resolved[name].value != current.get(name)
-    }
+    result = {}
+    for name in tags.FIELDS:
+        found = resolved.get(name)
+        if found is None:
+            continue
+        preferred = next((found.candidates[s] for s in prefer if s in found.candidates), None)
+        if found.source in WRITTEN_SOURCES:
+            value = found.value
+        elif preferred is not None and found.source != "manual":
+            value = preferred
+            if name in current and comparable(name, value) == comparable(name, current[name]):
+                continue
+        else:
+            continue
+        if value != current.get(name):
+            result[name] = value
+    return result
 
 
 def propose_tag_sync(

@@ -1435,19 +1435,33 @@ def write_tags(
     id3_version: Annotated[
         int | None, typer.Option(help="Write ID3 tags as version 3 or 4 [default: as now]")
     ] = None,
+    prefer_gnudb: Annotated[
+        bool,
+        typer.Option(
+            "--prefer-gnudb", help="Also replace tag values that differ from gnudb's (see --only)"
+        ),
+    ] = False,
     propose: Annotated[
         bool, typer.Option("--propose", help="Create a changeset for a batch")
     ] = False,
     library: LibraryOption = None,
 ) -> None:
     """Write values that are not yet in the files: your edits, measurements (`aorg scan
-    --deep`) and lookups. Proposed as changesets, in batches."""
+    --deep`) and lookups. Proposed as changesets, in batches.
+
+    A gnudb value ranks below the tag, so by default only what the tags lack is written.
+    With --prefer-gnudb, gnudb's value replaces a different tag, for the fields chosen
+    with --only (e.g. --only genre,album) and the files under --path (one album's folder,
+    say); the listing shows the tag and gnudb's value, and the changeset is reviewed as
+    usual before anything is written.
+    """
     if id3_version not in (None, 3, 4):
         raise typer.BadParameter("--id3-version is 3 or 4")
     fields = [f.strip() for f in only.split(",") if f.strip()] if only else None
     with _session(ctx) as session:
         lib = _library(session, library)
-        found = wr.survey(session, lib, path_prefix=path, only=fields)
+        prefer = ("gnudb",) if prefer_gnudb else ()
+        found = wr.survey(session, lib, path_prefix=path, only=fields, prefer=prefer)
         counts = ", ".join(f"{name} {n}" for name, n in found.by_field.most_common())
         typer.echo(
             f"{len(found.files)} files have values not yet in them"
@@ -1457,8 +1471,9 @@ def write_tags(
         batch = found.files[:limit]
         if propose:
             if batch:
+                what = "Write gnudb's values to" if prefer_gnudb else "Write"
                 changeset = wr.propose(
-                    session, batch, f"Write tags of {len(batch)} files", id3_version
+                    session, batch, f"{what} the tags of {len(batch)} files", id3_version
                 )
                 typer.echo(
                     f"Changeset {changeset.id}: {len(changeset.changes)} files. Review with "
@@ -1466,7 +1481,12 @@ def write_tags(
                 )
             return
         for pending in batch[:20]:
-            typer.echo(f"  {pending.file.path}: {', '.join(pending.fields)}")
+            if prefer_gnudb:
+                typer.echo(f"  {pending.file.path}")
+                for name, value in pending.fields.items():
+                    typer.echo(f"      {name}: {pending.before.get(name)!r} -> {value!r}")
+            else:
+                typer.echo(f"  {pending.file.path}: {', '.join(pending.fields)}")
         if len(found.files) > 20:
             typer.echo(f"  ... and {len(found.files) - 20} more")
         if batch:

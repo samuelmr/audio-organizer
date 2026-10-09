@@ -16,6 +16,7 @@ from .tracks import present
 class Pending:
     file: AudioFile
     fields: dict[str, str]  # field -> value to write
+    before: dict[str, str | None] = field(default_factory=dict)  # field -> the tag now
 
 
 @dataclass
@@ -37,7 +38,10 @@ def survey(
     *,
     path_prefix: str | None = None,
     only: list[str] | None = None,
+    prefer: tuple[str, ...] = (),
 ) -> Survey:
+    """The files with values not yet in their tags. With prefer (e.g. ("gnudb",)), also
+    those where such a lookup's value differs from the tag, and is to replace it."""
     result = Survey()
     candidates = select(FieldValue.file_id).where(FieldValue.source.in_(ch.WRITTEN_SOURCES))
     query = (
@@ -52,13 +56,14 @@ def survey(
         session.scalars(select(Change.file_id).where(Change.status.in_(("proposed", "approved"))))
     )
     for file in session.scalars(query):
-        fields = {k: v for k, v in ch.unwritten(file).items() if matches(k, only)}
+        fields = {k: v for k, v in ch.unwritten(file, prefer).items() if matches(k, only)}
         if not fields:
             continue
         if file.id in waiting:
             result.waiting += 1
             continue
-        result.files.append(Pending(file, fields))
+        tags_now = {fv.field: fv.value for fv in file.values if fv.source == "tag"}
+        result.files.append(Pending(file, fields, {k: tags_now.get(k) for k in fields}))
         result.by_field.update(fields.keys())
     return result
 
@@ -66,6 +71,7 @@ def survey(
 def propose(
     session: Session, files: list[Pending], description: str, id3_version: int | None = None
 ) -> Changeset:
+    """A changeset writing each file's values, for review."""
     changeset = ch.new_changeset(session, description, "writing")
     for pending in files:
         ch.propose_retag(changeset, pending.file, dict(pending.fields), id3_version)
