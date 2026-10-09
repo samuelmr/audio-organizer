@@ -2,6 +2,7 @@
 {% set library = playlist.library %}
 {% block title %}{{ playlist.name }} – audio-organizer{% endblock %}
 {% block content %}
+{% from "_macros.html" import folders %}
 <h1>{{ playlist.name }}</h1>
 
 {% if generated | length > 1 %}
@@ -14,6 +15,7 @@
 
 {% if shown %}
 <h2>{{ shown.name }}: {{ shown.tracks | length }} tracks{% if shown.unresolved %}, {{ shown.unresolved }} not found{% endif %}</h2>
+{{ folders(folder_links) }}
 <table class="tracks">
  <thead><tr><th class="num">#</th><th>Artist</th><th>Title</th><th>Album</th><th class="num">Time</th></tr></thead>
  <tbody>

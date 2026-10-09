@@ -107,6 +107,11 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
 
     def render(request: Request, template: str, status_code: int = 200, **context):
         context.setdefault("message", request.query_params.get("msg"))
+        href = request.query_params.get("msg_href", "")
+        label = request.query_params.get("msg_link", "")
+        # Only paths on this site, so a crafted link cannot send the reader elsewhere
+        if label and href.startswith("/") and not href.startswith(("//", "/\\")):
+            context.setdefault("message_link", (href, label))
         if context.get("library") is None:
             # Pages outside a library still link to its tracks and playlists in the menu
             # when there is only one library
@@ -189,6 +194,12 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         ).all()
         params = {"q": q, "show": show, "album": album, "albumartist": albumartist,
                   "artist": artist, "folder": folder}  # fmt: skip
+        # Where the shown album, artist or folder lives on disk (all pages of it)
+        folder_links = (
+            _folder_links(lib, session.scalars(query.with_only_columns(AudioFile.path)).all())
+            if album is not None or artist is not None or folder is not None
+            else []
+        )
         # The folder gnudb can be asked about: the one shown, or the one holding the album
         folders = {str(PurePosixPath(file.path).parent) for file, _ in rows}
         album_folder = (
@@ -198,7 +209,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         )  # fmt: skip
         return render(
             request, "library.html", library=lib, rows=rows, total=total, sort=sort,
-            album_folder=album_folder,
+            album_folder=album_folder, folder_links=folder_links,
             page=page, pages=pages, sorts=list(SORTS), filters=list(FILTERS), params=params,
             **params,
         )  # fmt: skip
@@ -300,7 +311,12 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         if not found:
             return _redirect(back, "gnudb has no matching entry for this album")
         return _redirect(
-            back, f"Found in gnudb: {', '.join(a.album for a in found)}; not yet in the files"
+            back,
+            f"Found in gnudb: {', '.join(a.album for a in found)}; not yet in the files.",
+            link=(
+                _url(f"/libraries/{lib.name}/write-tags", path=folder + "/", prefer_gnudb="true"),
+                "Review what gnudb found",
+            ),
         )
 
     @app.post("/libraries/{name}/coverart")
@@ -325,7 +341,11 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             return _redirect(back, "No cover found online for this album")
         return _redirect(
             back,
-            f"Found a cover for {', '.join(a.album for a in found)}; embed it on the Covers page",
+            f"Found a cover for {', '.join(a.album for a in found)}.",
+            link=(
+                _url(f"/libraries/{lib.name}/covers", path=folder + "/"),
+                "Embed it on the Covers page",
+            ),
         )
 
     @app.post("/tracks/{file_id}/write")
@@ -1000,6 +1020,8 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         return render(
             request, "playlist.html", playlist=playlist, generated=generated, shown=shown,
             sorts=pl.SORTS, error=None,
+            folder_links=_folder_links(playlist.library, [t.path for t in shown.tracks])
+            if shown else [],
         )  # fmt: skip
 
     @app.post("/playlists/{playlist_id}/edit", response_class=HTMLResponse)
@@ -1311,9 +1333,31 @@ def _like_escape(text: str) -> str:
     return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-def _redirect(path: str, message: str | None = None) -> RedirectResponse:
+def _folder_links(library: Library, paths) -> list[tuple[str, str]]:
+    """The distinct folders of library-relative file paths, each with the file:// URI of
+    the folder on this machine, to find the files in a file manager (a browser may refuse
+    to open it from a web page)."""
+    folders = sorted({str(PurePosixPath(p).parent) for p in paths})
+    return [
+        (
+            f,
+            PurePosixPath(library.root, f).as_uri()
+            if f != "."
+            else PurePosixPath(library.root).as_uri(),
+        )
+        for f in folders
+    ]
+
+
+def _redirect(
+    path: str, message: str | None = None, link: tuple[str, str] | None = None
+) -> RedirectResponse:
+    """Redirect with a message, which may be followed by a link (path, label)."""
     if message:
-        path += ("&" if "?" in path else "?") + urlencode({"msg": message})
+        extra = {"msg": message}
+        if link:
+            extra.update(msg_href=link[0], msg_link=link[1])
+        path += ("&" if "?" in path else "?") + urlencode(extra)
     return RedirectResponse(path, status_code=303)
 
 

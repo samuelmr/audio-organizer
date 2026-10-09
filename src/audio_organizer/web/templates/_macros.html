@@ -9,3 +9,9 @@
 {% macro thumb(file_id) -%}
 <span class="thumb"><img src="/tracks/{{ file_id }}/art" alt="" loading="lazy"></span>
 {%- endmacro %}
+
+{# The folders holding some tracks, each linking to the folder on this machine #}
+{% macro folders(links) -%}
+{% if links %}<p class="hint folders">{{ "Folder" if links | length == 1 else "Folders" }}:
+ {% for folder, uri in links %}<a class="path" href="{{ uri }}" title="Open in the file manager">{{ folder }}/</a>{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+{%- endmacro %}

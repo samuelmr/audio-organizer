@@ -15,6 +15,25 @@
     else img.addEventListener("error", () => img.remove());
   });
 
+  // Forms with data-busy (slow lookups that wait for an online answer): the button is
+  // disabled and shows a spinner while the page loads, so it is not clicked twice.
+  document.querySelectorAll("form[data-busy]").forEach((form) => {
+    form.addEventListener("submit", () => {
+      const button = form.querySelector("button");
+      if (!button) return;
+      button.disabled = true;
+      button.classList.add("busy");
+    });
+  });
+  // Coming back with the browser's back button restores the page as it was left
+  window.addEventListener("pageshow", (event) => {
+    if (!event.persisted) return;
+    document.querySelectorAll("form[data-busy] button").forEach((button) => {
+      button.disabled = false;
+      button.classList.remove("busy");
+    });
+  });
+
   // A checkbox with data-select-all="name" selects or deselects all checkboxes of that
   // name, and shows a partial selection.
   document.querySelectorAll("input[data-select-all]").forEach((all) => {

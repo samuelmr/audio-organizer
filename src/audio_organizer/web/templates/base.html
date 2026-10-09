@@ -45,7 +45,7 @@
  </nav>
 </header>
 <main>
- {% if message %}<p class="message" role="status">{{ message }}</p>{% endif %}
+ {% if message %}<p class="message" role="status">{{ message }}{% if message_link %} <a href="{{ message_link[0] }}">{{ message_link[1] }}</a>{% endif %}</p>{% endif %}
  {% block content %}{% endblock %}
 </main>
 </body>

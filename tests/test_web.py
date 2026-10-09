@@ -148,6 +148,8 @@ def test_playlists(web):
         data={"playlist_name": "All", "rule": "duration>0", "sort": "title", "group_by": ""},
     )
     assert "All: 2 tracks" in response.text  # one Halo: identical audio counts once
+    assert "Folders:" in response.text and "Texas/Greatest Hits/" in response.text
+    assert (web.root / "Texas/Greatest Hits").as_uri() in response.text
 
     response = web.post(
         f"{playlist_path}/edit", data={"playlist_name": "All", "rule": "x", "sort": "title"}
@@ -755,3 +757,22 @@ def test_review_gnudb_values_on_the_write_tags_page(web, Session):
         "Write gnudb&#39;s values to the tags of 1 files"
         in web.get(response.headers["location"].split("?")[0]).text
     )
+
+
+def test_folders_of_albums_and_artists_link_to_disk(web):
+    uri = (web.root / "P!nk/Funhouse").as_uri()
+    for params in ({"album": "Funhouse"}, {"artist": "P!nk"}, {"folder": "P!nk/Funhouse"}):
+        page = web.get("/libraries/music", params=params).text
+        assert f'href="{uri}"' in page and "Folder:" in page
+    assert "Folder:" not in web.get("/libraries/music").text
+
+
+def test_message_links_stay_on_the_site(web):
+    page = web.get(
+        "/libraries/music", params={"msg": "Hi", "msg_href": "/changes", "msg_link": "Go"}
+    )
+    assert '<a href="/changes">Go</a>' in page.text
+    page = web.get(
+        "/libraries/music", params={"msg": "Hi", "msg_href": "//evil.example", "msg_link": "Go"}
+    )
+    assert "evil.example" not in page.text

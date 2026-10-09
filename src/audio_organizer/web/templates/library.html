@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ library.name }} – audio-organizer{% endblock %}
 {% block content %}
-{% from "_macros.html" import thumb %}
+{% from "_macros.html" import thumb, folders %}
 {% set base = '/libraries/' ~ library.name %}
 {% if album is not none %}
  <h1>{{ album }}</h1>
@@ -16,17 +16,19 @@
  <h1>{{ library.name }}</h1>
 {% endif %}
 
+{{ folders(folder_links) }}
+
 {% if album_folder is not none and total %}
-<form method="post" action="{{ base }}/gnudb">
+<form method="post" action="{{ base }}/gnudb" data-busy>
  <input type="hidden" name="folder" value="{{ album_folder }}">
  <p><button>Look up in gnudb</button>
  <span class="hint">Asks gnudb for this album's title, year, genre and track titles (takes a few seconds). The values stay in the catalog until you write them to the files.</span></p>
 </form>
 <p class="hint"><a href="{{ url(base ~ '/write-tags', path=album_folder ~ '/', prefer_gnudb='true') }}">Review what gnudb found</a>: where its values differ from the tags, and write them into the files.</p>
-<form method="post" action="{{ base }}/coverart">
+<form method="post" action="{{ base }}/coverart" data-busy>
  <input type="hidden" name="folder" value="{{ album_folder }}">
  <p><button>Look up cover</button>
- <span class="hint">Looks for a front cover online if this album has none (takes a few seconds). Embed what is found on the <a href="{{ base }}/covers">Covers</a> page.</span></p>
+ <span class="hint">Looks for a front cover online if this album has none (takes a few seconds). Embed what is found on the <a href="{{ url(base ~ '/covers', path=album_folder ~ '/') }}">Covers</a> page.</span></p>
 </form>
 {% endif %}
 
