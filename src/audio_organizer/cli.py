@@ -176,6 +176,9 @@ def scan_command(
         int | None,
         typer.Option(help="Measure at most this many files and look up this many albums"),
     ] = None,
+    no_gnudb: Annotated[
+        bool, typer.Option("--no-gnudb", help="With --deep, do not look up albums in gnudb")
+    ] = False,
     min_pixels: Annotated[
         int, typer.Option(help="Look up covers for tracks whose cover is smaller than this")
     ] = cv.MIN_PIXELS,
@@ -188,8 +191,9 @@ def scan_command(
     side, and no big enough image in their folder, are looked up in MusicBrainz and the
     Cover Art Archive. The results are kept in the catalog, not written into the files
     (see `aorg write-tags` and `aorg covers`). Complete single-disc album folders are
-    looked up in gnudb (needs AORG_GNUDB_EMAIL, the address the application is registered
-    with) for the album's title, year, genre and track titles. It takes long; it continues where an
+    looked up in gnudb (needs your email address in AORG_GNUDB_EMAIL; see `aorg gnudb`,
+    and --no-gnudb to skip it) for the album's title, year, genre and track titles.
+    It takes long; it continues where an
     interrupted run stopped, and --deep-limit splits it into parts.
     """
     started = time.monotonic()
@@ -221,7 +225,11 @@ def scan_command(
         typer.echo(f"  ... and {len(stats.errors) - 20} more")
     if deep:
         _deep_scan(ctx, library, deep_limit)
-        _deep_gnudb(ctx, library, deep_limit)
+        if not no_gnudb:
+            if gnudb.has_email():
+                _gnudb_lookups(ctx, library, deep_limit)
+            else:
+                typer.echo("Skipping gnudb: set AORG_GNUDB_EMAIL to your email address")
         _deep_covers(ctx, library, deep_limit, min_pixels)
 
 
@@ -255,23 +263,17 @@ def _deep_scan(ctx: typer.Context, library: str | None, limit: int | None) -> No
     )
 
 
-def _deep_gnudb(ctx: typer.Context, library: str | None, limit: int | None) -> None:
+def _gnudb_lookups(ctx: typer.Context, library: str | None, limit: int | None) -> None:
     started = time.monotonic()
 
     def progress(done: int, total: int, album: str, error: str | None) -> None:
         if error:
             typer.echo(f"  ! {error}", err=True)
-        if done % 10 == 0 or done == total:
-            typer.echo(f"  looked up {done}/{total}: {album}", err=True)
+        typer.echo(f"  looked up {done}/{total}: {album}", err=True)
 
-    try:
-        gnudb.email()
-    except gnudb.GnudbRefused as e:
-        typer.echo(f"Skipping gnudb: {e}")
-        return
     with _session(ctx) as session:
         lib = _library(session, library)
-        typer.echo("Looking up albums in gnudb")
+        typer.echo("Looking up albums in gnudb (one request every few seconds)")
         stats = gnudb.lookup_library(session, lib, limit=limit, progress=progress)
     typer.echo(
         f"gnudb: {stats.found} found, {stats.not_found} not found, {len(stats.errors)} "
@@ -279,6 +281,24 @@ def _deep_gnudb(ctx: typer.Context, library: str | None, limit: int | None) -> N
     )
     if stats.stopped:
         typer.echo(f"Stopped: {stats.stopped}")
+
+
+@app.command("gnudb")
+def gnudb_command(
+    ctx: typer.Context,
+    library: Annotated[str | None, typer.Argument()] = None,
+    limit: Annotated[int | None, typer.Option(help="Look up at most this many albums")] = None,
+) -> None:
+    """Look up album folders in gnudb, without a deep scan.
+
+    The same lookup as in `aorg scan --deep`, on its own and in parts: --limit 100 asks
+    about 100 albums, and the next run continues with the rest. gnudb needs your email
+    address as a contact: set AORG_GNUDB_EMAIL. Requests are spread out (every few
+    seconds), so 100 albums take 10 to 25 minutes.
+    """
+    if not gnudb.has_email():
+        raise typer.BadParameter("set AORG_GNUDB_EMAIL to your email address")
+    _gnudb_lookups(ctx, library, limit)
 
 
 def _deep_covers(ctx: typer.Context, library: str | None, limit: int | None, min_pixels: int):

@@ -8,9 +8,9 @@ and track count agree with the folder's, and (when the folder's tracks have titl
 of its track titles do too. Accepted entries are stored as values from the source
 "gnudb" (see provenance.SOURCE_PRIORITY), not written into the files.
 
-gnudb answers only registered applications: the hello names the developer's email
-address (AORG_GNUDB_EMAIL, else AORG_CONTACT), which must be the one the application
-was registered with. The HTTP interface is often unreachable, so this speaks cddbp
+gnudb refuses clients that give no contact address ("500 Unknown application"): the hello
+carries the user's own email address (AORG_GNUDB_EMAIL, else AORG_CONTACT), never one of
+the maintainer's. The HTTP interface is often unreachable, so this speaks cddbp
 (protocol level 6) on port 8880, one session for all lookups, at most one request every
 three seconds. A refused connection or a 5xx refusal of the hello ends the lookups, since
 every further request would fail, and retrying only adds to what got the address blocked.
@@ -51,12 +51,19 @@ class GnudbRefused(GnudbError):
     """The service refused the connection or this application: stop asking."""
 
 
+def has_email() -> bool:
+    try:
+        email()
+    except GnudbRefused:
+        return False
+    return True
+
+
 def email() -> str:
     address = os.environ.get("AORG_GNUDB_EMAIL") or os.environ.get("AORG_CONTACT") or ""
     if "@" not in address:
         raise GnudbRefused(
-            "gnudb needs the email address the application was registered with: "
-            "set AORG_GNUDB_EMAIL"
+            "gnudb asks clients for a contact email address: set AORG_GNUDB_EMAIL to yours"
         )
     return address
 

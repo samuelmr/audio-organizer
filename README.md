@@ -63,7 +63,21 @@ looks up album folders in gnudb, and looks up missing album covers online:
 
     aorg scan --deep                  # continues where an interrupted run stopped
     aorg scan --deep --deep-limit 500 # or in parts
+    aorg scan --deep --no-gnudb       # without the gnudb lookups
     aorg scan --deep --min-pixels 500 # covers smaller than 500 px count as missing
+
+The steps run one after another, each finishing before the next starts, and all of them
+continue where an interrupted run stopped:
+
+1. the normal scan of new and changed files;
+2. loudness of the files not measured yet (about a second per file from a network share,
+   so a library of 100,000 tracks takes about a day);
+3. gnudb lookups of the album folders not looked up yet (a few seconds per album, see
+   below), skipped without `AORG_GNUDB_EMAIL` or with `--no-gnudb`;
+4. cover lookups in MusicBrainz for the albums not looked up yet (at least a second each).
+
+`--deep-limit N` caps steps 2–4 each: N files measured, N albums asked of gnudb, N albums
+of MusicBrainz.
 
 It reads every file in full, so the first one takes long (about 1 file per second from
 a network share). It uses ReplayGain 2.0 (EBU R128 loudness, -18 LUFS): track gain and
@@ -90,10 +104,20 @@ CDDB database, by a table of contents made from the tracks' durations. A gnudb e
 accepted only when its artist, album title and track count agree with the folder's and
 most of its track titles with the tracks'. Its album, year, genre and track titles are
 kept in the catalog as `gnudb` values, which rank above tags in the effective values (and
-show as disputed where they differ), until you write them into the files. gnudb answers
-only registered applications: set `AORG_GNUDB_EMAIL` to the address `aorg` is registered
-with, or the lookups are skipped. Each folder is looked up once, and again when its track
-count changes.
+show as disputed where they differ), until you write them into the files. Each folder is
+looked up once, and again when its track count changes.
+
+gnudb asks every client for a contact address, and refuses those that give none. Set
+`AORG_GNUDB_EMAIL` to your own email address (`AORG_CONTACT` is used if it is not set);
+without one the gnudb lookups are skipped. To be kind to gnudb, which may block an
+address that sends too many requests, `aorg` waits three seconds between requests, and
+stops at the first refusal. An album takes one request to find candidates and up to four
+more to read them, so 6 to 15 seconds: about 10 to 25 minutes for 100 albums, and a few
+hours for thousands. To spread that over several days, or to run it apart from the long
+loudness step, use `aorg gnudb`:
+
+    aorg gnudb --limit 100            # ask about 100 albums; the next run continues
+    aorg scan --deep --no-gnudb       # a deep scan that leaves gnudb alone
 
 `aorg show` lists each field with where its value comes from: the file's tags (`tag`),
 its folder and file name (`path`) or your edit (`manual`), and the other candidates when

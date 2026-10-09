@@ -66,3 +66,10 @@ def copy_audio(audio_templates):
 @pytest.fixture
 def Session(tmp_path):
     return make_sessionmaker(f"sqlite:///{tmp_path / 'catalog.db'}")
+
+
+@pytest.fixture(autouse=True)
+def no_gnudb_email(monkeypatch):
+    """Tests never reach gnudb, whatever the developer's environment holds."""
+    monkeypatch.delenv("AORG_GNUDB_EMAIL", raising=False)
+    monkeypatch.delenv("AORG_CONTACT", raising=False)

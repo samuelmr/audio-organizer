@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import select
 from typer.testing import CliRunner
 
-from audio_organizer import gnudb, provenance, tags
+from audio_organizer import coverart, gnudb, provenance, tags
 from audio_organizer.cli import app
 from audio_organizer.models import AudioFile, FieldValue, GnudbLookup, Library
 from audio_organizer.scanner import scan
@@ -218,3 +218,49 @@ def test_incomplete_albums_are_not_looked_up(library):
 def test_cli_scan_deep_names_gnudb():
     result = CliRunner().invoke(app, ["scan", "--help"], terminal_width=200)
     assert "gnudb" in result.output
+
+
+def test_cli_gnudb_needs_an_email(library, monkeypatch):
+    session, lib = library
+    monkeypatch.delenv("AORG_GNUDB_EMAIL", raising=False)
+    monkeypatch.delenv("AORG_CONTACT", raising=False)
+    result = CliRunner().invoke(app, ["--db", str(session.get_bind().url), "gnudb"])
+    assert result.exit_code != 0
+    assert "AORG_GNUDB_EMAIL" in result.output
+
+
+def test_cli_gnudb_limit_and_no_gnudb(library, monkeypatch):
+    session, lib = library
+    db = str(session.get_bind().url)
+    monkeypatch.setenv("AORG_GNUDB_EMAIL", "me@example.org")
+    asked = []
+
+    def fake_lookup(session, library, *, limit=None, **kwargs):
+        asked.append(limit)
+        return gnudb.LookupStats(albums=3, found=1, not_found=1)
+
+    monkeypatch.setattr(gnudb, "lookup_library", fake_lookup)
+    monkeypatch.setattr("audio_organizer.loudness.measure_library", _no_measuring)
+    monkeypatch.setattr(
+        "audio_organizer.coverart.lookup_library", lambda *a, **k: coverart.LookupStats()
+    )
+
+    result = CliRunner().invoke(app, ["--db", db, "gnudb", "--limit", "7"])
+    assert result.exit_code == 0, result.output
+    assert "gnudb: 1 found, 1 not found" in result.output and asked == [7]
+
+    result = CliRunner().invoke(app, ["--db", db, "scan", "--deep", "--no-gnudb"])
+    assert "gnudb" not in result.output and asked == [7]
+    CliRunner().invoke(app, ["--db", db, "scan", "--deep", "--deep-limit", "2"])
+    assert asked == [7, 2]
+
+    monkeypatch.delenv("AORG_GNUDB_EMAIL")
+    monkeypatch.delenv("AORG_CONTACT", raising=False)
+    result = CliRunner().invoke(app, ["--db", db, "scan", "--deep"])
+    assert "Skipping gnudb" in result.output and asked == [7, 2]
+
+
+def _no_measuring(session, lib, **kwargs):
+    from audio_organizer.loudness import DeepScanStats
+
+    return DeepScanStats()
