@@ -512,7 +512,7 @@ Tracks carry these object metadata (`x-amz-meta-*`), all optional, lowercase,
 percent-encoded UTF-8, and left out when empty:
 
 | Key | Value |
-|---|---|
+| --- | --- |
 | `artist`, `albumartist`, `album`, `title`, `genre`, `composer` | text |
 | `artistsort`, `albumartistsort` | text |
 | `tracknumber`, `tracktotal`, `discnumber`, `disctotal` | plain integers: "02." or "2/12" is `2` |
