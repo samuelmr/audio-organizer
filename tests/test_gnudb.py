@@ -92,6 +92,15 @@ def test_pseudo_toc_lays_the_tracks_end_to_end():
     assert seconds == (150 + 4500 + round(120.5 * 75)) // 75
 
 
+def test_titles_are_compared_loosely():
+    assert gnudb.title_similarity("New Adventures in Hi-Fi", "New Adventures In Hi-Fi CD CD") == 1
+    assert gnudb.title_similarity("Greatest Hits", "Greatest Hits (Remastered) CD1") == 1
+    assert gnudb.title_similarity("Where Heaven Ends", "When Heaven Ends") >= 0.85
+    assert gnudb.title_similarity("Nothing But Love", "Nothin' But Love") >= 0.85
+    assert gnudb.title_similarity("Fever", "Greatest Hits") < 0.5
+    assert gnudb.title_similarity("Greatest Hits", "Greatest Hitz and More") < 0.85
+
+
 def test_parse_entry_joins_long_titles_and_splits_compilations():
     entry = gnudb.parse_entry(
         "misc",
@@ -297,3 +306,32 @@ def _no_measuring(session, lib, **kwargs):
     from audio_organizer.loudness import DeepScanStats
 
     return DeepScanStats()
+
+
+def test_a_typo_in_the_album_title_still_matches(library, client):
+    session, lib = library
+    for file in session.scalars(select(AudioFile)):
+        provenance.set_value(session, file, "manual", "album", "Greatest Hitz")
+    stats = gnudb.lookup_library(session, lib, client=client)
+    assert (stats.found, stats.not_found) == (1, 0)
+    assert set(_values(session, "album")) == {
+        "Texas/Greatest Hits/01 Halo.mp3",
+        "Texas/Greatest Hits/02 Insane.mp3",
+    }  # the entry's spelling is kept as gnudb's value; the manual one stays effective
+
+
+def test_gnudb_fills_gaps_but_tags_win(library, client):
+    from audio_organizer.models import EffectiveMetadata
+
+    session, lib = library
+    gnudb.lookup_library(session, lib, client=client)
+    rows = {
+        r.path: r
+        for r in session.execute(
+            select(AudioFile.path, EffectiveMetadata.genre, EffectiveMetadata.date).join(
+                EffectiveMetadata, EffectiveMetadata.file_id == AudioFile.id
+            )
+        )
+    }
+    assert rows["Texas/Greatest Hits/01 Halo.mp3"].date == "2000-03-02"  # the tag, not "2000"
+    assert rows["Texas/Greatest Hits/02 Insane.mp3"].genre == "Pop"  # no tag: gnudb fills it

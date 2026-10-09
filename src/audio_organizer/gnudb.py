@@ -3,9 +3,10 @@ track lengths it finds the album's artist, title, year, genre and track titles.
 
 An album folder has no real table of contents, so a pseudo-TOC is made from the tracks'
 durations. Rips are rarely sample-exact, so gnudb mostly answers with inexact matches,
-often several editions of the album; a candidate is accepted only when its artist, title
-and track count agree with the folder's, and (when the folder's tracks have titles) most
-of its track titles do too. Accepted entries are stored as values from the source
+often several editions of the album; a candidate is accepted only when its artist and
+track count agree with the folder's, its album title is much like the folder's (a typo
+or a stray "CD" does not matter), and (when the folder's tracks have titles) most of its
+track titles agree too. Accepted entries are stored as values from the source
 "gnudb" (see provenance.SOURCE_PRIORITY), not written into the files.
 
 gnudb refuses clients that give no contact address ("500 Unknown application"): the hello
@@ -16,7 +17,9 @@ three seconds. A refused connection or a 5xx refusal of the hello ends the looku
 every further request would fail, and retrying only adds to what got the address blocked.
 """
 
+import difflib
 import os
+import re
 import socket
 import time
 from collections import Counter, defaultdict
@@ -40,6 +43,7 @@ LEAD_IN = 150  # the first track starts 2 seconds in
 PAUSE = 3.0  # seconds between requests; gnudb may block an address that looks like a bot
 APPLICATION = "audio-organizer"
 MIN_TITLE_MATCH = 0.5  # of the folder's titled tracks that a candidate must agree with
+MIN_TITLE_SIMILARITY = 0.85  # of the album titles, 0-1: tolerates a typo or a stray word
 VARIOUS = {"various", "various artists", "va", "varios"}
 
 
@@ -306,20 +310,36 @@ def title_agreement(wanted: list[str | None], found: list[str]) -> float:
     pairs = [(w, f) for w, f in zip(wanted, found, strict=False) if w]
     if not pairs:
         return 1.0
-    same = sum(normalize_name(comparable_title(w)) == normalize_name(comparable_title(f))
-               for w, f in pairs)  # fmt: skip
+    same = sum(title_similarity(w, f) >= MIN_TITLE_SIMILARITY for w, f in pairs)
     return same / len(pairs)
 
 
+def _title_key(title: str) -> str:
+    """A title without editions' additions ("(bonus)", "CD 1") and the "CD" some entries
+    end with, in a loose form (case, accents and punctuation ignored)."""
+    return re.sub(r"( cd)+$", "", comparable_title(title))
+
+
+def title_similarity(wanted: str, found: str) -> float:
+    """0-1: how alike two titles (of albums or tracks) are; 1.0 for the same title in
+    other letter case, accents or punctuation, or with an edition's addition."""
+    return difflib.SequenceMatcher(None, _title_key(wanted), _title_key(found)).ratio()
+
+
 def match(client, folder: Folder) -> Entry | None:
-    """The entry for the folder: of the candidates with the folder's artist and album
-    title, the first whose entry has the folder's track count and mostly its titles."""
+    """The entry for the folder: of the candidates with the folder's artist and a similar
+    album title (the most alike first), the first whose entry has the folder's track
+    count and mostly its titles. Titles are compared loosely, since an entry's spelling
+    often differs a little ("When" for "Where"); the track titles then still have to
+    agree, and a wrong match is easy to discard as the values are only evidence."""
     offsets, seconds = pseudo_toc([f.duration or 0 for f in folder.files])
-    wanted = comparable_title(folder.album)
-    candidates = [
-        c
+    scored = [
+        (title_similarity(folder.album, c.album), c)
         for c in client.query(offsets, seconds)
-        if _same_artist(folder.artist, c.artist) and comparable_title(c.album) == wanted
+        if _same_artist(folder.artist, c.artist)
+    ]
+    candidates = [
+        c for score, c in sorted(scored, key=lambda sc: -sc[0]) if score >= MIN_TITLE_SIMILARITY
     ]
     for candidate in candidates[:4]:
         entry = client.read(candidate)

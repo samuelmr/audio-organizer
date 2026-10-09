@@ -71,7 +71,9 @@ def test_numbers_and_years_disagree_only_by_value(Session, copy_audio, tmp_path)
     set_value(session, effective.file, "gnudb", "date", "2016")
     session.commit()
     session.expire_all()
-    assert _effective(session, "%Onderweg%").disputed  # 2016 is not 2017
+    effective = _effective(session, "%Onderweg%")
+    assert effective.disputed  # 2016 is not 2017
+    assert effective.year == 2017  # but a lookup does not outrank the tag
 
 
 def test_outdated_derived_table_is_rebuilt(Session, copy_audio, tmp_path):

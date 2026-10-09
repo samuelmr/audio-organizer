@@ -348,7 +348,8 @@ def gnudb_command(
         )
         for number, title in enumerate(entry.titles, start=1):
             typer.echo(f"  {number:2}. {title}")
-    typer.echo("Values are kept in the catalog; write them with `aorg write-tags`.")
+    if any(entry for _, entry in results):
+        typer.echo("Values are kept in the catalog; write them with `aorg write-tags`.")
 
 
 def _cover_lookups(ctx: typer.Context, library: str | None, limit: int | None, min_pixels: int):

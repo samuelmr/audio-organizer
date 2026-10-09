@@ -13,9 +13,9 @@ from .tags import FIELDS, NUMBER_FIELDS, parse_number, parse_year
 # Higher wins. A manual edit always wins and is never overwritten by scans.
 SOURCE_PRIORITY = {
     "manual": 100,
-    "gnudb": 60,
     "analysis": 55,  # measured from the audio (ReplayGain): newer than what tags say
     "tag": 50,
+    "gnudb": 48,  # a lookup by durations can be wrong: fills gaps, tags win when they differ
     "rule": 45,  # derived by a rule the user set up (stars from MusicMatch preference)
     "neighbours": 40,
     "path": 30,

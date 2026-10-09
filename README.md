@@ -138,11 +138,14 @@ A single album is looked up again even if nothing was found before:
 **gnudb.** Complete single-disc album folders (all tracks present, numbered 1..n or not
 at all, with a known album artist and title) are looked up in [gnudb](https://gnudb.org),
 the free CDDB database, by a table of contents made from the tracks' durations. A gnudb
-entry is accepted only when its artist, album title and track count agree with the
-folder's and most of its track titles with the tracks'. Its album, year, genre and track
-titles are kept in the catalog as `gnudb` values, which rank above tags in the effective
-values (and show as disputed where they differ), until you write them into the files.
-Each folder is looked up once, and again when its track count changes.
+entry is accepted only when its artist and track count agree with the folder's, its album
+title is much like the folder's (a typo, or a trailing "CD" or "(Remastered)", does not
+matter) and most of its track titles are like the tracks'. Its album, artist, year, genre
+and track titles are kept in the catalog as `gnudb` values, which are only evidence: they
+fill in what the tags lack, but where they differ from the tags the tags stay effective
+and the track shows as disputed. Nothing is written into the files until you ask. A wrong
+match is easy to discard. Each folder is looked up once, and again when its track count
+changes.
 
 gnudb asks every client for a contact address, and refuses those that give none. Set
 `AORG_GNUDB_EMAIL` to your own email address (`AORG_CONTACT` is used if it is not set);
