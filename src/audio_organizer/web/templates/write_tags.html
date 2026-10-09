@@ -26,7 +26,7 @@ run <code>aorg scan --deep</code> to measure them (it reads every file, which ta
  <input type="search" name="path" value="{{ path }}" placeholder="Only files under a path" aria-label="Path">
  <input name="only" value="{{ only }}" placeholder="Only fields, e.g. replaygain, rating" aria-label="Only these fields">
  <label title="gnudb's values rank below the tags; this replaces the tags where they differ"><input type="checkbox" name="prefer_gnudb" value="true" {% if prefer_gnudb %}checked{% endif %}> Replace tags that differ from gnudb's values</label>
- <label>Batch of <input name="limit" inputmode="numeric" size="4" value="{{ limit }}"> files</label>
+ <label>Batch of <input type="number" name="limit" min="1" max="1000" step="1" size="4" style="width: 6em" value="{{ limit }}"> files</label>
  <button>Show</button>
 </form>
 

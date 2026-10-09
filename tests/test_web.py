@@ -439,6 +439,22 @@ def test_duplicates_keep_another_copy(web):
     )
 
 
+def test_duplicates_limit_clamped(web):
+    """A hand-edited URL can still ask for more than the page's own max="1000"."""
+    page = web.get("/libraries/music/duplicates", params={"limit": 5000}).text
+    assert 'max="1000"' in page
+    assert 'value="1000"' in page  # the batch size shown back is clamped too
+
+
+def test_batch_too_large_is_refused_gracefully(web):
+    """A posted batch form has one field per row; Starlette refuses a form over 1000
+    fields, so a hand-edited form that still asks for more gets a friendly error."""
+    response = web.post("/libraries/music/duplicates", data={f"keep-{i}": "1" for i in range(1001)})
+    assert response.status_code == 400
+    assert "too many rows" in response.text
+    assert "Nothing was changed" in response.text
+
+
 def test_encodings(web, Session):
     make_audio(web.root / "P!nk/Funhouse/01 So What.mp3", freq=330, bitrate="128k",
                title="So What", track="1")  # fmt: skip

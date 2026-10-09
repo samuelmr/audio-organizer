@@ -14,6 +14,7 @@ from typing import Annotated
 from urllib.parse import quote, urlencode, urlsplit
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
@@ -27,6 +28,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import String, func, or_, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .. import album_merge as am
 from .. import artists as art
@@ -71,6 +73,10 @@ FIELD_GROUPS = (
 )  # fmt: skip
 assert sorted(f for _, names in FIELD_GROUPS for f in names) == sorted(FIELDS)
 PAGE_SIZE = 50
+# Starlette parses a posted form with at most 1000 fields; each page's batch form posts
+# roughly one field per row, so a batch above this would fail to submit. Clamp every
+# "limit" so a hand-edited URL can't ask for more than the form can post back.
+MAX_BATCH = 1000
 M = EffectiveMetadata
 SORTS = {
     "artist": (M.artist, M.album, M.discnumber, M.tracknumber),
@@ -143,6 +149,25 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             "Nothing was changed. Wait for it to finish, then go back and try again.</p>",
             status_code=503,
             headers={"Retry-After": "10"},
+        )
+
+    @app.exception_handler(StarletteHTTPException)
+    async def batch_too_large(request: Request, exc: StarletteHTTPException):
+        """A posted batch form has one field per row, and Starlette turns going over its
+        1000-field cap into a plain HTTPException raised before any route code runs (so
+        it isn't the fastapi.HTTPException subclass other handlers below raise); the
+        page's own limit keeps a batch under that, but a hand-edited URL or form can
+        still ask for more. Say so instead of a bare JSON error."""
+        if exc.status_code != 400 or "Too many fields" not in str(exc.detail):
+            return await http_exception_handler(request, exc)
+        back = request.headers.get("referer", "")
+        # The cross-site-post check above already confirms a present referer is same-site
+        go_back = f' <a href="{back}">Go back</a> and choose a smaller batch.' if back else ""
+        return HTMLResponse(
+            "<!DOCTYPE html><title>Batch too large</title>"
+            f"<p>This batch has too many rows to submit at once (at most {MAX_BATCH}). "
+            f"Nothing was changed.{go_back}</p>",
+            status_code=400,
         )
 
     # ---- libraries and tracks ------------------------------------------------------------
@@ -533,10 +558,11 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         session: Session = SessionDep,
     ):
         lib = _library(session, name)
+        limit = _clamp_batch(limit)
         found = du.survey(session, lib, path_prefix=path or None, include_compilations=compilations)
         return render(
             request, "duplicates.html", library=lib, found=found,
-            batch=found.proposals[: max(limit, 1)], path=path, limit=limit,
+            batch=found.proposals[:limit], path=path, limit=limit,
             compilations=compilations,
         )  # fmt: skip
 
@@ -577,12 +603,13 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         session: Session = SessionDep,
     ):
         lib = _library(session, name)
+        limit = _clamp_batch(limit)
         found = rec.survey(
             session, lib, path_prefix=path or None, include_compilations=compilations
         )
         return render(
             request, "encodings.html", library=lib, found=found,
-            batch=rec.batch(found.proposals, max(limit, 1), replace=replace), path=path,
+            batch=rec.batch(found.proposals, limit, replace=replace), path=path,
             limit=limit, replace=replace, compilations=compilations,
         )  # fmt: skip
 
@@ -619,10 +646,11 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         request: Request, name: str, path: str = "", limit: int = 50, session: Session = SessionDep
     ):
         lib = _library(session, name)
+        limit = _clamp_batch(limit)
         found = nb.survey(session, lib, path_prefix=path or None)
         return render(
             request, "neighbours.html", library=lib, found=found,
-            batch=nb.batch(found.albums, max(limit, 1)), path=path, limit=limit,
+            batch=nb.batch(found.albums, limit), path=path, limit=limit,
         )  # fmt: skip
 
     @app.post("/libraries/{name}/neighbours")
@@ -647,10 +675,11 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         request: Request, name: str, path: str = "", limit: int = 20, session: Session = SessionDep
     ):
         lib = _library(session, name)
+        limit = _clamp_batch(limit)
         found = am.survey(session, lib, path_prefix=path or None)
         return render(
             request, "album_merges.html", library=lib, found=found,
-            batch=am.batch(found.merges, max(limit, 1)),
+            batch=am.batch(found.merges, limit),
             others=[m for m in found.merges if not m.batchable], path=path, limit=limit,
         )  # fmt: skip
 
@@ -673,7 +702,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             description = f"Merge {source} into {target}"
         else:
             found = am.survey(session, lib, path_prefix=path or None)
-            merges = am.batch(found.merges, max(limit, 1))
+            merges = am.batch(found.merges, _clamp_batch(limit))
             description = f"Merge {len(merges)} album folders"
         if not any(m.trash or m.move for m in merges):
             return _redirect(f"/libraries/{lib.name}/album-merges", "Nothing to merge")
@@ -752,6 +781,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         session: Session = SessionDep,
     ):
         lib = _library(session, name)
+        limit = _clamp_batch(limit)
         found = wr.survey(
             session, lib, path_prefix=path or None, only=_only(only),
             prefer=("gnudb",) if prefer_gnudb else (),
@@ -759,7 +789,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         unmeasured = len(loudness.unmeasured(session, lib))
         return render(
             request, "write_tags.html", library=lib, found=found,
-            batch=found.files[: max(limit, 1)], path=path, only=only, limit=limit,
+            batch=found.files[:limit], path=path, only=only, limit=limit,
             prefer_gnudb=prefer_gnudb, unmeasured=unmeasured,
         )  # fmt: skip
 
@@ -778,7 +808,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             session, lib, path_prefix=path or None, only=_only(only),
             prefer=("gnudb",) if prefer_gnudb else (),
         )  # fmt: skip
-        batch = found.files[: max(limit, 1)]
+        batch = found.files[: _clamp_batch(limit)]
         if not batch:
             return _redirect(f"/libraries/{lib.name}/write-tags", "Nothing to write")
         version = int(id3_version) if id3_version in ("3", "4") else None
@@ -827,8 +857,9 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         session: Session = SessionDep,
     ):
         lib = _library(session, name)
+        limit = _clamp_batch(limit)
         found = covers.survey(
-            session, lib, path_prefix=path or None, enough=max(limit, 1),
+            session, lib, path_prefix=path or None, enough=limit,
             min_pixels=min_pixels, save_images=save_images,
         )  # fmt: skip
         return render(
@@ -856,7 +887,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             chosen = [f for f in found.folders if f.folder == folder]
         else:
             found = covers.survey(
-                session, lib, path_prefix=path or None, enough=max(limit, 1),
+                session, lib, path_prefix=path or None, enough=_clamp_batch(limit),
                 min_pixels=min_pixels, save_images=save_images,
             )  # fmt: skip
             chosen = found.folders
@@ -876,11 +907,12 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         request: Request, name: str, path: str = "", limit: int = 20, session: Session = SessionDep
     ):
         lib = _library(session, name)
+        limit = _clamp_batch(limit)
         template = lo.get_layout(session, lib)
         plan = lo.plan(session, lib, template, path_prefix=path or None)
         return render(
             request, "layout.html", library=lib, layout_template=template, plan=plan,
-            batch=plan.albums[: max(limit, 1)], path=path, limit=limit, error=None,
+            batch=plan.albums[:limit], path=path, limit=limit, error=None,
             fields=lo.TEMPLATE_FIELDS, default=lo.DEFAULT_LAYOUT,
         )  # fmt: skip
 
@@ -919,7 +951,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         if folder:
             albums = [a for a in plan.albums if a.folder == folder]
         else:
-            albums = plan.albums[: max(limit, 1)]
+            albums = plan.albums[: _clamp_batch(limit)]
         if not albums:
             return _redirect(f"/libraries/{lib.name}/layout", "Nothing to move")
         description = (
@@ -1268,6 +1300,12 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
 
 
 # ---- helpers ----------------------------------------------------------------------------
+
+
+def _clamp_batch(limit: int) -> int:
+    """Keep a requested batch size between 1 and MAX_BATCH, however it was asked for
+    (a hand-edited URL or form field isn't bound by the page's own min/max)."""
+    return min(max(limit, 1), MAX_BATCH)
 
 
 def _library(session: Session, name: str) -> Library:
