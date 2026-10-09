@@ -26,16 +26,16 @@
   {% if library %}
    {% set base = '/libraries/' ~ library.name %}
    {{ link(base, "Tracks", exact=true) }}
-   {{ link(base ~ '/albums', "Albums") }}
    {{ link(base ~ '/playlists', "Playlists") }}
-   {{ link(base ~ '/layout', "Layout") }}
    {{ link(base ~ '/artists', "Artists") }}
+   {{ link(base ~ '/albums', "Albums") }}
+   {{ link(base ~ '/layout', "Layout") }}
    {{ link(base ~ '/album-merges', "Album folders") }}
    {{ link(base ~ '/neighbours', "Loose tracks") }}
    {{ link(base ~ '/duplicates', "Duplicates") }}
    {{ link(base ~ '/encodings', "Encodings") }}
-   {{ link(base ~ '/ratings', "Ratings") }}
    {{ link(base ~ '/covers', "Covers") }}
+   {{ link(base ~ '/ratings', "Ratings") }}
    {{ link(base ~ '/write-tags', "Write tags") }}
   {% else %}
    {{ link('/', "Libraries", exact=true) }}
