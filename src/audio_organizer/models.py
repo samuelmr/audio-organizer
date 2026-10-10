@@ -132,6 +132,27 @@ class EffectiveMetadata(Base):
     file: Mapped[AudioFile] = relationship()
 
 
+class PendingField(Base):
+    """A value the catalog has decided on (an edit, a measurement, a lookup or a rule) that
+    the file's tags do not hold yet: what writing the file would change. Kept up to date
+    together with EffectiveMetadata, so that the pending changes of a whole library can be
+    counted and grouped by artist and album in SQL.
+
+    Derived data, rebuilt with EffectiveMetadata (db.py)."""
+
+    __tablename__ = "pending_field"
+
+    file_id: Mapped[int] = mapped_column(
+        ForeignKey("audio_file.id", ondelete="CASCADE"), primary_key=True
+    )
+    field: Mapped[str] = mapped_column(String(40), primary_key=True)
+    value: Mapped[str] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(20))
+    tag: Mapped[str | None] = mapped_column(Text)  # the tag's value now, None if it has none
+
+    file: Mapped[AudioFile] = relationship()
+
+
 class TagSnapshot(Base):
     """The tags of a file as they were at some point, e.g. when the file was first seen."""
 

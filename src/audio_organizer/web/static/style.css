@@ -126,6 +126,7 @@ tr[data-select-row]:has(input:checked) > :first-child { box-shadow: inset 0.25em
 .path { color: var(--muted); font-family: ui-monospace, monospace; font-size: 0.85rem; word-break: break-all; }
 .details, .count, .hint, small { color: var(--muted); }
 small { display: block; font-size: 0.85rem; }
+.old { color: var(--muted); text-decoration: line-through; }
 
 input, select, button { font: inherit; color: inherit; }
 input, select { background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 0.3rem 0.45rem; }

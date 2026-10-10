@@ -126,6 +126,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
     templates = Jinja2Templates(directory=HERE / "templates")
     templates.env.filters["duration"] = _duration
     templates.env.globals["url"] = _url
+    templates.env.globals["selection_url"] = selection_url
     templates.env.globals["format_labels"] = FORMAT_LABELS
     templates.env.globals["shared_names"] = pl.shared_names
     templates.env.globals["display_name"] = pl.display_name
@@ -397,15 +398,11 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         return render(
             request, "track.html", file=file, resolved=resolved, groups=FIELD_GROUPS,
             extra=extra, manual=manual, copies=copies, snapshot=snapshot,
-            unwritten=ch.unwritten(file), on_disk=on_disk,
+            unwritten=wr.unwritten(file.values), on_disk=on_disk,
             has_cover=on_disk and covers.embedded(path) is not None,
             folder_cover=folder_cover.name if folder_cover else None,
             id3_version=tags.id3_version(path) if on_disk else None,
         )  # fmt: skip
-
-    def _id3_version(form) -> int | None:
-        value = str(form.get("id3_version", ""))
-        return int(value) if value in ("3", "4") else None
 
     @app.post("/libraries/{name}/gnudb", dependencies=[Exclusive])
     async def gnudb_lookup(request: Request, name: str, session: Session = SessionDep):
@@ -433,7 +430,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             back,
             f"Found in gnudb: {', '.join(a.album for a in found)}; not yet in the files.",
             link=(
-                _url(f"/libraries/{lib.name}/write-tags", path=folder + "/", prefer_gnudb="true"),
+                _url(f"/libraries/{lib.name}/pending", path=folder + "/", prefer_gnudb="true"),
                 "Review what gnudb found",
             ),
         )
@@ -466,19 +463,6 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
                 "Embed it on the Covers page",
             ),
         )
-
-    @app.post("/tracks/{file_id}/write", dependencies=[Exclusive])
-    async def write_track(request: Request, file_id: int, session: Session = SessionDep):
-        """Propose writing the values not yet in the file (edits, measurements, lookups)."""
-        file = _file(session, file_id)
-        form = await request.form()
-        changeset = ch.new_changeset(session, f"Write tags of {file.path}", "writing")
-        change = ch.propose_tag_sync(changeset, file, _id3_version(form))
-        if change is None:
-            session.expunge(changeset)
-            return _redirect(f"/tracks/{file.id}", "The file already has these values")
-        session.commit()
-        return _redirect(f"/changes/{changeset.id}", "Review the change to the file")
 
     @app.post("/tracks/{file_id}/replaygain", dependencies=[Exclusive])
     def measure_replaygain(file_id: int, session: Session = SessionDep):
@@ -582,8 +566,9 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
 
     @app.post("/tracks/{file_id}/edit")
     async def edit_track(request: Request, file_id: int, session: Session = SessionDep):
-        """Store the edited fields as manual values and propose writing them into the
-        file. An emptied field drops its manual value, falling back to tags and path."""
+        """Store the edited fields as manual values, to be written into the file with its
+        other pending changes. An emptied field drops its manual value, falling back to
+        tags and path."""
         file = _file(session, file_id)
         form = await request.form()
         resolved = resolve(file.values)
@@ -598,20 +583,18 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
                 values[name] = None
         if not values:
             return _redirect(f"/tracks/{file.id}", "Nothing changed")
-        changeset = ch.new_changeset(session, f"Manual edit of {file.path}", "manual")
-        change = ch.propose_manual_edit(session, changeset, file, values, _id3_version(form))
-        if change is None:
-            session.expunge(changeset)
-            session.commit()
+        if not wr.store_edit(session, [file], values):
             return _redirect(f"/tracks/{file.id}", "Saved; the file's tags already match")
-        session.commit()
-        return _redirect(f"/changes/{changeset.id}", "Edit saved; review the change to the file")
+        pending = _url(f"/libraries/{file.library.name}/pending", file=file.id)
+        return _redirect(
+            f"/tracks/{file.id}", "Saved; not yet in the file.", link=(pending, "Review and write")
+        )
 
     @app.post("/libraries/{name}/edit-album")
     async def edit_album(request: Request, name: str, session: Session = SessionDep):
         """Edit all tracks of an album or folder at once: a field filled in with a new
-        value is saved as a manual value of every track, and proposed in one changeset.
-        An empty field (or one left as it was) is not changed."""
+        value is saved as a manual value of every track, to be written with the files'
+        other pending changes. An empty field (or one left as it was) is not changed."""
         lib = _library(session, name)
         form = await request.form()
         chosen = {
@@ -635,22 +618,35 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         if not values:
             return _redirect(back, "Nothing changed")
         folder = chosen["folder"].strip("/") if chosen["folder"] is not None else None
-        edit = ae.propose(
+        edit = ae.edit(
             session, lib, files, values, ae.description(chosen["album"], folder),
             move_files=form.get("move_files") == "true",
         )  # fmt: skip
+        pending = None
+        if edit.pending:
+            artist, album = wr.group_of(edit.pending[0])
+            pending = selection_url(f"/libraries/{lib.name}/pending", artist=artist, album=album)
         if edit.changeset is None:
-            return _redirect(back, "Saved; the files' tags already match")
-        message = f"Edit saved; review the changes to {len(edit.retags)} files"
-        if edit.plan is not None:
-            message += f" and {len(edit.moves)} moves"
-            left = len(edit.plan.conflicts) + edit.plan.case_only
-            if left:
-                message += (
-                    f". {left} files stay where they are: their new path is taken, or "
-                    "differs only in letter case"
-                )
-        return _redirect(f"/changes/{edit.changeset.id}", message)
+            if pending is None:
+                return _redirect(back, "Saved; the files' tags already match")
+            message = f"Saved; {len(edit.pending)} files are not yet written"
+            if edit.plan is not None:
+                message += "; no folders to rename"
+            return _redirect(pending, message + ". Review and write them here.")
+        message = f"Saved. Review the {len(edit.moves)} moves renaming the folders"
+        left = len(edit.plan.conflicts) + edit.plan.case_only if edit.plan else 0
+        if left:
+            message += (
+                f"; {left} files stay where they are: their new path is taken, or "
+                "differs only in letter case"
+            )
+        if pending is None:
+            return _redirect(f"/changes/{edit.changeset.id}", message + ".")
+        return _redirect(
+            f"/changes/{edit.changeset.id}",
+            message + f". The tags of {len(edit.pending)} files are not yet written:",
+            link=(pending, "Review and write them"),
+        )
 
     # ---- duplicates ----------------------------------------------------------------------
 
@@ -876,51 +872,89 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
     def _only(value: str) -> list[str] | None:
         return [f.strip() for f in value.split(",") if f.strip()] or None
 
-    @app.get("/libraries/{name}/write-tags", response_class=HTMLResponse)
-    def write_tags_page(
+    @app.get("/libraries/{name}/write-tags")
+    def write_tags_moved(request: Request, name: str):
+        """The Write tags page became the Pending page; old links still work."""
+        query = f"?{request.url.query}" if request.url.query else ""
+        return RedirectResponse(f"/libraries/{name}/pending{query}", status_code=301)
+
+    def _selection(
+        path: str, artist: str | None, album: str | None, file_ids: list[int] | None,
+        only: str, prefer_gnudb: bool,
+    ) -> wr.Selection:  # fmt: skip
+        return wr.Selection(
+            path=path or None, artist=artist, album=album, file_ids=file_ids,
+            only=_only(only), prefer=("gnudb",) if prefer_gnudb else (),
+        )  # fmt: skip
+
+    @app.get("/libraries/{name}/pending", response_class=HTMLResponse)
+    def pending_page(
         request: Request,
         name: str,
         path: str = "",
+        artist: str | None = None,
+        album: str | None = None,
+        file: int | None = None,
         only: str = "",
         limit: int = 100,
         prefer_gnudb: bool = False,
         session: Session = SessionDep,
     ):
+        """What is waiting to be written into the files: the albums that have pending
+        changes, and for the chosen ones what would change in each file."""
         lib = _library(session, name)
         limit = _clamp_batch(limit)
-        found = wr.survey(
-            session, lib, path_prefix=path or None, only=_only(only),
-            prefer=("gnudb",) if prefer_gnudb else (),
-        )  # fmt: skip
+        selection = _selection(path, artist, album, [file] if file else None, only, prefer_gnudb)
+        found = wr.survey(session, lib, selection, limit)
+        # The list of albums is for choosing; once one is chosen it is in the heading
+        chosen = artist is not None or album is not None or file is not None
+        groups = [] if chosen or prefer_gnudb else wr.groups(session, lib, selection)
         unmeasured = len(loudness.unmeasured(session, lib))
         return render(
-            request, "write_tags.html", library=lib, found=found,
-            batch=found.files[:limit], path=path, only=only, limit=limit,
+            request, "pending.html", library=lib, found=found, groups=groups,
+            path=path, artist=artist, album=album, file=file, only=only, limit=limit,
             prefer_gnudb=prefer_gnudb, unmeasured=unmeasured,
         )  # fmt: skip
 
-    @app.post("/libraries/{name}/write-tags", dependencies=[Exclusive])
-    def propose_write_tags(
+    @app.post("/libraries/{name}/pending", response_class=HTMLResponse, dependencies=[Exclusive])
+    def write_pending(
+        request: Request,
         name: str,
+        action: Annotated[str, Form()],
+        file_ids: Annotated[list[int] | None, Form()] = None,
         path: Annotated[str, Form()] = "",
+        artist: Annotated[str | None, Form()] = None,
+        album: Annotated[str | None, Form()] = None,
         only: Annotated[str, Form()] = "",
-        limit: Annotated[int, Form()] = 100,
-        id3_version: Annotated[str, Form()] = "",
         prefer_gnudb: Annotated[bool, Form()] = False,
+        id3_version: Annotated[str, Form()] = "",
         session: Session = SessionDep,
     ):
+        """Write the ticked files' pending changes (each file once, with all of them), or
+        drop the user's edits among them. The changes are worked out again here, so a
+        file is written as it is pending now."""
         lib = _library(session, name)
-        found = wr.survey(
-            session, lib, path_prefix=path or None, only=_only(only),
-            prefer=("gnudb",) if prefer_gnudb else (),
+        if action not in ("write", "discard"):
+            raise HTTPException(400, f"Unknown action {action}")
+        selection = _selection(path, artist, album, file_ids or [], only, prefer_gnudb)
+        found = wr.survey(session, lib, selection, MAX_BATCH)
+        back = _url(
+            f"/libraries/{lib.name}/pending", path=path, artist=artist, album=album, only=only,
+            prefer_gnudb="true" if prefer_gnudb else None,
         )  # fmt: skip
-        batch = found.files[: _clamp_batch(limit)]
-        if not batch:
-            return _redirect(f"/libraries/{lib.name}/write-tags", "Nothing to write")
+        if not found.files:
+            return _redirect(back, "Nothing to write: no ticked file has pending changes")
+        if action == "discard":
+            dropped, kept = wr.discard(session, found.files)
+            kept_note = f"; kept {kept} measured or looked-up values" if kept else ""
+            return _redirect(back, f"Dropped {dropped} edits{kept_note}")
         version = int(id3_version) if id3_version in ("3", "4") else None
-        what = "Write gnudb's values to" if prefer_gnudb else "Write"
-        changeset = wr.propose(session, batch, f"{what} the tags of {len(batch)} files", version)
-        return _redirect(f"/changes/{changeset.id}", "Review the changes to the files")
+        description = wr.description(selection, len(found.files))
+        changeset, outcomes = wr.write(session, found.files, description, version)
+        return render(
+            request, "changeset.html", changeset=changeset, describe=ch.describe,
+            outcomes=outcomes, outcome_title="Written",
+        )  # fmt: skip
 
     # ---- ratings and covers --------------------------------------------------------------
 
@@ -948,7 +982,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         session.commit()
         rated = rt.apply(session, lib, mapping)
         return _redirect(
-            _url(f"/libraries/{lib.name}/write-tags", only="rating"),
+            _url(f"/libraries/{lib.name}/pending", only="rating"),
             f"Rated {rated} files in the catalog; write the ratings into the files here",
         )
 
@@ -1769,6 +1803,13 @@ def _redirect(
 def _url(base: str, /, **params) -> str:
     """A path with query parameters (which may include "path"), leaving out empty ones."""
     query = urlencode({k: v for k, v in params.items() if v not in (None, "")})
+    return f"{base}?{query}" if query else base
+
+
+def selection_url(base: str, /, **params) -> str:
+    """Like _url, but keeping empty values: on the Pending page, artist="" chooses the
+    tracks without an artist, while leaving artist out chooses every artist."""
+    query = urlencode({k: v for k, v in params.items() if v is not None})
     return f"{base}?{query}" if query else base
 
 

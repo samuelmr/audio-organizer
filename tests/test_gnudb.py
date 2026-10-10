@@ -5,7 +5,6 @@ import pytest
 from sqlalchemy import select
 from typer.testing import CliRunner
 
-from audio_organizer import changes as ch
 from audio_organizer import coverart, gnudb, provenance, tags, writing
 from audio_organizer.cli import app
 from audio_organizer.models import AudioFile, FieldValue, GnudbLookup, Library
@@ -345,20 +344,21 @@ def test_review_gnudb_values_that_differ_from_tags(library, client):
     scan(session, lib)
     gnudb.lookup_library(session, lib, client=client)
 
-    plain = writing.survey(session, lib, only=["title"])
+    plain = writing.survey(session, lib, writing.Selection(only=["title"]))
     assert plain.files == []  # the tag outranks gnudb's "Halo"; nothing is written by default
 
-    found = writing.survey(session, lib, only=["title"], prefer=("gnudb",))
+    prefer = writing.Selection(only=["title"], prefer=("gnudb",))
+    found = writing.survey(session, lib, prefer)
     [pending] = found.files
+    assert found.total == 1 and found.by_field == {"title": 1}
     assert pending.file.path.endswith("01 Halo.mp3")
     assert pending.fields == {"title": "Halo"} and pending.before == {"title": "Halo Remixed"}
 
-    changeset = writing.propose(session, found.files, "Write gnudb's values")
-    ch.set_status(changeset.changes, "approved")
-    assert all(o.ok for o in ch.apply(session, changeset))
+    _, outcomes = writing.write(session, found.files, "Write gnudb's values")
+    assert all(o.ok for o in outcomes)
     assert tags.read(halo).fields["title"] == "Halo"
     session.expire_all()
-    assert writing.survey(session, lib, only=["title"], prefer=("gnudb",)).files == []
+    assert writing.survey(session, lib, prefer).files == []
 
 
 def test_preferring_gnudb_keeps_the_users_edits_and_spelling_of_numbers(library, client):
@@ -369,20 +369,22 @@ def test_preferring_gnudb_keeps_the_users_edits_and_spelling_of_numbers(library,
     tags.write(lib.root + "/" + halo.path, {"tracknumber": "01"})  # gnudb says "1"
     scan(session, lib)
     session.expire_all()
-    found = writing.survey(session, lib, only=["title", "tracknumber"], prefer=("gnudb",))
+    selection = writing.Selection(only=["title", "tracknumber"], prefer=("gnudb",))
+    found = writing.survey(session, lib, selection)
     fields = {p.file.path: p.fields for p in found.files}
     assert fields["Texas/Greatest Hits/01 Halo.mp3"] == {"title": "My Halo"}  # an edit, not gnudb's
 
 
-def test_cli_write_tags_prefer_gnudb(library, client):
+def test_cli_pending_prefer_gnudb(library, client):
     session, lib = library
     tags.write(lib.root + "/Texas/Greatest Hits/01 Halo.mp3", {"title": "Halo Remixed"})
     scan(session, lib)
     gnudb.lookup_library(session, lib, client=client)
     db = str(session.get_bind().url)
-    args = ["--db", db, "write-tags", "--only", "title"]
+    args = ["--db", db, "pending", "--only", "title"]
     assert "0 files have values" in CliRunner().invoke(app, args).output
     result = CliRunner().invoke(app, [*args, "--prefer-gnudb"])
     assert "title: 'Halo Remixed' -> 'Halo'" in result.output
-    result = CliRunner().invoke(app, [*args, "--prefer-gnudb", "--propose"])
-    assert "Changeset" in result.output
+    result = CliRunner().invoke(app, [*args, "--prefer-gnudb", "--write"])
+    assert "Wrote 1 files (changeset" in result.output
+    assert tags.read(lib.root + "/Texas/Greatest Hits/01 Halo.mp3").fields["title"] == "Halo"

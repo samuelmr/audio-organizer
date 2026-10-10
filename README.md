@@ -187,7 +187,9 @@ sources disagree or that lack an album or title, see a track's values and where 
 come from, its identical copies and its original tags, and edit them. Click an album,
 artist or folder to see just its tracks (an album's in disc and track order), or browse
 the albums list with their covers. Albums are grouped by their tags, so the tracks of an album scattered
-across folders show up together. It is also where changesets are easiest to review:
+across folders show up together. The Pending page shows, album by album, what your edits
+and measurements would change in the files, and writes the albums you choose. The web UI
+is also where changesets are easiest to review:
 select changes (or all, then deselect some) to approve or reject, try a dry run, apply
 and undo. The ▶ buttons on track, duplicate and changeset pages play the files in the
 browser, so copies can be compared by ear (MP3, M4A and AAC play everywhere; WMA does
@@ -355,25 +357,20 @@ image to cover.jpg (or cover.png for a PNG), the name sync and the players look 
 
 ### Editing metadata
 
-Edits are stored in the catalog and proposed as a *changeset*. Nothing is written to
-your files until you approve and apply it:
+Edits are stored in the catalog only. Nothing is written to your files until you write
+them, usually an album or an artist at a time, together with everything else waiting
+for those files (see [Writing tags](#writing-tags)):
 
     aorg edit "Texas/Texas_Halo.mp3" --set album="Greatest Hits" --set tracknumber=11
-    aorg changes list
-    aorg changes show 1
-    aorg changes approve 1            # all changes in changeset 1, or: approve 1 3 4
-    aorg changes apply 1 --dry-run
-    aorg changes apply 1
-    aorg changes undo 1               # restores the tags and reverts your edit
-    aorg changes retry 1              # try the failed changes again
-    aorg changes delete 1             # forget a changeset (undo applied changes first)
+    aorg pending --path "Texas/Texas_Halo.mp3"            # what would change
+    aorg pending --path "Texas/Texas_Halo.mp3" --write
 
 `aorg` never writes to a file that has changed since it was last scanned; rescan first.
 The tags each file had when it was first scanned are kept in the catalog.
 
 To edit all tracks of an album at once, say to fix a typo in its name, use `aorg
-edit-album`. It proposes one changeset with a change for each track whose tags differ, so
-the whole album is reviewed, applied and undone together:
+edit-album`. It stores the edit for every track and tells you how many of them now
+differ from their tags:
 
     aorg edit-album --album "Best of Foriegner" --set album="Best of Foreigner" --move-files
     aorg edit-album --album "Greatest Hits" --albumartist Texas --set date=2000
@@ -383,19 +380,20 @@ the whole album is reviewed, applied and undone together:
 as "Greatest Hits" needs `--albumartist`; the command lists the folders it found.
 `--folder` takes the tracks directly in one folder, not those in its subfolders.
 
-If the folders have the typo too, `--move-files` adds moves to the same changeset: a
+If the folders have the typo too, `--move-files` also proposes a changeset of moves: a
 folder whose name holds the old album name as whole words ("1992 Best of Foriegner")
 gets the new one ("1992 Best of Foreigner"), and a folder named exactly after an artist
 or album artist being renamed gets the new name. File names stay as they are, and the
-folder's other files (cover, booklet, `.cue`, Scans) go along with its last track. Moves are applied after the tag
-changes and undone before them. A track stays where it is if its new path is taken, or
-differs only in letter case (the same folder on macOS and most NAS shares). To move
-files into your library's layout instead, use `aorg reorganize` (see above).
+folder's other files (cover, booklet, `.cue`, Scans) go along with its last track. The
+moves and writing the tags do not depend on each other, so either can come first. A
+track stays where it is if its new path is taken, or differs only in letter case (the
+same folder on macOS and most NAS shares). To move files into your library's layout
+instead, use `aorg reorganize` (see above).
 
 In the web UI, an album's or folder's page has an *Edit all tracks* form with the fields
 its tracks usually share and a checkbox to rename the folders too; a field left empty or
-unchanged keeps each track's own value. The Albums page has a *Rename album* link on each
-album, which opens that form.
+unchanged keeps each track's own value. Saving it opens the album on the Pending page.
+The Albums page has a *Rename album* link on each album, which opens that form.
 
 Besides title, artist, album, track and disc numbers, year and genre, these fields can
 be read and edited: original year, album artist and artist sort names, composer,
@@ -408,10 +406,8 @@ On a track's page in the web UI:
 
 - **Measure ReplayGain** measures the track's loudness with ffmpeg and stores the track
   gain and peak (and the album's, once all its tracks are measured) in the catalog.
-  Values that are not yet in the file are marked, and **Write them to the file**
-  proposes writing them.
-- When writing to MP3 files, you can keep their ID3 version or write ID3v2.3 or 2.4.
-  ID3v2.3 is read by more players and devices; both keep all of the fields above.
+- Values that are not yet in the file are marked, and **Review and write** opens the
+  file on the Pending page.
 - **Cover** shows the cover embedded in the file and the image in its folder, and can
   embed the folder's image in a file that has none.
 
@@ -456,7 +452,7 @@ Poor, Bad Taste). They can become 1–5 star ratings that other players read:
 
     aorg ratings                              # preferences, with the stars they map to
     aorg ratings --set "Good=" --set "Bad Taste=1" --apply
-    aorg write-tags --only rating --propose
+    aorg pending --only rating --artist Air --write
 
 The default mapping is Excellent ★★★★★, Very Good ★★★★, Good ★★★, Fair ★★, Poor and Bad
 Taste ★; an empty value gives no rating. A rating already in a file is kept. The web
@@ -464,29 +460,42 @@ UI's Ratings page does the same. Smart playlists can then use rules such as `rat
 
 ### Writing tags
 
-Edits, measurements and lookups are kept in the catalog until written into the files;
-values only inferred from file and folder names are not written. To write them in bulk:
+Edits, measurements, lookups and ratings are kept in the catalog until written into the
+files; values only inferred from file and folder names are not written. However many
+changes wait for a file (an album renamed, a rating, ReplayGain), it is written once,
+with all of them:
 
-    aorg write-tags                           # what is waiting to be written
-    aorg write-tags --only replaygain --path "Texas" --propose
-    aorg write-tags --propose --limit 200 --id3-version 3
+    aorg pending                              # the albums with changes waiting
+    aorg pending --artist Texas               # what would change in each file
+    aorg pending --artist Texas --album "Greatest Hits" --write
+    aorg pending --only replaygain --path "Texas" --write
+    aorg pending --write --limit 200 --id3-version 3      # the first 200 files
+    aorg pending --artist Texas --discard     # drop your edits instead
 
-`--only` takes field names or their beginnings (`replaygain` covers all ReplayGain
-fields), `--id3-version` writes MP3 tags as ID3v2.3 or 2.4 (by default each file keeps
-its own), and each batch becomes a changeset to review. The web UI's Write tags page
-does the same.
+`--artist` is the album artist, or the artist where there is none; `--album ""` takes
+the tracks without an album. `--only` takes field names or their beginnings
+(`replaygain` covers all ReplayGain fields), and `--id3-version` writes MP3 tags as
+ID3v2.3 or 2.4 (by default each file keeps its own; ID3v2.3 is read by more players
+and devices, and both keep all the fields above). What is listed is what is written:
+`--write` applies it at once, as a changeset that `aorg changes undo` reverts. Undoing
+restores the tags but keeps your edits, so the files are pending again; `--discard`
+drops edits (measurements and lookups are kept). Files that a changeset waiting for
+review would change are left to it.
+
+The web UI's Pending page lists the albums with changes waiting; choose one (or an
+artist) to see the old and new value of every field, untick the files you want to
+leave, and write the rest or discard your edits in them.
 
 By default only what the tags lack is written, so a gnudb value that differs from a tag
 is left out: the tag is the stronger evidence. To review those, add `--prefer-gnudb`
-(on the Write tags page: *Replace tags that differ from gnudb's values*; the *Review what
+(on the Pending page: *Replace tags that differ from gnudb's values*; the *Review what
 gnudb found* link above an album's tracks opens it for that album). The listing then
 shows each tag and the gnudb value that would replace it. Choose the fields you trust
 (`--only genre,album`, or by clicking a field on the page), and the files (`--path` is
-an album's folder, say), propose the changeset, and approve or reject its changes file by
-file before anything is written:
+an album's folder, say; on the page, untick files), and write them:
 
-    aorg write-tags --prefer-gnudb --path "Texas/Greatest Hits"       # what would change
-    aorg write-tags --prefer-gnudb --only album,genre --propose       # for review
+    aorg pending --prefer-gnudb --path "Texas/Greatest Hits"            # what would change
+    aorg pending --prefer-gnudb --only album,genre --path "Texas/Greatest Hits" --write
 
 Your own edits are never replaced, and neither are tag values that gnudb only spells
 differently (case, punctuation, "02" for "2"). Once written, the tag and gnudb agree, and
@@ -649,7 +658,8 @@ Design principles:
   The hash covers the audio's length and three samples of it (`audiohash.py`), and
   each file is read once, in large blocks shared by the tag reader and the hasher
   (`blockfile.py`): network round trips and bytes read, not CPU, limit scanning.
-- **No file changes without review**: every retag or move goes through a changeset that
+- **No file changes without review**: edits only change the catalog; writing them shows
+  the diff of a selection first. Every retag or move is applied as a changeset that
   records how to undo it.
 - **Scale**: scans and syncs are incremental, and anything per-file runs in batches or
   in parallel.
@@ -664,7 +674,7 @@ Design principles:
 | `scanner.py` | Incremental scanning, move detection |
 | `tags.py` | Reading and writing tags (ID3, MP4, Vorbis comments) |
 | `pathparse.py` | Metadata evidence from folder and file names |
-| `provenance.py` | Resolving field values from their sources; the effective metadata table |
+| `provenance.py` | Resolving field values from their sources; the effective metadata and pending field tables |
 | `audiohash.py` | Audio-only content hash (sampled) |
 | `blockfile.py` | Block-cached reading of a file, for few network round trips |
 | `changes.py` | Changesets (each records the feature that proposed it): propose, approve, apply, undo; retag, move and trash |
@@ -680,7 +690,8 @@ Design principles:
 | `gnudb.py` | Looking up album folders in gnudb (cddbp, pseudo-TOC from durations), `aorg gnudb`, `scan --with-gnudb` |
 | `coverart.py` | Looking up album covers online (MusicBrainz, Cover Art Archive), `aorg coverart`, `scan --with-covers` |
 | `images.py` | Size and type of JPEG and PNG images from their headers |
-| `writing.py` | Writing values not yet in the files, in batches |
+| `writing.py` | Pending changes (values not yet in the files) by artist and album; storing edits, writing a selection |
+| `album_edit.py` | Editing all tracks of an album or folder, and renaming its folders |
 | `ratings.py` | Star ratings from MusicMatch preferences |
 | `tracks.py` | Streaming tracks with resolved metadata, in batches |
 | `playlists.py` | Playlist rules, generation in one pass, import and export |

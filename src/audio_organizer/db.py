@@ -8,7 +8,7 @@ from alembic.config import Config
 from sqlalchemy import Engine, create_engine, event, inspect
 from sqlalchemy.orm import Session, sessionmaker
 
-from .models import Base, EffectiveMetadata
+from .models import Base, EffectiveMetadata, PendingField
 from .provenance import backfill_effective
 
 
@@ -77,21 +77,26 @@ def migrate(engine: Engine) -> None:
 
 
 # Tables computed entirely from other data: when their columns change, they are dropped,
-# recreated and filled again instead of being migrated.
-DERIVED_TABLES = [EffectiveMetadata.__table__]
+# recreated and filled again instead of being migrated. They are filled together, file by
+# file (provenance.refresh_effective), so when one is outdated or missing, all are rebuilt.
+DERIVED_TABLES = [EffectiveMetadata.__table__, PendingField.__table__]
 
 
 def _drop_outdated_derived_tables(engine: Engine) -> None:
     inspector = inspect(engine)
-    for table in DERIVED_TABLES:
-        if not inspector.has_table(table.name):
-            continue
+    present = [table for table in DERIVED_TABLES if inspector.has_table(table.name)]
+    if not present:
+        return  # a new catalog
+    outdated = len(present) < len(DERIVED_TABLES)
+    for table in present:
         existing = {
             c["name"]: str(c["type"].compile(engine.dialect)).upper()
             for c in inspector.get_columns(table.name)
         }
         wanted = {c.name: str(c.type.compile(engine.dialect)).upper() for c in table.columns}
-        if existing != wanted:
+        outdated = outdated or existing != wanted
+    if outdated:
+        for table in present:
             table.drop(engine)
 
 

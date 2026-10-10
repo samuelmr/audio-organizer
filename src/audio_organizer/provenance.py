@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from .models import AudioFile, EffectiveMetadata, FieldValue
+from .models import AudioFile, EffectiveMetadata, FieldValue, PendingField
 from .pathparse import normalize_name
 from .tags import FIELDS, NUMBER_FIELDS, parse_number, parse_year
 
@@ -21,6 +21,10 @@ SOURCE_PRIORITY = {
     "path": 30,
 }
 EFFECTIVE_COLUMNS = set(EffectiveMetadata.__table__.columns.keys())
+
+# Sources whose values are meant to end up in the files: the user's edits, measurements,
+# lookups and rules. Values inferred from paths or neighbouring files are only evidence.
+WRITTEN_SOURCES = ("manual", "analysis", "gnudb", "rule")
 
 
 @dataclass
@@ -43,6 +47,37 @@ def resolve(values: Iterable[FieldValue]) -> dict[str, Resolved]:
         source = max(candidates, key=lambda s: SOURCE_PRIORITY.get(s, 0))
         resolved[name] = Resolved(candidates[source], source, candidates)
     return resolved
+
+
+def unwritten(values: Iterable, prefer: Iterable[str] = ()) -> dict[str, str]:
+    """The fields whose chosen value is an edit, a measurement or a lookup that differs
+    from what the file's tags say: values not yet written into the file. values are the
+    file's FieldValues (or rows with field, source and value).
+
+    A lookup ranks below the tags, so where it differs it is not the chosen value. With
+    prefer, naming such sources (e.g. "gnudb"), their values are taken instead of the
+    tags' (not instead of the user's edits, and not where they only spell a number or a
+    date differently)."""
+    values = list(values)
+    resolved = resolve(values)
+    current = {fv.field: fv.value for fv in values if fv.source == "tag"}
+    result = {}
+    for name in FIELDS:
+        found = resolved.get(name)
+        if found is None:
+            continue
+        preferred = next((found.candidates[s] for s in prefer if s in found.candidates), None)
+        if found.source in WRITTEN_SOURCES:
+            value = found.value
+        elif preferred is not None and found.source != "manual":
+            value = preferred
+            if name in current and comparable(name, value) == comparable(name, current[name]):
+                continue
+        else:
+            continue
+        if value != current.get(name):
+            result[name] = value
+    return result
 
 
 def set_values(session: Session, file: AudioFile, source: str, fields: dict[str, str]) -> None:
@@ -73,8 +108,10 @@ def set_value(session: Session, file: AudioFile, source: str, name: str, value: 
 
 
 def refresh_effective(session: Session, file_ids: list[int]) -> None:
-    """Recompute the EffectiveMetadata rows of the given files from their FieldValues."""
+    """Recompute the EffectiveMetadata and PendingField rows of the given files from their
+    FieldValues."""
     session.flush()
+    session.execute(delete(PendingField).where(PendingField.file_id.in_(file_ids)))
     rows: dict[int, list] = {file_id: [] for file_id in file_ids}
     for row in session.execute(
         select(FieldValue.file_id, FieldValue.field, FieldValue.source, FieldValue.value).where(
@@ -98,6 +135,17 @@ def refresh_effective(session: Session, file_ids: list[int]) -> None:
             effective[name] = parse_number(effective[name])
         effective["year"] = parse_year(effective["date"])
         session.merge(EffectiveMetadata(file_id=file_id, disputed=disputed, **effective))
+        tag = {row.field: row.value for row in values if row.source == "tag"}
+        session.add_all(
+            PendingField(
+                file_id=file_id,
+                field=name,
+                value=value,
+                source=resolved[name].source,
+                tag=tag.get(name),
+            )  # fmt: skip
+            for name, value in unwritten(values).items()
+        )
 
 
 def comparable(field: str, value: str) -> object:

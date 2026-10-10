@@ -20,15 +20,12 @@
 </p>
 
 {% if unwritten %}
-<form method="post" action="/tracks/{{ file.id }}/write" class="notice" data-busy>
+<form method="get" action="{{ base }}/pending" class="notice">
+ <input type="hidden" name="file" value="{{ file.id }}">
  <p><strong>{{ unwritten | length }} value{{ "s" if unwritten | length > 1 }} not yet in the file</strong>
  ({% for name in unwritten %}{{ labels.get(name, name) }}{% if not loop.last %}, {% endif %}{% endfor %}).</p>
- {% if id3_version %}<label>Write as <select name="id3_version">
-  <option value="">ID3v2.{{ id3_version }}, as now</option>
-  <option value="3">ID3v2.3</option><option value="4">ID3v2.4</option>
- </select></label>{% endif %}
- <button class="primary">Write them to the file…</button>
- <span class="hint">You review the change before it is applied.</span>
+ <button class="primary">Review and write…</button>
+ <span class="hint">Or write them later with the rest of the album, on the <a href="{{ base }}/pending">Pending</a> page.</span>
 </form>
 {% endif %}
 

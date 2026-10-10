@@ -1,5 +1,6 @@
 """Command line interface: aorg <command>."""
 
+import shlex
 import shutil
 import time
 from pathlib import Path, PurePosixPath
@@ -247,7 +248,7 @@ def scan_command(
     one smaller than --min-pixels on a side, and no big enough image in their folder,
     are looked up in MusicBrainz and the Cover Art Archive. The options work with or
     without each other, in that order. The results are kept in the catalog, not written
-    into the files (see `aorg write-tags` and `aorg covers`).
+    into the files (see `aorg pending` and `aorg covers`).
 
     The lookups ask a service about one album at a time, which takes seconds per album,
     so tidy the library first, or use `aorg gnudb` and `aorg coverart` on their own. It
@@ -402,7 +403,7 @@ def gnudb_command(
         for number, title in enumerate(entry.titles, start=1):
             typer.echo(f"  {number:2}. {title}")
     if any(entry for _, entry in results):
-        typer.echo("Values are kept in the catalog; write them with `aorg write-tags`.")
+        typer.echo("Values are kept in the catalog; write them with `aorg pending`.")
 
 
 def _cover_lookups(ctx: typer.Context, library: str | None, limit: int | None, min_pixels: int):
@@ -569,21 +570,17 @@ def edit(
     set_: Annotated[list[str], typer.Option("--set", help="field=value")] = [],  # noqa: B006
     unset: Annotated[list[str], typer.Option(help="Field whose manual value to remove")] = [],  # noqa: B006
 ) -> None:
-    """Edit metadata manually. The edit is stored in the catalog and proposed as a
-    changeset that writes it into the file's tags."""
+    """Edit metadata manually. The edit is stored in the catalog; the file is written
+    later with its other pending changes (see `aorg pending`)."""
     values = _edit_values(set_, unset)
     with _session(ctx) as session:
         file = _find_file(session, path)
-        changeset = ch.new_changeset(session, f"Manual edit of {file.path}", "manual")
-        change = ch.propose_manual_edit(session, changeset, file, values)
-        if change is None:
-            session.expunge(changeset)
-            session.commit()
+        if not wr.store_edit(session, [file], values):
             typer.echo("Saved; the file's tags already match.")
             return
-        session.commit()
-        typer.echo(f"Changeset {changeset.id}: {ch.describe(change)}")
-        typer.echo(f"Review with `aorg changes show {changeset.id}`, then approve and apply.")
+        fields = ", ".join(wr.unwritten(file.values))
+        typer.echo(f"Saved; not yet in the file: {fields}.")
+        typer.echo(f"Write with `aorg pending --path {shlex.quote(file.path)} --write`.")
 
 
 @app.command("edit-album")
@@ -612,15 +609,15 @@ def edit_album(
     ] = False,
 ) -> None:
     """Edit all tracks of an album or folder at once, e.g. to fix a typo in the album's
-    name. The edit is stored in the catalog for every track and proposed as one changeset
-    that writes it into their tags:
+    name. The edit is stored in the catalog for every track; the files are written later
+    with their other pending changes (see `aorg pending`):
 
         aorg edit-album --album "Best of Foriegner" --set album="Best of Foreigner" --move-files
         aorg edit-album --folder "Foreigner/Best of Foriegner" --set date=1992
 
-    With --move-files, the changeset also moves the tracks out of folders whose names
-    hold the old album name ("1992 Best of Foriegner"), or are the old artist's name, into
-    folders with the new name. File names stay as they are.
+    With --move-files, a changeset moves the tracks out of folders whose names hold the
+    old album name ("1992 Best of Foriegner"), or are the old artist's name, into folders
+    with the new name. File names stay as they are.
     """
     values = _edit_values(set_, unset)
     if not values:
@@ -639,21 +636,26 @@ def edit_album(
             typer.echo("No tracks found.")
             raise typer.Exit(1)
         folders = sorted({str(PurePosixPath(f.path).parent) for f in files})
-        edit = ae.propose(
+        edit = ae.edit(
             session, lib, files, values, ae.description(album, folder), move_files=move_files
         )
+        where = folders[0] + "/" if len(folders) == 1 else f"{len(folders)} folders"
+        if edit.pending:
+            artist, album_name = wr.group_of(edit.pending[0])
+            typer.echo(
+                f"Saved for {len(files)} tracks in {where}; {len(edit.pending)} of them are "
+                "not yet written. Review and write them with\n"
+                f"  aorg pending --artist {shlex.quote(artist)} --album {shlex.quote(album_name)}"
+            )
+        else:
+            typer.echo(f"Saved for {len(files)} tracks in {where}; their tags already match.")
         if edit.changeset is None:
-            typer.echo(f"Saved for {len(files)} tracks; their tags already match.")
-            return
-        typer.echo(
-            f"Changeset {edit.changeset.id}: {len(edit.retags)} of {len(files)} tracks, in "
-            + (folders[0] + "/" if len(folders) == 1 else f"{len(folders)} folders:")
-        )
-        if len(folders) > 1:
-            for name in folders:
-                typer.echo(f"  {name}/")
-        for change in edit.retags + edit.moves:
-            typer.echo(f"  {ch.describe(change)}")
+            if edit.plan is not None:
+                typer.echo("No folders to rename.")
+        else:
+            typer.echo(f"Changeset {edit.changeset.id} renames the folders:")
+            for change in edit.moves:
+                typer.echo(f"  {ch.describe(change)}")
         if edit.plan is not None:
             for file, target, why in edit.plan.conflicts:
                 typer.echo(f"  not moved: {file.path} -> {target} ({why})")
@@ -662,7 +664,10 @@ def edit_album(
                     f"  not moved: {edit.plan.case_only} files whose folders would differ only "
                     "in letter case"
                 )
-        typer.echo(f"Review with `aorg changes show {edit.changeset.id}`, then approve and apply.")
+        if edit.changeset is not None:
+            typer.echo(
+                f"Review with `aorg changes show {edit.changeset.id}`, then approve and apply."
+            )
 
 
 def _edit_values(set_: list[str], unset: list[str]) -> dict[str, str | None]:
@@ -1724,15 +1729,23 @@ def leftovers(
         )
 
 
-@app.command("write-tags")
-def write_tags(
+@app.command("pending")
+def pending_command(
     ctx: typer.Context,
+    artist: Annotated[
+        str | None, typer.Option(help="Only this album artist (or artist), ignoring case")
+    ] = None,
+    album: Annotated[str | None, typer.Option(help="Only this album, ignoring case")] = None,
     path: Annotated[str | None, typer.Option(help="Only files under this path")] = None,
     only: Annotated[
         str | None,
         typer.Option(help="Only these fields, comma-separated; e.g. replaygain, rating"),
     ] = None,
     limit: Annotated[int, typer.Option(help="Files in a batch")] = 100,
+    write: Annotated[bool, typer.Option("--write", help="Write the batch into the files")] = False,
+    discard: Annotated[
+        bool, typer.Option("--discard", help="Drop your edits in the batch instead")
+    ] = False,
     id3_version: Annotated[
         int | None, typer.Option(help="Write ID3 tags as version 3 or 4 [default: as now]")
     ] = None,
@@ -1742,56 +1755,88 @@ def write_tags(
             "--prefer-gnudb", help="Also replace tag values that differ from gnudb's (see --only)"
         ),
     ] = False,
-    propose: Annotated[
-        bool, typer.Option("--propose", help="Create a changeset for a batch")
-    ] = False,
     library: LibraryOption = None,
 ) -> None:
-    """Write values that are not yet in the files: your edits, measurements (`aorg scan
-    --deep`) and lookups. Proposed as changesets, in batches.
+    """Changes waiting to be written into the files: your edits, measurements (`aorg scan
+    --deep`), lookups and ratings. Without a selection, lists the albums that have them;
+    with --artist, --album or --path, what would change in each file.
+
+        aorg pending --artist Texas --album "Greatest Hits"
+        aorg pending --artist Texas --album "Greatest Hits" --write
+
+    --write writes the batch (--limit files), each file once with all its changes, as a
+    changeset that `aorg changes undo` reverts (your edits stay, so the files are pending
+    again). --discard drops your edits in the batch instead, so the tags count again.
 
     A gnudb value ranks below the tag, so by default only what the tags lack is written.
     With --prefer-gnudb, gnudb's value replaces a different tag, for the fields chosen
-    with --only (e.g. --only genre,album) and the files under --path (one album's folder,
-    say); the listing shows the tag and gnudb's value, and the changeset is reviewed as
-    usual before anything is written.
+    with --only (e.g. --only genre,album).
     """
     if id3_version not in (None, 3, 4):
         raise typer.BadParameter("--id3-version is 3 or 4")
+    if write and discard:
+        raise typer.BadParameter("give --write or --discard, not both")
     fields = [f.strip() for f in only.split(",") if f.strip()] if only else None
+    selection = wr.Selection(
+        path=path, artist=artist, album=album, only=fields,
+        prefer=("gnudb",) if prefer_gnudb else (),
+    )  # fmt: skip
     with _session(ctx) as session:
         lib = _library(session, library)
-        prefer = ("gnudb",) if prefer_gnudb else ()
-        found = wr.survey(session, lib, path_prefix=path, only=fields, prefer=prefer)
+        found = wr.survey(session, lib, selection, limit)
         counts = ", ".join(f"{name} {n}" for name, n in found.by_field.most_common())
         typer.echo(
-            f"{len(found.files)} files have values not yet in them"
+            f"{found.total} files have values not yet in them"
             + (f" ({counts})" if counts else "")
-            + f"; {found.waiting} have changes waiting for review."
+            + (f"; {found.waiting} more have changes waiting for review" if found.waiting else "")
+            + "."
         )
-        batch = found.files[:limit]
-        if propose:
-            if batch:
-                what = "Write gnudb's values to" if prefer_gnudb else "Write"
-                changeset = wr.propose(
-                    session, batch, f"{what} the tags of {len(batch)} files", id3_version
-                )
-                typer.echo(
-                    f"Changeset {changeset.id}: {len(changeset.changes)} files. Review with "
-                    f"`aorg changes show {changeset.id}`."
-                )
+        batch = found.files
+        if write and batch:
+            changeset, outcomes = wr.write(
+                session, batch, wr.description(selection, len(batch)), id3_version
+            )
+            failed = [o for o in outcomes if not o.ok]
+            for outcome in failed:
+                typer.echo(f"  {outcome.message}")
+            typer.echo(
+                f"Wrote {len(outcomes) - len(failed)} files"
+                + (f", {len(failed)} failed" if failed else "")
+                + f" (changeset {changeset.id}; undo with `aorg changes undo {changeset.id}`)."
+            )
             return
-        for pending in batch[:20]:
-            if prefer_gnudb:
-                typer.echo(f"  {pending.file.path}")
-                for name, value in pending.fields.items():
-                    typer.echo(f"      {name}: {pending.before.get(name)!r} -> {value!r}")
-            else:
-                typer.echo(f"  {pending.file.path}: {', '.join(pending.fields)}")
-        if len(found.files) > 20:
-            typer.echo(f"  ... and {len(found.files) - 20} more")
+        if discard and batch:
+            dropped, kept = wr.discard(session, batch)
+            typer.echo(
+                f"Dropped {dropped} edits"
+                + (f"; kept {kept} measured or looked-up values" if kept else "")
+                + "."
+            )
+            return
+        if artist is None and album is None and path is None and not prefer_gnudb:
+            groups = wr.groups(session, lib, selection)
+            for group in groups[:50]:
+                typer.echo(
+                    f"  {group.artist or '(no artist)'} – {group.album or '(no album)'}: "
+                    f"{group.files} files"
+                )
+            if len(groups) > 50:
+                typer.echo(f"  ... and {len(groups) - 50} more albums")
+            if batch:
+                typer.echo("Choose one with --artist and --album to see what would change.")
+            return
+        heading = None
+        for pending in batch:
+            if (pending.artist, pending.album) != heading:
+                heading = (pending.artist, pending.album)
+                typer.echo(f"{pending.artist or '(no artist)'} – {pending.album or '(no album)'}")
+            typer.echo(f"  {pending.file.path}")
+            for name, value in pending.fields.items():
+                typer.echo(f"      {name}: {pending.before.get(name)!r} -> {value!r}")
+        if found.total > len(batch):
+            typer.echo(f"  ... and {found.total - len(batch)} more files")
         if batch:
-            typer.echo(f"Run with --propose to create a changeset for {len(batch)} files.")
+            typer.echo(f"Run with --write to write these {len(batch)} files.")
 
 
 @app.command("ratings")
@@ -1810,7 +1855,7 @@ def ratings_command(
 
     Shows how each preference maps to 1-5 stars; --set changes the mapping and --apply
     sets the ratings in the catalog. A rating already in a file's tags is kept. The
-    ratings are then written into the files with `aorg write-tags --only rating`.
+    ratings are then written into the files with `aorg pending --only rating`.
     """
     with _session(ctx) as session:
         lib = _library(session, library)
@@ -1829,9 +1874,7 @@ def ratings_command(
             typer.echo(f"  {name:12} {n:6} files  ->  {'★' * stars if stars else 'no rating'}")
         if apply:
             rated = rt.apply(session, lib, mapping)
-            typer.echo(
-                f"Rated {rated} files. Write the ratings with `aorg write-tags --only rating`."
-            )
+            typer.echo(f"Rated {rated} files. Write the ratings with `aorg pending --only rating`.")
         elif counts:
             typer.echo("Run with --apply to set the ratings.")
 

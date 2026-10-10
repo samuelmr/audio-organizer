@@ -9,7 +9,6 @@ scanned, so edits made elsewhere are never silently overwritten.
 import logging
 import os
 import shutil
-from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -19,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from . import covers, pathparse, tags
 from .models import AudioFile, Change, Changeset, CoverImage, Library, PlaylistEntry, utcnow
-from .provenance import comparable, resolve, set_value, set_values
+from .provenance import set_value, set_values
 
 log = logging.getLogger(__name__)
 
@@ -194,89 +193,6 @@ def propose_save_image(
     return change
 
 
-# Sources whose values are meant to end up in the files: the user's edits, measurements,
-# lookups and rules. Values inferred from paths or neighbouring files are only evidence.
-WRITTEN_SOURCES = ("manual", "analysis", "gnudb", "rule")
-
-
-def unwritten(file: AudioFile, prefer: Iterable[str] = ()) -> dict[str, str]:
-    """The fields whose chosen value is an edit, a measurement or a lookup that differs
-    from what the file's tags say: values not yet written into the file.
-
-    A lookup ranks below the tags, so where it differs it is not the chosen value. With
-    prefer, naming such sources (e.g. "gnudb"), their values are taken instead of the
-    tags' (not instead of the user's edits, and not where they only spell a number or a
-    date differently)."""
-    resolved = resolve(file.values)
-    current = {fv.field: fv.value for fv in file.values if fv.source == "tag"}
-    result = {}
-    for name in tags.FIELDS:
-        found = resolved.get(name)
-        if found is None:
-            continue
-        preferred = next((found.candidates[s] for s in prefer if s in found.candidates), None)
-        if found.source in WRITTEN_SOURCES:
-            value = found.value
-        elif preferred is not None and found.source != "manual":
-            value = preferred
-            if name in current and comparable(name, value) == comparable(name, current[name]):
-                continue
-        else:
-            continue
-        if value != current.get(name):
-            result[name] = value
-    return result
-
-
-def propose_tag_sync(
-    changeset: Changeset, file: AudioFile, id3_version: int | None = None
-) -> Change | None:
-    """Propose writing the resolved values (e.g. manual edits) into the file's tags,
-    for the fields where they differ from what the tags now say."""
-    fields: dict[str, str | None] = dict(unwritten(file))
-    return propose_retag(changeset, file, fields, id3_version) if fields else None
-
-
-def propose_manual_edit(
-    session: Session,
-    changeset: Changeset,
-    file: AudioFile,
-    values: dict[str, str | None],
-    id3_version: int | None = None,
-) -> Change | None:
-    """Store manual values for a file (None removes one) and propose writing the result
-    into its tags. The change remembers the earlier manual values, so undoing it also
-    reverts the edit in the catalog."""
-    unknown = set(values) - set(tags.FIELDS)
-    if unknown:
-        raise ChangeError(f"Not tag fields: {', '.join(sorted(unknown))}")
-    earlier = {fv.field: fv.value for fv in file.values if fv.source == "manual"}
-    for name, value in values.items():
-        set_value(session, file, "manual", name, value)
-    change = propose_tag_sync(changeset, file, id3_version)
-    if change is not None:
-        change.payload = {**change.payload, "manual_before": {n: earlier.get(n) for n in values}}
-    return change
-
-
-def propose_manual_edits(
-    session: Session,
-    changeset: Changeset,
-    files: Iterable[AudioFile],
-    values: dict[str, str | None],
-    id3_version: int | None = None,
-) -> list[Change]:
-    """The same manual edit for several files, such as all tracks of an album (to fix a
-    typo in its name once): one change per file whose tags then differ, all in one
-    changeset, so the edit is reviewed, applied and undone as a whole."""
-    changes = []
-    for file in files:
-        change = propose_manual_edit(session, changeset, file, values, id3_version)
-        if change is not None:
-            changes.append(change)
-    return changes
-
-
 def set_status(changes: list[Change], status: str) -> int:
     """Approve or reject proposed changes (or return approved/rejected ones to proposed)."""
     if status not in ("approved", "rejected", "proposed"):
@@ -439,6 +355,8 @@ def undo(session: Session, changeset: Changeset, *, dry_run: bool = False) -> li
                 _check_unchanged(change.file)
             if change.kind == "retag":
                 _retag(session, change.file, change.undo["fields"])
+                # Changesets made when an edit proposed its own changeset revert the edit
+                # too; writes of pending values leave it, so the file is pending again
                 for name, value in change.payload.get("manual_before", {}).items():
                     set_value(session, change.file, "manual", name, value)
             elif change.kind == "move":

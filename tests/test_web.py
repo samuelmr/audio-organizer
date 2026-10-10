@@ -10,8 +10,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 
+from audio_organizer import changes as ch
 from audio_organizer import covers, tags
-from audio_organizer.models import AudioFile, CoverLookup, Library, SyncTarget
+from audio_organizer.models import AudioFile, Changeset, CoverLookup, Library, SyncTarget
 from audio_organizer.scanner import scan
 from audio_organizer.web import create_app
 
@@ -64,32 +65,49 @@ def test_track_page(web, Session):
     assert "Tags when first scanned" in page
 
 
-def test_edit_review_apply_undo(web, Session):
+def test_edit_then_write_and_undo(web, Session):
     file_id = _file_id(Session, "Texas/Texas_Halo.mp3")
     form = {"artist": "Texas", "title": "Halo", "album": "Greatest Hits", "tracknumber": "11"}
     response = web.post(f"/tracks/{file_id}/edit", data=form)
     assert response.status_code == 200
-    changeset_path = response.url.path
-    assert re.fullmatch(r"/changes/\d+", changeset_path)
-    assert "proposed" in response.text
-
-    page = web.post(f"{changeset_path}/apply", data={}).text
-    assert "Nothing to do" in page  # not approved yet
-
-    web.post(f"{changeset_path}/status", data={"action": "approve-all"})
-    page = web.post(f"{changeset_path}/apply", data={"dry_run": "true"}).text
-    assert "would retag" in page
+    assert response.url.path == f"/tracks/{file_id}"
+    assert "Saved; not yet in the file." in response.text
+    assert f"/libraries/music/pending?file={file_id}" in response.text
+    assert "1 value not yet in the file" in response.text  # the track number was 11
     assert "album" not in tags.read(web.root / "Texas/Texas_Halo.mp3").fields
+    with Session() as session:
+        assert session.scalar(select(Changeset)) is None  # an edit is no changeset
 
-    page = web.post(f"{changeset_path}/apply", data={}).text
-    assert "Applied" in page and 'class="failed"' not in page
+    page = web.get("/libraries/music/pending", params={"file": file_id}).text
+    assert "<h1>Pending</h1>" in page
+    assert page.count('name="file_ids"') == 1
+    assert "Album: Greatest Hits" in page
+
+    page = web.post(
+        "/libraries/music/pending", data={"action": "write", "file_ids": [file_id]}
+    ).text
+    assert "Written" in page and 'class="failed"' not in page
     assert ">was retagged</span>" in page
     fields = tags.read(web.root / "Texas/Texas_Halo.mp3").fields
     assert (fields["album"], fields["tracknumber"]) == ("Greatest Hits", "11")
+    assert "Nothing to write" in web.get("/libraries/music/pending").text
 
+    changeset_path = re.search(r'action="(/changes/\d+)/undo"', page).group(1)
     web.post(f"{changeset_path}/undo")
     assert "album" not in tags.read(web.root / "Texas/Texas_Halo.mp3").fields
-    assert "0 changes" not in web.get("/changes?all=1").text
+    page = web.get("/libraries/music/pending").text  # the edit stays, so it is pending again
+    assert page.count('name="file_ids"') == 1
+
+
+def test_discard_edits(web, Session):
+    file_id = _file_id(Session, "Texas/Texas_Halo.mp3")
+    web.post(f"/tracks/{file_id}/edit", data={"genre": "Pop-rock"})
+    page = web.post(
+        "/libraries/music/pending", data={"action": "discard", "file_ids": [file_id]}
+    ).text
+    assert "Dropped 1 edits" in page and "Nothing to write" in page
+    page = web.get(f"/tracks/{file_id}").text
+    assert "not yet in the file" not in page
 
 
 def test_edit_without_changes(web, Session):
@@ -99,9 +117,13 @@ def test_edit_without_changes(web, Session):
 
 
 def test_select_single_changes(web, Session):
-    file_id = _file_id(Session, "Texas/Texas_Halo.mp3")
-    response = web.post(f"/tracks/{file_id}/edit", data={"genre": "Pop-rock"})
-    changeset_path = response.url.path
+    with Session() as session:
+        file = session.scalar(select(AudioFile).where(AudioFile.path == "Texas/Texas_Halo.mp3"))
+        changeset = ch.new_changeset(session, "retag", "manual")
+        ch.propose_retag(changeset, file, {"genre": "Pop-rock"})
+        session.commit()
+        changeset_path = f"/changes/{changeset.id}"
+    response = web.get(changeset_path)
     [change_id] = re.findall(r'name="change_ids" value="(\d+)"', response.text)
     page = web.post(
         f"{changeset_path}/status", data={"action": "reject", "change_ids": [change_id]}
@@ -605,12 +627,12 @@ def test_measure_and_write_replaygain(web, Session):
     # Track gain and peak, and album gain and peak: the album has only this track
     assert "4 values not yet in the file" in page
 
-    response = web.post(f"/tracks/{file_id}/write", data={"id3_version": "4"})
-    assert re.fullmatch(r"/changes/\d+", response.url.path)
-    assert "will be retagged as ID3v2.4" in response.text
-    changeset_path = response.url.path
-    web.post(f"{changeset_path}/status", data={"action": "approve-all"})
-    web.post(f"{changeset_path}/apply", data={})
+    assert f'name="file" value="{file_id}"' in page  # Review and write: the Pending page
+    page = web.post(
+        "/libraries/music/pending",
+        data={"action": "write", "file_ids": [file_id], "id3_version": "4"},
+    ).text
+    assert "was retagged as ID3v2.4" in page
     path = web.root / "Texas/Greatest Hits/11 Halo.mp3"
     assert tags.id3_version(path) == 4
     assert tags.read(path).fields["replaygain_track_gain"].endswith(" dB")
@@ -636,35 +658,49 @@ def test_embed_folder_cover(web, Session):
     assert web.get(f"/tracks/{file_id}/cover").status_code == 404
 
 
-def test_write_tags_in_bulk(web, Session):
+def test_pending_page_writes_by_selection(web, Session):
     from audio_organizer import loudness
     from audio_organizer.models import Library as Lib
 
     with Session() as session:
         lib = session.scalar(select(Lib))
         assert loudness.measure_library(session, lib).measured == 3
+        # A changeset proposed elsewhere, waiting for review: its file is left to it
+        pink = session.scalar(select(AudioFile).where(AudioFile.path.contains("So What")))
+        ch.propose_retag(ch.new_changeset(session, "waiting", "manual"), pink, {"genre": "Pop"})
+        session.commit()
     halo = _file_id(Session, "Texas/Texas_Halo.mp3")
-    web.post(f"/tracks/{halo}/edit", data={"rating": "5"})  # an edit, proposed at once
+    web.post(f"/tracks/{halo}/edit", data={"rating": "5"})  # an edit, only in the catalog
 
-    page = web.get("/libraries/music/write-tags").text
-    assert "2 files have values not yet in them" in page  # the edited one is waiting
+    assert web.get("/libraries/music/write-tags").url.path == "/libraries/music/pending"
+    page = web.get("/libraries/music/pending").text
+    assert "2 files have values not yet in them" in page
     assert "1 more have changes waiting" in page
-    assert "replaygain_track_gain" in page and "albumartist" not in page  # evidence only
+    assert "Track gain" in page and "Album artist" not in page  # evidence only
+    assert "Albums with pending changes" in page
+    assert re.search(r'artist=Texas&amp;album=Greatest\+Hits">Greatest Hits</a>', page)
+    assert re.search(r'artist=Texas&amp;album=">\(no album\)</a>', page)
 
-    page = web.get("/libraries/music/write-tags", params={"only": "replaygain_album"}).text
-    assert "replaygain_track_gain:" not in page and "replaygain_album_gain:" in page
+    page = web.get("/libraries/music/pending", params={"only": "replaygain_album"}).text
+    assert "Track gain:" not in page and "Album gain:" in page
 
-    response = web.post(
-        "/libraries/music/write-tags", data={"only": "replaygain", "id3_version": "3"}
-    )
-    assert re.fullmatch(r"/changes/\d+", response.url.path)
-    assert "will be retagged as ID3v2.3" in response.text
-    changeset_path = response.url.path
-    web.post(f"{changeset_path}/status", data={"action": "approve-all"})
-    web.post(f"{changeset_path}/apply", data={})
+    # Only the chosen album, and only what is ticked, is written
+    page = web.get(
+        "/libraries/music/pending", params={"artist": "Texas", "album": "Greatest Hits"}
+    ).text
+    assert "<h1>Pending: Texas – Greatest Hits</h1>" in page
+    assert page.count('name="file_ids"') == 1 and "Albums with pending changes" not in page
+    one = _file_id(Session, "Texas/Greatest Hits/11 Halo.mp3")
+    page = web.post(
+        "/libraries/music/pending",
+        data={"action": "write", "artist": "Texas", "album": "Greatest Hits",
+              "file_ids": [one, halo], "id3_version": "3"},
+    ).text  # fmt: skip
+    assert "was retagged as ID3v2.3" in page and "(Texas – Greatest Hits)" in page
     fields = tags.read(web.root / "Texas/Greatest Hits/11 Halo.mp3").fields
     assert fields["replaygain_track_gain"].endswith(" dB") and "replaygain_album_peak" in fields
-    assert "0 files have values" in web.get("/libraries/music/write-tags").text
+    assert "rating" not in tags.read(web.root / "Texas/Texas_Halo.mp3").fields  # not chosen
+    assert "1 file has values not yet in it" in web.get("/libraries/music/pending").text
 
 
 def test_ratings_and_covers_pages(web, Session):
@@ -676,7 +712,7 @@ def test_ratings_and_covers_pages(web, Session):
     page = web.get("/libraries/music/ratings").text
     assert "Very Good" in page and 'option value="4" selected' in page
     page = web.post("/libraries/music/ratings", data={"pref-1": "Very Good", "stars-1": "5"}).text
-    assert "Rated 1 files" in page and "rating: 5" in page  # on the write tags page
+    assert "Rated 1 files" in page and "Rating: 5" in page  # on the Pending page
 
     page = web.get("/libraries/music/covers").text
     assert "Texas/Greatest Hits/" in page and "Folder.jpg" in page
@@ -857,27 +893,26 @@ def test_cover_lookup_button(web, monkeypatch):
     assert asked == ["P!nk/Funhouse"] * 3
 
 
-def test_review_gnudb_values_on_the_write_tags_page(web, Session):
+def test_review_gnudb_values_on_the_pending_page(web, Session):
     from audio_organizer import provenance
 
     with Session() as session:
         file = session.scalar(select(AudioFile).where(AudioFile.path.contains("So What")))
         provenance.set_value(session, file, "gnudb", "title", "So What Now")
         session.commit()
-    base = "/libraries/music/write-tags"
+    base = "/libraries/music/pending"
     plain = web.get(base, params={"path": "P!nk/"}).text
     assert "0 files have values not yet in them" in plain  # a lookup below the tag is no value
     page = web.get(base, params={"path": "P!nk/", "prefer_gnudb": "true"}).text
     assert 'class="old">So What</span> → So What Now' in page
     assert 'name="prefer_gnudb" value="true" checked' in page
-    response = web.post(
-        base, data={"path": "P!nk/", "prefer_gnudb": "true"}, follow_redirects=False
-    )
-    assert response.status_code == 303 and response.headers["location"].startswith("/changes/")
-    assert (
-        "Write gnudb&#39;s values to the tags of 1 files"
-        in web.get(response.headers["location"].split("?")[0]).text
-    )
+    file_id = _file_id(Session, "P!nk/Funhouse/01 So What.m4a")
+    page = web.post(
+        base, data={"action": "write", "path": "P!nk/", "prefer_gnudb": "true",
+                    "file_ids": [file_id]},
+    ).text  # fmt: skip
+    assert "Write gnudb&#39;s values to the tags of 1 file (P!nk/)" in page
+    assert tags.read(web.root / "P!nk/Funhouse/01 So What.m4a").fields["title"] == "So What Now"
 
 
 def test_folders_of_albums_and_artists_link_to_disk(web):

@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 from audio_organizer import album_edit as ae
 from audio_organizer import changes as ch
 from audio_organizer import tags
+from audio_organizer import writing as wr
 from audio_organizer.cli import app
 from audio_organizer.layout import _renamed
 from audio_organizer.models import AudioFile, Changeset, Library
@@ -59,36 +60,43 @@ def test_album_files_by_album_or_folder(Session, library):
         assert shared == {"album": "Best of Foriegner", "genre": None, "composer": ""}
 
 
-def test_edit_album_apply_and_undo(Session, library):
+def test_edit_album_write_and_undo(Session, library):
+    """The edit only changes the catalog; writing the album's pending changes writes
+    the files, and undoing that write leaves the edit, so they are pending again."""
     with Session() as session:
-        lib_id = session.scalar(select(Library.id))
-        files = album_files(session, lib_id, album="Best of Foriegner")
-        changeset = ch.new_changeset(session, "edit", "manual")
-        changes = ch.propose_manual_edits(session, changeset, files, {"album": "Best of Foreigner"})
-        session.commit()
-        assert len(changes) == 3 and len(changeset.changes) == 3
-        ch.set_status(changes, "approved")
-        outcomes = ch.apply(session, changeset)
+        lib = session.scalar(select(Library))
+        files = album_files(session, lib.id, album="Best of Foriegner")
+        edit = ae.edit(session, lib, files, {"album": "Best of Foreigner"}, "edit")
+        assert len(edit.pending) == 3 and edit.changeset is None
+        assert session.scalar(select(Changeset)) is None
+        for file in files:
+            assert tags.read(library / file.path).fields["album"] == "Best of Foriegner"
+        assert album_files(session, lib.id, album="Best of Foriegner") == []
+
+        selection = wr.Selection(artist="foreigner", album="best of foreigner")
+        found = wr.survey(session, lib, selection)
+        assert found.total == 3
+        changeset, outcomes = wr.write(session, found.files, "write")
         assert all(o.ok for o in outcomes), outcomes
         for file in files:
             assert tags.read(library / file.path).fields["album"] == "Best of Foreigner"
             assert tags.read(library / file.path).fields["genre"] in ("Rock", "AOR")  # kept
-        assert album_files(session, lib_id, album="Best of Foriegner") == []
+        assert wr.survey(session, lib, selection).total == 0
 
         outcomes = ch.undo(session, changeset)
         assert all(o.ok for o in outcomes), outcomes
         for file in files:
             assert tags.read(library / file.path).fields["album"] == "Best of Foriegner"
-            assert resolve(file.values)["album"].source == "tag"  # the edit is gone too
+            assert resolve(file.values)["album"].source == "manual"  # the edit stays
+        assert wr.survey(session, lib, selection).total == 3
 
 
-def test_edit_album_only_changes_differing_files(Session, library):
+def test_edit_album_only_differing_files_are_pending(Session, library):
     with Session() as session:
-        lib_id = session.scalar(select(Library.id))
-        files = album_files(session, lib_id, folder=ALBUM)
-        changeset = ch.new_changeset(session, "edit", "manual")
-        [change] = ch.propose_manual_edits(session, changeset, files, {"genre": "Rock"})
-        assert change.file.path == f"{ALBUM}/02 Juke Box Hero.mp3"
+        lib = session.scalar(select(Library))
+        files = album_files(session, lib.id, folder=ALBUM)
+        edit = ae.edit(session, lib, files, {"genre": "Rock"}, "edit")
+        assert _paths(edit.pending) == [f"{ALBUM}/02 Juke Box Hero.mp3"]
 
 
 def test_cli_edit_album(Session, library):
@@ -98,18 +106,24 @@ def test_cli_edit_album(Session, library):
               "--set", "album=Best of Foreigner"],
     )  # fmt: skip
     assert result.exit_code == 0, result.output
-    assert "3 of 3 tracks, in 2 folders" in result.output
-    assert "'Best of Foriegner' -> 'Best of Foreigner'" in result.output
+    assert "Saved for 3 tracks in 2 folders; 3 of them are not yet written" in result.output
+    assert "aorg pending --artist Foreigner --album 'Best of Foreigner'" in result.output
 
     result = CliRunner().invoke(
         app, ["--db", db, "edit-album", "--folder", str(library / ALBUM), "--set", "date=1992"]
     )
     assert result.exit_code == 0, result.output
-    assert f"2 of 2 tracks, in {ALBUM}/" in result.output
+    assert f"Saved for 2 tracks in {ALBUM}/; 2 of them" in result.output
     with Session() as session:
-        assert session.scalar(select(Changeset).order_by(Changeset.id.desc())).description == (
-            f"Manual edit of folder {ALBUM}/"
-        )
+        assert session.scalar(select(Changeset)) is None  # nothing is written yet
+
+    result = CliRunner().invoke(
+        app, ["--db", db, "pending", "--artist", "Foreigner", "--album", "Best of Foreigner"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "Foreigner – Best of Foreigner" in result.output
+    assert "album: 'Best of Foriegner' -> 'Best of Foreigner'" in result.output
+    assert "date: None -> '1992'" in result.output  # both edits, in one write
 
     result = CliRunner().invoke(app, ["--db", db, "edit-album", "--set", "date=1992"])
     assert result.exit_code != 0 and "--album or --folder" in result.output
@@ -133,16 +147,17 @@ def test_web_edit_album(Session, library):
         data={"of_album": "Best of Foriegner", "album": "Best of Foreigner",
               "artist": "Foreigner", "genre": ""},
     )  # fmt: skip
-    assert re.fullmatch(r"/changes/\d+", response.url.path)
-    assert "review the changes to 3 files" in response.text
+    assert response.url.path == "/libraries/music/pending"
+    assert response.url.params["album"] == "Best of Foreigner"
+    assert "Saved; 3 files are not yet written" in response.text
+    assert response.text.count('name="file_ids"') == 3
     with Session() as session:
-        changeset = session.scalar(select(Changeset))
-        assert changeset.description == "Manual edit of album Best of Foriegner"
-        assert [c.payload["fields"] for c in changeset.changes] == [
-            {"album": "Best of Foreigner"}
-        ] * 3  # artist was as before and genre left empty: neither changed
+        assert session.scalar(select(Changeset)) is None
         file = session.scalar(select(AudioFile).where(AudioFile.path.endswith("Urgent.mp3")))
-        assert resolve(file.values)["album"].value == "Best of Foreigner"
+        resolved = resolve(file.values)
+        assert resolved["album"].value == "Best of Foreigner"
+        # artist was as before and genre left empty: neither changed
+        assert resolved["artist"].source == resolved["genre"].source == "tag"
 
     response = web.post(
         "/libraries/music/edit-album", data={"of_folder": ALBUM, "album": "Best of Foreigner"}
@@ -181,13 +196,13 @@ def test_edit_album_moving_files(Session, library):
     with Session() as session:
         lib = session.scalar(select(Library))
         files = album_files(session, lib.id, album="Best of Foriegner")
-        edit = ae.propose(
+        edit = ae.edit(
             session, lib, files, {"album": "Best of Foreigner", "genre": "Rock"}, "edit",
             move_files=True,
         )  # fmt: skip
-        assert len(edit.retags) == 3 and len(edit.moves) == 3
+        assert len(edit.pending) == 3 and len(edit.moves) == 3
         changes = edit.changeset.changes
-        assert [c.kind for c in changes] == ["retag"] * 3 + ["move"] * 3  # tags first
+        assert [c.kind for c in changes] == ["move"] * 3  # the tags are written separately
         ch.set_status(changes, "approved")
         outcomes = ch.apply(session, edit.changeset)
         assert all(o.ok for o in outcomes), outcomes
@@ -198,14 +213,18 @@ def test_edit_album_moving_files(Session, library):
         ]  # fmt: skip
         assert (library / new / "folder.jpg").exists()  # the cover went along
         assert not (library / ALBUM).exists()
+
+        # Writing after the move writes the files where they are now
+        found = wr.survey(session, lib, wr.Selection(path=new + "/"))
+        assert found.total == 3
+        _, outcomes = wr.write(session, found.files, "write")
+        assert all(o.ok for o in outcomes), outcomes
         assert tags.read(library / new / "02 Juke Box Hero.mp3").fields["genre"] == "Rock"
 
         outcomes = ch.undo(session, edit.changeset)
         assert all(o.ok for o in outcomes), outcomes
         assert (library / ALBUM / "folder.jpg").exists()
         assert not (library / new).exists()
-        fields = tags.read(library / ALBUM / "02 Juke Box Hero.mp3").fields
-        assert (fields["album"], fields["genre"]) == ("Best of Foriegner", "AOR")
 
 
 def test_edit_album_takes_the_folders_other_files_along(Session, library):
@@ -219,9 +238,7 @@ def test_edit_album_takes_the_folders_other_files_along(Session, library):
     with Session() as session:
         lib = session.scalar(select(Library))
         files = album_files(session, lib.id, album="Best of Foriegner")
-        edit = ae.propose(
-            session, lib, files, {"album": "Best of Foreigner"}, "edit", move_files=True
-        )
+        edit = ae.edit(session, lib, files, {"album": "Best of Foreigner"}, "edit", move_files=True)
         described = [ch.describe(c) for c in edit.moves]
         assert described[-2:] == [
             f"move {ALBUM}/02 Juke Box Hero.mp3 -> Foreigner/Best of Foreigner/02 Juke Box "
@@ -251,9 +268,7 @@ def test_edit_album_leaves_taken_paths(Session, library, copy_audio):
         lib = session.scalar(select(Library))
         scan(session, lib)
         files = album_files(session, lib.id, folder=ALBUM)
-        edit = ae.propose(
-            session, lib, files, {"album": "Best of Foreigner"}, "edit", move_files=True
-        )
+        edit = ae.edit(session, lib, files, {"album": "Best of Foreigner"}, "edit", move_files=True)
         assert [c.payload["to"] for c in edit.moves] == [
             "Foreigner/Best of Foreigner/02 Juke Box Hero.mp3"
         ]
@@ -267,9 +282,7 @@ def test_edit_album_case_only(Session, library):
     with Session() as session:
         lib = session.scalar(select(Library))
         files = album_files(session, lib.id, folder=ALBUM)
-        edit = ae.propose(
-            session, lib, files, {"album": "BEST OF FORIEGNER"}, "edit", move_files=True
-        )
+        edit = ae.edit(session, lib, files, {"album": "BEST OF FORIEGNER"}, "edit", move_files=True)
         assert edit.moves == [] and edit.plan.case_only == 2
 
 
@@ -298,5 +311,8 @@ def test_web_rename_album_link_and_moves(Session, library):
         data={"of_album": "Best of Foriegner", "album": "Best of Foreigner",
               "move_files": "true"},
     )  # fmt: skip
-    assert "review the changes to 3 files and 3 moves" in response.text
+    assert re.fullmatch(r"/changes/\d+", response.url.path)
+    assert "Review the 3 moves renaming the folders" in response.text
+    assert "The tags of 3 files are not yet written" in response.text
+    assert "Review and write them" in response.text
     assert "move Foreigner/Best of Foriegner/Bonus/03 Cold as Ice.mp3" in response.text

@@ -44,14 +44,13 @@ def test_ratings_from_preferences(library):
     kept = _rating(session, "Air/Moon Safari/02 Sexy Boy.mp3")
     assert (kept.value, kept.source) == ("2", "tag")  # the file's own rating wins
 
-    found = writing.survey(session, lib, only=["rating"])
+    found = writing.survey(session, lib, writing.Selection(only=["rating"]))
     assert sorted(p.file.path for p in found.files) == [
         "Air/Moon Safari/01 La Femme d'Argent.mp3",
         "Air/Moon Safari/03 All I Need.m4a",
     ]
-    changeset = writing.propose(session, found.files, "Write ratings")
-    ch.set_status(changeset.changes, "approved")
-    assert all(o.ok for o in ch.apply(session, changeset))
+    _, outcomes = writing.write(session, found.files, "Write ratings")
+    assert all(o.ok for o in outcomes)
     assert tags.read(root / "Air/Moon Safari/01 La Femme d'Argent.mp3").fields["rating"] == "5"
     assert tags.read(root / "Air/Moon Safari/03 All I Need.m4a").fields["rating"] == "3"
 
