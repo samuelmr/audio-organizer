@@ -220,7 +220,7 @@ def test_playlist_files_on_the_web(web):
 def test_albums_artists_and_folders(web, Session):
     page = web.get("/libraries/music/albums").text
     assert "2 albums" in page
-    [link] = re.findall(r'href="(/libraries/music\?album=Greatest[^"]*)"', page)
+    [link] = re.findall(r'href="(/libraries/music\?album=Greatest[^"]*)">Greatest', page)
     page = web.get(link.replace("&amp;", "&")).text
     assert "<h1>Greatest Hits</h1>" in page and "1 tracks" in page
 

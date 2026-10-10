@@ -26,7 +26,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import artists
@@ -159,7 +159,65 @@ def plan(
             result.case_only += 1
         else:
             wanted[target.casefold()].append(Move(file, target))
+    _group(result, wanted, taken)
+    return result
 
+
+def follow_renames(
+    session: Session, library: Library, renames: list[tuple[AudioFile, dict[str, tuple[str, str]]]]
+) -> Plan:
+    """Moves that keep folders named after an album or artist that has been renamed, for
+    files whose fields changed (field -> (old, new)); the files keep their names.
+
+    A folder is renamed where the old album name stands in its name as whole words
+    ("1992 Best of Foriegner" -> "1992 Best of Foreigner"), or where its whole name is the
+    old artist or album artist (not "Yesterday" for the band Yes). Unlike plan(), this
+    does not apply the layout, so it suits libraries that do not follow one."""
+    result = Plan()
+    wanted: dict[str, list[Move]] = defaultdict(list)
+    for file, changed in renames:
+        target = _renamed(file.path, changed)
+        if target == file.path:
+            result.in_place += 1
+        elif target.casefold() == file.path.casefold():
+            result.case_only += 1
+        else:
+            wanted[target.casefold()].append(Move(file, target))
+    targets = [m.target for moves in wanted.values() for m in moves]
+    taken = {}
+    for start in range(0, len(targets), 500):
+        # Missing files count too: their paths are still in the catalog
+        for file in session.scalars(
+            select(AudioFile).where(
+                AudioFile.library_id == library.id,
+                func.lower(AudioFile.path).in_([t.lower() for t in targets[start : start + 500]]),
+            )
+        ):
+            taken[file.path.casefold()] = file
+    _group(result, wanted, taken)
+    return result
+
+
+def _renamed(path: str, changed: dict[str, tuple[str, str]]) -> str:
+    """The path with its folders renamed after the changed fields (see follow_renames)."""
+    parts = PurePosixPath(path).parts
+    folders = [unicodedata.normalize("NFC", part) for part in parts[:-1]]
+    for name, (old, new) in changed.items():
+        old, new = file_name(old), file_name(new)
+        if not old or not new:
+            continue
+        if name == "album":
+            words = re.compile(r"(?<!\w)" + re.escape(old) + r"(?!\w)", re.IGNORECASE)
+            # A function, so that backslashes in the new name are not read as escapes
+            folders = [_tidy(words.sub(lambda _, new=new: new, f)) for f in folders]
+        elif name in ("albumartist", "artist"):
+            folders = [new if folder.casefold() == old.casefold() else folder for folder in folders]
+    return "/".join([*folders, parts[-1]])
+
+
+def _group(result: Plan, wanted: dict[str, list[Move]], taken: dict[str, AudioFile]) -> None:
+    """Group the wanted moves by target folder, leaving out (as conflicts) those whose
+    target several files want or another file has."""
     albums: dict[str, AlbumMove] = {}
     for moves in wanted.values():
         move = moves[0]
@@ -174,7 +232,6 @@ def plan(
         folder = str(PurePosixPath(move.target).parent)
         albums.setdefault(folder, AlbumMove(folder)).moves.append(move)
     result.albums = sorted(albums.values(), key=lambda a: a.folder.casefold())
-    return result
 
 
 def render(
@@ -244,6 +301,15 @@ def propose(
     """One changeset moving the albums' files; a folder's cover images go with the last
     track that leaves it."""
     changeset = ch.new_changeset(session, description, "layout")
+    add_moves(changeset, library, albums)
+    session.commit()
+    return changeset
+
+
+def add_moves(changeset: Changeset, library: Library, albums: list[AlbumMove]) -> list[Change]:
+    """Propose moving the albums' files in a changeset; a folder's cover images go with
+    the last track that leaves it."""
+    changes = []
     for album in albums:
         with_extras(album, library)
         last_from: dict[str, Move] = {}
@@ -255,9 +321,8 @@ def propose(
         for move in album.moves:
             folder = str(PurePosixPath(move.file.path).parent)
             extras = extras_by_source.get(folder) if last_from[folder] is move else None
-            ch.propose_move(changeset, move.file, move.target, extras)
-    session.commit()
-    return changeset
+            changes.append(ch.propose_move(changeset, move.file, move.target, extras))
+    return changes
 
 
 def _album_artists(rows) -> dict[int, str | None]:

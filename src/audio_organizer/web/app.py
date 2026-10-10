@@ -32,6 +32,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from .. import album_edit as ae
 from .. import album_merge as am
 from .. import artists as art
 from .. import changes as ch
@@ -249,10 +250,12 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         artist: str | None = None,
         folder: str | None = None,
         page: int = 1,
+        edit: bool = False,
         session: Session = SessionDep,
     ):
         """The tracks of a library: searched, filtered to one album, artist or folder,
-        and sorted. Sorted by album, the tracks come in album order."""
+        and sorted. Sorted by album, the tracks come in album order. With edit, the form
+        editing all of an album's tracks is open."""
         lib = _library(session, name)
         query = select(AudioFile, M).join(M, M.file_id == AudioFile.id).where(present(lib.id))
         for word in q.split():
@@ -305,6 +308,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         return render(
             request, "library.html", library=lib, rows=rows, total=total, sort=sort,
             album_folder=album_folder, folder_links=folder_links, album_edit=album_edit,
+            edit=edit,
             page=page, pages=pages, sorts=list(SORTS), filters=list(FILTERS), params=params,
             **params,
         )  # fmt: skip
@@ -362,7 +366,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         }
         return render(
             request, "albums.html", library=lib, rows=rows, total=total, q=q, page=page,
-            pages=pages, folders=folders,
+            pages=pages, folders=folders, max_album_edit=MAX_ALBUM_EDIT,
         )  # fmt: skip
 
     @app.get("/tracks/{file_id}", response_class=HTMLResponse)
@@ -628,21 +632,23 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
                 values[field] = submitted
         if not values:
             return _redirect(back, "Nothing changed")
-        what = (
-            f"album {chosen['album']}" if chosen["album"] is not None
-            else f"folder {chosen['folder'].strip('/')}/"
+        folder = chosen["folder"].strip("/") if chosen["folder"] is not None else None
+        edit = ae.propose(
+            session, lib, files, values, ae.description(chosen["album"], folder),
+            move_files=form.get("move_files") == "true",
         )  # fmt: skip
-        changeset = ch.new_changeset(session, f"Manual edit of {what}", "manual")
-        changes = ch.propose_manual_edits(session, changeset, files, values)
-        if not changes:
-            session.expunge(changeset)
-            session.commit()
+        if edit.changeset is None:
             return _redirect(back, "Saved; the files' tags already match")
-        session.commit()
-        return _redirect(
-            f"/changes/{changeset.id}",
-            f"Edit saved; review the changes to {len(changes)} files",
-        )
+        message = f"Edit saved; review the changes to {len(edit.retags)} files"
+        if edit.plan is not None:
+            message += f" and {len(edit.moves)} moves"
+            left = len(edit.plan.conflicts) + edit.plan.case_only
+            if left:
+                message += (
+                    f". {left} files stay where they are: their new path is taken, or "
+                    "differs only in letter case"
+                )
+        return _redirect(f"/changes/{edit.changeset.id}", message)
 
     # ---- duplicates ----------------------------------------------------------------------
 

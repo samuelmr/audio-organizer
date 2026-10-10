@@ -5,9 +5,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from typer.testing import CliRunner
 
+from audio_organizer import album_edit as ae
 from audio_organizer import changes as ch
 from audio_organizer import tags
 from audio_organizer.cli import app
+from audio_organizer.layout import _renamed
 from audio_organizer.models import AudioFile, Changeset, Library
 from audio_organizer.provenance import resolve
 from audio_organizer.scanner import scan
@@ -146,3 +148,118 @@ def test_web_edit_album(Session, library):
         "/libraries/music/edit-album", data={"of_folder": ALBUM, "album": "Best of Foreigner"}
     )
     assert "Nothing changed" in response.text
+
+
+@pytest.mark.parametrize(
+    ("path", "changed", "expected"),
+    [
+        (f"{ALBUM}/01 Urgent.mp3", {"album": ("Best of Foriegner", "Best of Foreigner")},
+         "Foreigner/Best of Foreigner/01 Urgent.mp3"),
+        ("Foreigner/1992 - Best of Foriegner [CD1]/01.mp3",
+         {"album": ("best of foriegner", "Best of Foreigner")},
+         "Foreigner/1992 - Best of Foreigner [CD1]/01.mp3"),
+        # Only whole words: "Hits" is not renamed in "Greatest Hitsville"
+        ("Texas/Greatest Hitsville/01.mp3", {"album": ("Hits", "Songs")},
+         "Texas/Greatest Hitsville/01.mp3"),
+        # An artist only where a folder's whole name is theirs
+        ("Yes/Yesterday/01.mp3", {"artist": ("Yes", "YES")}, "YES/Yesterday/01.mp3"),
+        ("Yes/Yesterday/01.mp3", {"albumartist": ("Yes", "The Yes Band")},
+         "The Yes Band/Yesterday/01.mp3"),
+        # Characters not allowed in file names are replaced, as in the layout
+        ("AC_DC/Back in Blak/01.mp3",
+         {"albumartist": ("AC/DC", "AC/DC"), "album": ("Back in Blak", "Back in Black: Live")},
+         "AC_DC/Back in Black_ Live/01.mp3"),
+        ("01 Loose.mp3", {"album": ("Loose", "Tight")}, "01 Loose.mp3"),  # file names stay
+    ],
+)  # fmt: skip
+def test_renamed(path, changed, expected):
+    assert _renamed(path, changed) == expected
+
+
+def test_edit_album_moving_files(Session, library):
+    (library / ALBUM / "folder.jpg").write_bytes(b"jpeg")
+    with Session() as session:
+        lib = session.scalar(select(Library))
+        files = album_files(session, lib.id, album="Best of Foriegner")
+        edit = ae.propose(
+            session, lib, files, {"album": "Best of Foreigner", "genre": "Rock"}, "edit",
+            move_files=True,
+        )  # fmt: skip
+        assert len(edit.retags) == 3 and len(edit.moves) == 3
+        changes = edit.changeset.changes
+        assert [c.kind for c in changes] == ["retag"] * 3 + ["move"] * 3  # tags first
+        ch.set_status(changes, "approved")
+        outcomes = ch.apply(session, edit.changeset)
+        assert all(o.ok for o in outcomes), outcomes
+        new = "Foreigner/Best of Foreigner"
+        assert _paths(album_files(session, lib.id, album="Best of Foreigner")) == [
+            f"{new}/01 Urgent.mp3", f"{new}/02 Juke Box Hero.mp3",
+            f"{new}/Bonus/03 Cold as Ice.mp3",
+        ]  # fmt: skip
+        assert (library / new / "folder.jpg").exists()  # the cover went along
+        assert not (library / ALBUM).exists()
+        assert tags.read(library / new / "02 Juke Box Hero.mp3").fields["genre"] == "Rock"
+
+        outcomes = ch.undo(session, edit.changeset)
+        assert all(o.ok for o in outcomes), outcomes
+        assert (library / ALBUM / "folder.jpg").exists()
+        assert not (library / new).exists()
+        fields = tags.read(library / ALBUM / "02 Juke Box Hero.mp3").fields
+        assert (fields["album"], fields["genre"]) == ("Best of Foriegner", "AOR")
+
+
+def test_edit_album_leaves_taken_paths(Session, library, copy_audio):
+    copy_audio("mp3b", library / "Foreigner/Best of Foreigner/01 Urgent.mp3")
+    with Session() as session:
+        lib = session.scalar(select(Library))
+        scan(session, lib)
+        files = album_files(session, lib.id, folder=ALBUM)
+        edit = ae.propose(
+            session, lib, files, {"album": "Best of Foreigner"}, "edit", move_files=True
+        )
+        assert [c.payload["to"] for c in edit.moves] == [
+            "Foreigner/Best of Foreigner/02 Juke Box Hero.mp3"
+        ]
+        [(file, _, why)] = edit.plan.conflicts
+        assert file.path == f"{ALBUM}/01 Urgent.mp3" and why.startswith("taken by")
+
+
+def test_edit_album_case_only(Session, library):
+    """Changing only the letter case moves nothing: the folder is the same one on
+    case-insensitive file systems."""
+    with Session() as session:
+        lib = session.scalar(select(Library))
+        files = album_files(session, lib.id, folder=ALBUM)
+        edit = ae.propose(
+            session, lib, files, {"album": "BEST OF FORIEGNER"}, "edit", move_files=True
+        )
+        assert edit.moves == [] and edit.plan.case_only == 2
+
+
+def test_cli_edit_album_moving_files(Session, library):
+    db = str(Session.kw["bind"].url)
+    result = CliRunner().invoke(
+        app, ["--db", db, "edit-album", "--folder", ALBUM, "--set", "album=Best of Foreigner",
+              "--move-files"],
+    )  # fmt: skip
+    assert result.exit_code == 0, result.output
+    assert (
+        f"move {ALBUM}/01 Urgent.mp3 -> Foreigner/Best of Foreigner/01 Urgent.mp3" in result.output
+    )
+
+
+def test_web_rename_album_link_and_moves(Session, library):
+    web = TestClient(create_app(Session))
+    page = web.get("/libraries/music/albums").text
+    link = re.search(r'href="([^"]*edit=true[^"]*)">Rename album', page).group(1)
+    page = web.get(link.replace("&amp;", "&")).text
+    assert '<details class="album-edit" id="edit-album" open>' in page
+    assert 'value="Best of Foriegner"' in page
+
+    response = web.post(
+        "/libraries/music/edit-album",
+        data={"of_album": "Best of Foriegner", "album": "Best of Foreigner",
+              "move_files": "true"},
+    )  # fmt: skip
+    assert "review the changes to 3 files and 3 moves" in response.text
+    assert "move Foreigner/Best of Foriegner/Bonus/03 Cold as Ice.mp3" in response.text

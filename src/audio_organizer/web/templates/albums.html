@@ -12,7 +12,7 @@
 Albums are grouped by their album and album artist tags; files of one album scattered
 across folders are listed together.</p>
 <table>
- <thead><tr><th>Album</th><th>Artist</th><th class="num">Tracks</th><th>Year</th><th>Folder</th></tr></thead>
+ <thead><tr><th>Album</th><th>Artist</th><th class="num">Tracks</th><th>Year</th><th>Folder</th><th></th></tr></thead>
  <tbody>
  {% for row in rows %}
   <tr>
@@ -22,9 +22,10 @@ across folders are listed together.</p>
    <td>{{ row.year or "" }}</td>
    {% set links = folders[(row.album, row.albumartist)] %}
    <td class="path">{% if links | length == 1 %}<a href="{{ links[0][1] }}" title="Open in the file manager">{{ links[0][0] }}/</a>{% elif links %}<details><summary>{{ links | length }} folders</summary>{% for folder, uri in links %}<a href="{{ uri }}">{{ folder }}/</a><br>{% endfor %}</details>{% endif %}</td>
+   <td>{% if row.tracks <= max_album_edit %}<a class="quiet" href="{{ url(base, album=row.album, albumartist=row.albumartist, edit='true') }}#edit-album">Rename album</a>{% endif %}</td>
   </tr>
  {% else %}
-  <tr><td colspan="5">No albums found.</td></tr>
+  <tr><td colspan="6">No albums found.</td></tr>
  {% endfor %}
  </tbody>
 </table>

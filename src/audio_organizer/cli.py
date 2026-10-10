@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import __version__, coverart, gnudb, loudness
+from . import album_edit as ae
 from . import album_merge as am
 from . import artists as art
 from . import changes as ch
@@ -599,16 +600,27 @@ def edit_album(
             help="The tracks in this folder, not its subfolders (relative to the "
             "library, or inside it)"
         ),
-    ] = None,  # fmt: skip
+    ] = None,
     set_: Annotated[list[str], typer.Option("--set", help="field=value")] = [],  # noqa: B006
     unset: Annotated[list[str], typer.Option(help="Field whose manual value to remove")] = [],  # noqa: B006
+    move_files: Annotated[
+        bool,
+        typer.Option(
+            "--move-files",
+            help="Also rename the folders named after the album or artist being renamed",
+        ),
+    ] = False,
 ) -> None:
     """Edit all tracks of an album or folder at once, e.g. to fix a typo in the album's
     name. The edit is stored in the catalog for every track and proposed as one changeset
     that writes it into their tags:
 
-        aorg edit-album --album "Best of Foriegner" --set album="Best of Foreigner"
+        aorg edit-album --album "Best of Foriegner" --set album="Best of Foreigner" --move-files
         aorg edit-album --folder "Foreigner/Best of Foriegner" --set date=1992
+
+    With --move-files, the changeset also moves the tracks out of folders whose names
+    hold the old album name ("1992 Best of Foriegner"), or are the old artist's name, into
+    folders with the new name. File names stay as they are.
     """
     values = _edit_values(set_, unset)
     if not values:
@@ -626,26 +638,31 @@ def edit_album(
         if not files:
             typer.echo("No tracks found.")
             raise typer.Exit(1)
-        what = f"album {album}" if album is not None else f"folder {folder}/"
-        changeset = ch.new_changeset(session, f"Manual edit of {what}", "manual")
-        changes = ch.propose_manual_edits(session, changeset, files, values)
-        if not changes:
-            session.expunge(changeset)
-            session.commit()
+        folders = sorted({str(PurePosixPath(f.path).parent) for f in files})
+        edit = ae.propose(
+            session, lib, files, values, ae.description(album, folder), move_files=move_files
+        )
+        if edit.changeset is None:
             typer.echo(f"Saved for {len(files)} tracks; their tags already match.")
             return
-        session.commit()
-        folders = sorted({str(PurePosixPath(f.path).parent) for f in files})
         typer.echo(
-            f"Changeset {changeset.id}: {len(changes)} of {len(files)} tracks, in "
+            f"Changeset {edit.changeset.id}: {len(edit.retags)} of {len(files)} tracks, in "
             + (folders[0] + "/" if len(folders) == 1 else f"{len(folders)} folders:")
         )
         if len(folders) > 1:
             for name in folders:
                 typer.echo(f"  {name}/")
-        for change in changes:
+        for change in edit.retags + edit.moves:
             typer.echo(f"  {ch.describe(change)}")
-        typer.echo(f"Review with `aorg changes show {changeset.id}`, then approve and apply.")
+        if edit.plan is not None:
+            for file, target, why in edit.plan.conflicts:
+                typer.echo(f"  not moved: {file.path} -> {target} ({why})")
+            if edit.plan.case_only:
+                typer.echo(
+                    f"  not moved: {edit.plan.case_only} files whose folders would differ only "
+                    "in letter case"
+                )
+        typer.echo(f"Review with `aorg changes show {edit.changeset.id}`, then approve and apply.")
 
 
 def _edit_values(set_: list[str], unset: list[str]) -> dict[str, str | None]:

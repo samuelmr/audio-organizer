@@ -363,17 +363,27 @@ To edit all tracks of an album at once, say to fix a typo in its name, use `aorg
 edit-album`. It proposes one changeset with a change for each track whose tags differ, so
 the whole album is reviewed, applied and undone together:
 
-    aorg edit-album --album "Best of Foriegner" --set album="Best of Foreigner"
+    aorg edit-album --album "Best of Foriegner" --set album="Best of Foreigner" --move-files
     aorg edit-album --album "Greatest Hits" --albumartist Texas --set date=2000
     aorg edit-album --folder "Foreigner/Best of Foreigner" --set genre=Rock
 
 `--album` finds the album by name (ignoring case) in every folder, so a common name such
 as "Greatest Hits" needs `--albumartist`; the command lists the folders it found.
-`--folder` takes the tracks directly in one folder, not those in its subfolders. If the
-folder's name has the typo too, `aorg reorganize --propose` moves the tracks into a folder
-named after the corrected album once the changeset is applied. In the web UI, an album's
-or folder's page has an *Edit all tracks* form with the fields its tracks usually share;
-a field left empty or unchanged keeps each track's own value.
+`--folder` takes the tracks directly in one folder, not those in its subfolders.
+
+If the folders have the typo too, `--move-files` adds moves to the same changeset: a
+folder whose name holds the old album name as whole words ("1992 Best of Foriegner")
+gets the new one ("1992 Best of Foreigner"), and a folder named exactly after an artist
+or album artist being renamed gets the new name. File names stay as they are, and the
+folder's cover image goes along with its last track. Moves are applied after the tag
+changes and undone before them. A track stays where it is if its new path is taken, or
+differs only in letter case (the same folder on macOS and most NAS shares). To move
+files into your library's layout instead, use `aorg reorganize` (see above).
+
+In the web UI, an album's or folder's page has an *Edit all tracks* form with the fields
+its tracks usually share and a checkbox to rename the folders too; a field left empty or
+unchanged keeps each track's own value. The Albums page has a *Rename album* link on each
+album, which opens that form.
 
 Besides title, artist, album, track and disc numbers, year and genre, these fields can
 be read and edited: original year, album artist and artist sort names, composer,
