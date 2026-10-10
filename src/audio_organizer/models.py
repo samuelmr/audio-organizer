@@ -40,6 +40,10 @@ class Library(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100), unique=True)
     root: Mapped[str] = mapped_column(Text)
+    # Where playlist files are written, relative to the root ("" is the root itself), and
+    # in which formats (comma-separated)
+    playlist_folder: Mapped[str] = mapped_column(Text, default="", server_default="")
+    playlist_formats: Mapped[str] = mapped_column(String(50), default="m3u", server_default="m3u")
 
     files: Mapped[list["AudioFile"]] = relationship(back_populates="library")
 
@@ -208,6 +212,12 @@ class SyncTarget(Base):
     endpoint_url: Mapped[str | None] = mapped_column(Text)
     region: Mapped[str | None] = mapped_column(String(50))
     profile: Mapped[str | None] = mapped_column(String(100))
+    # Where playlist files go, relative to the prefix ("" is the prefix itself), and in
+    # which formats (comma-separated)
+    playlist_folder: Mapped[str] = mapped_column(Text, default="", server_default="")
+    playlist_formats: Mapped[str] = mapped_column(
+        String(50), default="m3u,json,html", server_default="m3u,json,html"
+    )
 
     library: Mapped[Library] = relationship()
 

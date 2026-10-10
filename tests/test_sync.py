@@ -189,6 +189,7 @@ def test_metadata_player_fields():
 
 def test_playlists_are_synced(setup, s3):
     session, root, target, store = setup
+    target.playlist_folder = "playlists"
     session.add(Playlist(library=target.library, name="Texas: hits", rule="artist=texas",
                          sort="album"))  # fmt: skip
     session.commit()
@@ -211,6 +212,17 @@ def test_playlists_are_synced(setup, s3):
     assert sorted(plan.stale) == playlist_keys
 
 
+def test_playlists_go_to_the_prefix_root_by_default(setup, s3):
+    session, root, target, store = setup
+    target.playlist_formats = "m3u"
+    session.add(Playlist(library=target.library, name="Hits", rule="artist=texas", sort="album"))
+    session.commit()
+    plan = _sync(session, target, store)
+    assert [a.key for a in plan.actions if a.object_kind == "playlist"] == ["lib/Hits.m3u"]
+    m3u = s3.get_object(Bucket=BUCKET, Key="lib/Hits.m3u")["Body"].read().decode()
+    assert m3u.splitlines()[-1] == "Texas/Greatest Hits/11 Halo.mp3"
+
+
 def test_target_commands(setup, tmp_path):
     from typer.testing import CliRunner
 
@@ -223,7 +235,23 @@ def test_target_commands(setup, tmp_path):
     assert bad.exit_code != 0 and "Invalid target name" in bad.output
     result = runner.invoke(app, [*db, "target", "show", target.name])
     assert result.exit_code == 0, result.output
-    assert "never synced" in result.output and "playlists/" in result.output
+    assert "never synced" in result.output and "<name> .m3u, .json, .html" in result.output
+    changed = runner.invoke(
+        app,
+        [
+            *db,
+            "target",
+            "set",
+            target.name,
+            "--playlist-folder",
+            "lists/",
+            "--playlist-formats",
+            "json",
+        ],
+    )
+    assert "/lists/<name> .json" in changed.output
+    bad = runner.invoke(app, [*db, "target", "set", target.name, "--playlist-folder", "../x"])
+    assert bad.exit_code != 0
     assert runner.invoke(app, [*db, "target", "rename", target.name, "nas"]).exit_code == 0
     assert "nas" in runner.invoke(app, [*db, "target", "list"]).output
     assert runner.invoke(app, [*db, "target", "remove", "nas"]).exit_code == 0

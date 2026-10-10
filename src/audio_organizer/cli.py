@@ -19,6 +19,7 @@ from . import encodings as rec
 from . import layout as lo
 from . import leftovers as lf
 from . import neighbours as nb
+from . import playlist_files as pf
 from . import playlists as pl
 from . import ratings as rt
 from . import sync as sy
@@ -144,6 +145,35 @@ def library_list(ctx: typer.Context) -> None:
         )
         for name, root, count in rows:
             typer.echo(f"{name}\t{count} files\t{root}")
+
+
+@library_app.command("set")
+def library_set(
+    ctx: typer.Context,
+    name: str,
+    playlist_folder: Annotated[
+        str | None,
+        typer.Option(help="Folder for playlist files, relative to the library root ('' = root)"),
+    ] = None,
+    playlist_formats: Annotated[
+        str | None, typer.Option(help="Playlist file formats, comma-separated: m3u, json, html")
+    ] = None,
+) -> None:
+    """Change where playlist files are written in a library, and in which formats."""
+    with _session(ctx) as session:
+        lib = _library(session, name)
+        try:
+            if playlist_folder is not None:
+                lib.playlist_folder = pf.clean_folder(playlist_folder)
+            if playlist_formats is not None:
+                lib.playlist_formats = ",".join(pf.parse_formats(playlist_formats))
+        except ValueError as e:
+            raise typer.BadParameter(str(e)) from None
+        session.commit()
+        typer.echo(
+            f"{lib.name}: playlists go to {Path(lib.root, lib.playlist_folder)} "
+            f"as {lib.playlist_formats}"
+        )
 
 
 # ---- scanning and inspection -----------------------------------------------------------
@@ -719,6 +749,34 @@ def target_add(
         ))  # fmt: skip
         session.commit()
     typer.echo(f"Added target {name}: {lib.name} -> s3://{bucket}/{prefix.strip('/')}")
+
+
+@target_app.command("set")
+def target_set(
+    ctx: typer.Context,
+    name: str,
+    playlist_folder: Annotated[
+        str | None,
+        typer.Option(help="Folder for playlist files, relative to the prefix ('' = the prefix)"),
+    ] = None,
+    playlist_formats: Annotated[
+        str | None, typer.Option(help="Playlist file formats, comma-separated: m3u, json, html")
+    ] = None,
+) -> None:
+    """Change where playlist files go in a target's bucket, and in which formats. The
+    next sync writes them there; copies in the old place are left (see `aorg sync`)."""
+    with _session(ctx) as session:
+        target = _target(session, name)
+        try:
+            if playlist_folder is not None:
+                target.playlist_folder = pf.clean_folder(playlist_folder)
+            if playlist_formats is not None:
+                target.playlist_formats = ",".join(pf.parse_formats(playlist_formats))
+        except ValueError as e:
+            raise typer.BadParameter(str(e)) from None
+        session.commit()
+        for line in sy.bucket_layout(target)[2:]:
+            typer.echo(line)
 
 
 @target_app.command("list")

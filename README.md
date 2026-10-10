@@ -59,7 +59,14 @@ environment variables, `~/.aws/credentials`, or a named profile (`--profile`).
     aorg target list                  # bucket, prefix, objects known, last sync
     aorg target show nas              # and where tracks, covers and playlists go
     aorg target rename nas home
+    aorg target set nas --playlist-folder Playlists --playlist-formats m3u,json
     aorg target remove home           # forgets the target; the bucket is not touched
+
+Playlist files go to the root of the bucket (under the prefix) by default, in the `.m3u`,
+`.json` and `.html` formats; `aorg target set` changes the folder and formats. The same
+settings exist for a library's disk: `aorg library set music --playlist-folder ''
+--playlist-formats m3u`. Entries in a playlist are relative to its folder, so the files
+are rewritten when the folder changes; copies in the old place are left behind.
 
 Targets can also be added, edited and removed on the web UI's Sync page. If you add a
 removed target again, run `aorg target reconcile` before syncing, so that files are not
@@ -535,9 +542,9 @@ characters once encoded); when a track's values exceed it, the longest values ar
 and listed in `truncated`. Adding keys to the list changes the metadata of already synced
 tracks: the next sync updates them with server-side copies, without uploading the audio.
 
-All playlists of the library are synced too, as `.m3u`, `.json` and `.html` files in
-`playlists/` (under the prefix), referring to the tracks by relative paths
-(`../Artist/Album/01 Title.mp3`).
+All playlists of the library are synced too, as files in the target's playlist folder
+(the prefix itself by default; see `aorg target set`), referring to the tracks by relative
+paths (`Artist/Album/01 Title.mp3`, or `../Artist/...` in a subfolder).
 
 Only new and changed files are uploaded. Metadata changes and moved files are handled
 with server-side copies, without uploading the audio again. Objects that are no longer

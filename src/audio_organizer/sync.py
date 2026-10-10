@@ -14,9 +14,10 @@ Sync is planned first and only does what is needed, to save bandwidth:
 - a metadata change of an unchanged file is a server-side copy of the object onto itself
 - a file moved locally is copied to its new key server-side, and the old key removed
 - only new and changed files are uploaded
-Playlists are generated in the same pass and stored as .m3u, .json and .html under
-playlists/, referring to the tracks by relative paths; they are uploaded when their
-content changes. Objects with no counterpart in the library are only deleted when asked to.
+Playlists are generated in the same pass and stored in the target's playlist folder (the
+prefix itself by default) in its chosen formats, referring to the tracks by relative
+paths; they are uploaded when their content changes. Objects with no counterpart in the
+library are only deleted when asked to.
 """
 
 import hashlib
@@ -37,9 +38,10 @@ from sqlalchemy.orm import Session
 
 from .models import AudioFile, RemoteObject, SyncTarget, utcnow
 from .objectstore import ObjectStore, S3Store
+from .playlist_files import entry_location, file_path, parse_formats
 from .playlist_formats import FORMATS as PLAYLIST_FORMATS
 from .playlist_formats import render
-from .playlists import PlaylistSet, library_playlists, safe_filename
+from .playlists import PlaylistSet, library_playlists
 from .tags import parse_number, parse_year
 from .tracks import iter_tracks, present
 
@@ -52,7 +54,6 @@ CONTENT_TYPES = {
 COVER_NAMES = ("cover", "folder", "front")
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png")
 METADATA_LIMIT = 2000  # S3 allows 2 KB of user metadata per object
-PLAYLIST_FOLDER = "playlists"
 
 
 @dataclass
@@ -157,10 +158,12 @@ def bucket_layout(target: SyncTarget, example: str = "Artist/Album/01 Title.mp3"
     """Where a target puts things, as s3 URLs: for explaining the bucket to the user."""
     base = f"s3://{target.bucket}/{target.prefix.strip('/')}".rstrip("/")
     folder = posixpath.dirname(example)
+    formats = ", ".join(f".{f}" for f in parse_formats(target.playlist_formats))
+    playlists = f"{base}/{target.playlist_folder}".rstrip("/")
     return [
         f"{base}/{example}  (tracks: the library path)",
         f"{base}/{folder}/cover.jpg  (the album's cover, from the track's `image` metadata)",
-        f"{base}/playlists/<name>.m3u, .json, .html  (playlists, with relative entries)",
+        f"{playlists}/<name> {formats}  (playlists, with relative entries)",
     ]
 
 
@@ -367,14 +370,11 @@ def plan(
         ))  # fmt: skip
         result.upload_bytes += st.st_size
 
-    playlist_dir = object_key(target, PLAYLIST_FOLDER)
     for generated in playlist_set.results():
-        entries = [
-            (t, posixpath.relpath(object_key(target, t.path), playlist_dir))
-            for t in generated.tracks
-        ]
-        for fmt, content_type in PLAYLIST_FORMATS.items():
-            key = f"{playlist_dir}/{safe_filename(generated.name)}.{fmt}"
+        entries = [(t, entry_location(target.playlist_folder, t.path)) for t in generated.tracks]
+        for fmt in parse_formats(target.playlist_formats):
+            content_type = PLAYLIST_FORMATS[fmt]
+            key = object_key(target, file_path(target.playlist_folder, generated.name, fmt))
             data = render(fmt, generated.name, entries).encode("utf-8")
             digest = hashlib.sha1(content_type.encode() + b"\0" + data).hexdigest()
             desired.add(key)
