@@ -50,7 +50,62 @@
  <label>At most <input name="max_tracks" inputmode="numeric" value="{{ playlist.max_tracks or '' }}" size="5"> tracks</label>
  <button class="primary">Save</button>
 </form>
+
+<h2>Files</h2>
+<p>A playlist lives in audio-organizer's database; its files are written from there when
+you choose. The files refer to the tracks by paths relative to the folder they are in, so
+a different folder gives different entries. The folder and formats here are tried out
+without being saved; <a href="/libraries/{{ library.name }}/playlists#files">the Playlists page</a> saves them.</p>
+{% for v in places %}
+<form method="get" action="/playlists/{{ playlist.id }}" class="stacked place" id="place-{{ v.key }}"
+      data-root="{{ v.root }}" data-names="{{ v.names | tojson | forceescape }}"
+      data-saved-folder="{{ v.saved.folder }}" data-saved-formats="{{ v.saved.formats | join(',') }}">
+ <h3>{{ v.label | capitalize }}</h3>
+ <input type="hidden" name="place" value="{{ v.key }}">
+ {% if group %}<input type="hidden" name="group" value="{{ group }}">{% endif %}
+ {% if v.error %}<p class="error" role="alert">{{ v.error }}</p>{% endif %}
+ <label>Folder <input name="folder" value="{{ v.place.folder }}" placeholder="(the root)" data-live></label>
+ <fieldset class="formats">
+  <legend>Formats</legend>
+  {% for f in all_formats %}<label><input type="checkbox" name="formats" value="{{ f }}" data-live {% if f in v.place.formats %}checked{% endif %}> {{ format_labels[f] }}</label> {% endfor %}
+ </fieldset>
+ <button class="no-js-only">Update paths</button>
+ <p>Files in {{ v.label }}{% if not v.checked %} (<a href="{{ url('/playlists/' ~ playlist.id, check=v.key, group=group) }}">check what is there now</a>){% endif %}:</p>
+ <ul class="paths">
+ {% for f in v.files %}
+  <li><code>{{ f.display }}</code>{% if f.state %} <small class="state">{{ f.state }}</small>{% endif %}</li>
+ {% endfor %}
+ </ul>
+ {% if v.changed %}<p><small>These are not the saved settings.</small></p>{% endif %}
+ {% if v.place.target %}
+ <div class="actions">
+  <button class="primary" formmethod="post" formaction="/playlists/{{ playlist.id }}/files" name="do" value="write">Upload to object storage</button>
+  <button class="danger" formmethod="post" formaction="/playlists/{{ playlist.id }}/files" name="do" value="delete">Delete from object storage</button>
+ </div>
+ <p><small>Uploads the files listed above to the bucket, replacing files with the same names. Deleting removes this playlist's files there. A replaced file that was changed elsewhere, and a deleted file, are kept below, so that you can restore them.</small></p>
+ {% else %}
+ <div class="actions">
+  <button class="primary" formmethod="post" formaction="/playlists/{{ playlist.id }}/files" name="do" value="write">Write to disk</button>
+  <button class="danger" formmethod="post" formaction="/playlists/{{ playlist.id }}/files" name="do" value="delete">Delete from disk</button>
+ </div>
+ <p><small>Writes the files listed above to the library disk, replacing files with the same names. Deleting removes this playlist's files there. A replaced file that was changed elsewhere, and a deleted file, are kept below, so that you can restore them.</small></p>
+ {% endif %}
+ {% if v.backups %}
+ <table>
+  <caption>Can be restored</caption>
+  <tbody>
+  {% for b in v.backups %}
+   <tr><td>{{ b.reason }}</td><td>{{ b.when.strftime("%Y-%m-%d %H:%M") }}</td><td><code>{{ b.path }}</code></td>
+    <td><button formmethod="post" formaction="/playlists/{{ playlist.id }}/files/{{ b.id }}/restore">Restore</button></td></tr>
+  {% endfor %}
+  </tbody>
+ </table>
+ {% endif %}
+</form>
+{% endfor %}
+
 <form method="post" action="/playlists/{{ playlist.id }}/delete">
- <button class="danger">Delete playlist</button>
+ <button class="danger">Delete from database</button>
+ <small>Removes the playlist from audio-organizer's database. Files already written stay where they are; a playlist file on the library disk is found again by the next scan.</small>
 </form>
 {% endblock %}

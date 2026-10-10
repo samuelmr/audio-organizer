@@ -162,6 +162,54 @@ def test_playlists(web):
     assert "No playlists yet" in response.text
 
 
+def test_playlist_files_on_the_web(web):
+    created = web.post(
+        "/libraries/music/playlists", data={"playlist_name": "All", "rule": "duration>0"}
+    )
+    page_path = created.url.path
+    assert str(web.root / "All.m3u") in created.text  # saved settings: root, m3u
+    assert "Write to disk" in created.text and "Delete from database" in created.text
+
+    tried = web.get(
+        page_path, params={"place": "disk", "folder": "Lists", "formats": ["m3u", "html"]}
+    )
+    assert str(web.root / "Lists/All.html") in tried.text
+    assert "not the saved settings" in tried.text
+
+    response = web.post(
+        f"{page_path}/files",
+        data={"place": "disk", "folder": "Lists", "formats": ["m3u"], "do": "write"},
+    )
+    assert "Wrote 1 of 1 files" in response.text
+    written = (web.root / "Lists/All.m3u").read_text().splitlines()
+    assert "../Texas/Greatest Hits/11 Halo.mp3" in written
+
+    (web.root / "Lists/All.m3u").write_text("my edits\n")
+    response = web.post(
+        f"{page_path}/files",
+        data={"place": "disk", "folder": "Lists", "formats": ["m3u"], "do": "write"},
+    )
+    assert "changed elsewhere" in response.text and "Can be restored" in response.text
+    backup_id = re.search(r"/files/(\d+)/restore", response.text).group(1)
+
+    response = web.post(f"{page_path}/files/{backup_id}/restore")
+    assert "Restored" in response.text
+    assert (web.root / "Lists/All.m3u").read_text() == "my edits\n"
+
+    response = web.post(
+        f"{page_path}/files",
+        data={"place": "disk", "folder": "../out", "formats": ["m3u"], "do": "write"},
+    )
+    assert "Could not write the files" in response.text
+
+    response = web.post(
+        "/libraries/music/playlists/files-settings",
+        data={"place": "disk", "folder": "Lists", "formats": ["m3u", "json"]},
+    )
+    assert str(web.root / "Lists") in response.text
+    assert str(web.root / "Lists/All.json") in web.get(page_path).text
+
+
 def test_albums_artists_and_folders(web, Session):
     page = web.get("/libraries/music/albums").text
     assert "2 albums" in page

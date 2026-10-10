@@ -28,14 +28,24 @@ class Place:
     Paths are relative to the library root or to the target's prefix."""
 
     def __init__(
-        self, library: Library, target: SyncTarget | None = None, store: ObjectStore | None = None
+        self,
+        library: Library,
+        target: SyncTarget | None = None,
+        store: ObjectStore | None = None,
+        *,
+        folder: str | None = None,
+        formats: list[str] | None = None,
     ) -> None:
+        """The folder and formats default to the library's or target's settings; a page
+        that lets the user try others without saving them passes its own."""
         self.library = library
         self.target = target
         self._store = store
         source = target or library
-        self.folder: str = source.playlist_folder
-        self.formats: list[str] = parse_formats(source.playlist_formats)
+        self.folder: str = source.playlist_folder if folder is None else folder
+        self.formats: list[str] = (
+            parse_formats(source.playlist_formats) if formats is None else formats
+        )
 
     @property
     def target_id(self) -> int | None:

@@ -191,7 +191,7 @@ across folders show up together. It is also where changesets are easiest to revi
 select changes (or all, then deselect some) to approve or reject, try a dry run, apply
 and undo. The ▶ buttons on track, duplicate and changeset pages play the files in the
 browser, so copies can be compared by ear (MP3, M4A and AAC play everywhere; WMA does
-not). Playlists can be viewed, created and edited. On the Sync page, a target's plan
+not). Playlists can be viewed, created and edited; a playlist's page also writes its files to the library disk or a bucket (showing each file's full path, which you can change before writing), deletes them again and restores deleted or replaced ones, and the Playlists page saves the default folders and formats. On the Sync page, a target's plan
 can be reviewed and started, and its progress followed.
 
 The web UI has no login, so it only listens on your own computer unless you give

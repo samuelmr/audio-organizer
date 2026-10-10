@@ -52,4 +52,32 @@
     boxes.forEach((b) => b.addEventListener("change", sync));
     sync();
   });
+
+  // Playlist file places (form.place): typing a folder or choosing formats updates the
+  // listed paths at once, so that the buttons visibly act on the path shown. Without
+  // JavaScript the "Update paths" button does the same with a page load.
+  document.querySelectorAll("form.place").forEach((form) => {
+    const list = form.querySelector("ul.paths");
+    const folder = form.querySelector("input[name=folder]");
+    if (!list || !folder) return;
+    const names = JSON.parse(form.dataset.names || "[]");
+    form.querySelectorAll(".no-js-only").forEach((el) => { el.hidden = true; });
+    const render = () => {
+      const dir = folder.value.trim().replace(/\\/g, "/").split("/")
+        .filter((part) => part && part !== ".").join("/");
+      const formats = [...form.querySelectorAll("input[name=formats]:checked")].map((b) => b.value);
+      const base = form.dataset.root.replace(/\/+$/, "") + (dir ? "/" + dir : "");
+      list.replaceChildren(...names.flatMap((name) => formats.map((fmt) => {
+        const item = document.createElement("li");
+        const code = document.createElement("code");
+        code.textContent = `${base}/${name}.${fmt}`;
+        item.append(code);
+        return item;
+      })));
+    };
+    form.querySelectorAll("[data-live]").forEach((input) => {
+      input.addEventListener("input", render);
+      input.addEventListener("change", render);
+    });
+  });
 })();

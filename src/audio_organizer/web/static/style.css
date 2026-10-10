@@ -157,6 +157,10 @@ button.busy::before {
 .search input[type=search]:hover { border-color: var(--line); }
 .stacked { display: grid; gap: 0.75rem; max-width: 40rem; margin-bottom: 1rem; }
 .stacked label { display: grid; gap: 0.25rem; }
+.stacked fieldset.formats { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; border: 0; padding: 0; }
+.stacked fieldset.formats label { display: flex; gap: 0.35rem; align-items: center; }
+.stacked ul.paths { margin: 0; padding-left: 1.25rem; overflow-wrap: anywhere; }
+.place { padding-top: 0.5rem; border-top: 1px solid var(--line); }
 .actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1rem 0; }
 form.inline { display: inline; }
 

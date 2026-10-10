@@ -13,7 +13,8 @@ from pathlib import Path, PurePosixPath
 from typing import Annotated
 from urllib.parse import quote, urlencode, urlsplit
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request
+from botocore.exceptions import ClientError
+from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import (
     FileResponse,
@@ -38,6 +39,8 @@ from .. import duplicates as du
 from .. import encodings as rec
 from .. import layout as lo
 from .. import neighbours as nb
+from .. import playlist_files as pf
+from .. import playlist_store as ps
 from .. import playlists as pl
 from .. import ratings as rt
 from .. import sync as sy
@@ -51,6 +54,7 @@ from ..models import (
     EffectiveMetadata,
     Library,
     Playlist,
+    PlaylistFileBackup,
     SyncJob,
     SyncTarget,
     TagSnapshot,
@@ -101,6 +105,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
     templates = Jinja2Templates(directory=HERE / "templates")
     templates.env.filters["duration"] = _duration
     templates.env.globals["url"] = _url
+    templates.env.globals["format_labels"] = FORMAT_LABELS
     templates.env.globals["asset"] = _asset
     templates.env.globals["move_source"] = ch.move_source
     templates.env.globals["retag_fields"] = ch.retag_fields
@@ -1051,6 +1056,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         return render(
             request, "playlists.html", library=lib,
             playlists=pl.library_playlists(session, lib), sorts=pl.SORTS, form={}, error=None,
+            places=_places(session, lib), all_formats=list(FORMAT_LABELS),
         )  # fmt: skip
 
     @app.post("/libraries/{name}/playlists", response_class=HTMLResponse)
@@ -1086,7 +1092,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             return render(
                 request, "playlists.html", status_code=400, library=lib,
                 playlists=pl.library_playlists(session, lib), sorts=pl.SORTS, form=form,
-                error=error,
+                error=error, places=_places(session, lib), all_formats=list(FORMAT_LABELS),
             )  # fmt: skip
         session.add(playlist)
         session.commit()
@@ -1094,19 +1100,103 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
 
     @app.get("/playlists/{playlist_id}", response_class=HTMLResponse)
     def playlist(
-        request: Request, playlist_id: int, group: str = "", session: Session = SessionDep
+        request: Request,
+        playlist_id: int,
+        group: str = "",
+        place: str = "",
+        folder: str | None = None,
+        formats: Annotated[list[str], Query()] = [],  # noqa: B006
+        check: str = "",
+        session: Session = SessionDep,
     ):
         playlist = _playlist(session, playlist_id)
         generated = pl.generate(session, playlist.library, [playlist])
         shown = generated[0] if generated else None
         if group:
             shown = next((g for g in generated if g.name == group), shown)
+        tried = {place: (folder, formats)} if place and folder is not None else {}
         return render(
             request, "playlist.html", playlist=playlist, generated=generated, shown=shown,
-            sorts=pl.SORTS, error=None,
+            sorts=pl.SORTS, error=None, group=group,
+            places=_file_places(session, playlist, generated, tried, check),
+            all_formats=list(FORMAT_LABELS),
             folder_links=_folder_links(playlist.library, [t.path for t in shown.tracks])
             if shown else [],
         )  # fmt: skip
+
+    @app.post("/playlists/{playlist_id}/files")
+    def playlist_files(
+        playlist_id: int,
+        place: str = Form(...),
+        folder: str = Form(""),
+        formats: Annotated[list[str], Form()] = [],  # noqa: B006
+        do: str = Form(...),
+        session: Session = SessionDep,
+    ):
+        """Write the playlist's files to a place, or delete them, with the folder and
+        formats shown on the page (not necessarily the saved ones)."""
+        playlist = _playlist(session, playlist_id)
+        back = f"/playlists/{playlist.id}"
+        try:
+            where = _place_for(session, playlist.library, place, folder, formats)
+            if do == "write":
+                planned = ps.plan_playlists(session, where, [playlist])
+                changed = ps.apply_write(session, where, planned)
+                kept = sum(1 for p in planned if p.state == "modified")
+                message = (
+                    f"Wrote {changed} of {len(planned)} files to {where.folder_description()}"
+                    + (
+                        f"; {kept} changed elsewhere, their old content is kept below"
+                        if kept
+                        else ""
+                    )
+                )
+            else:
+                removed = ps.apply_delete(session, where, ps.plan_delete(session, where, playlist))
+                message = f"Deleted {removed} files from {where.folder_description()}; kept below"
+            session.commit()
+        except (ValueError, OSError, ClientError) as e:
+            session.rollback()
+            message = f"Could not {do} the files: {e}"
+        return _redirect(back, message)
+
+    @app.post("/playlists/{playlist_id}/files/{backup_id}/restore")
+    def restore_playlist_file(playlist_id: int, backup_id: int, session: Session = SessionDep):
+        playlist = _playlist(session, playlist_id)
+        backup = session.get(PlaylistFileBackup, backup_id)
+        if backup is None or backup.library_id != playlist.library_id:
+            raise HTTPException(404, f"No backup {backup_id}")
+        target = session.get(SyncTarget, backup.target_id) if backup.target_id else None
+        where = ps.Place(playlist.library, target)
+        try:
+            ps.restore(session, where, backup)
+            session.commit()
+            message = f"Restored {where.describe(backup.path)}"
+        except (ValueError, OSError, ClientError) as e:
+            session.rollback()
+            message = f"Could not restore the file: {e}"
+        return _redirect(f"/playlists/{playlist.id}", message)
+
+    @app.post("/libraries/{name}/playlists/files-settings")
+    def playlist_files_settings(
+        name: str,
+        place: str = Form(...),
+        folder: str = Form(""),
+        formats: Annotated[list[str], Form()] = [],  # noqa: B006
+        session: Session = SessionDep,
+    ):
+        lib = _library(session, name)
+        try:
+            where = _place_for(session, lib, place, folder, formats)
+        except ValueError as e:
+            return _redirect(f"/libraries/{name}/playlists", str(e))
+        source = where.target or lib
+        source.playlist_folder = where.folder
+        source.playlist_formats = ",".join(where.formats)
+        session.commit()
+        return _redirect(
+            f"/libraries/{name}/playlists", f"Playlists go to {where.folder_description()}"
+        )
 
     @app.post("/playlists/{playlist_id}/edit", response_class=HTMLResponse)
     def edit_playlist(
@@ -1135,7 +1225,8 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             return render(
                 request, "playlist.html", status_code=400, playlist=playlist,
                 generated=generated, shown=generated[0] if generated else None,
-                sorts=pl.SORTS, error=str(e),
+                sorts=pl.SORTS, error=str(e), group="", all_formats=list(FORMAT_LABELS),
+                places=_file_places(session, playlist, generated, {}, ""),
             )  # fmt: skip
         session.commit()
         return _redirect(f"/playlists/{playlist.id}", "Playlist saved")
@@ -1398,6 +1489,93 @@ def _playlist(session: Session, playlist_id: int) -> Playlist:
     if playlist is None:
         raise HTTPException(404, f"No playlist {playlist_id}")
     return playlist
+
+
+FORMAT_LABELS = {"m3u": ".m3u", "json": ".json (schema.org)", "html": ".html"}
+
+
+def _place_key(place: ps.Place) -> str:
+    return "disk" if place.target is None else f"t{place.target.id}"
+
+
+def _place_for(
+    session: Session, library: Library, key: str, folder: str, formats: list[str]
+) -> ps.Place:
+    """The place named by a form's key ("disk" or "t<target id>") with the folder and
+    formats it submitted. ValueError for values that are not allowed."""
+    target = None
+    if key != "disk":
+        target = session.get(SyncTarget, int(key[1:])) if key[1:].isdigit() else None
+        if target is None or target.library_id != library.id:
+            raise ValueError(f"Unknown place {key!r}")
+    return ps.Place(
+        library, target, folder=pf.clean_folder(folder), formats=pf.parse_formats(formats)
+    )
+
+
+def _places(session: Session, library: Library) -> list[ps.Place]:
+    """The library's disk and each of its sync targets, with their saved settings."""
+    targets = session.scalars(
+        select(SyncTarget).where(SyncTarget.library_id == library.id).order_by(SyncTarget.name)
+    )
+    return [ps.Place(library), *(ps.Place(library, t) for t in targets)]
+
+
+def _file_places(
+    session: Session,
+    playlist: Playlist,
+    generated: list[pl.GeneratedPlaylist],
+    tried: dict[str, tuple[str | None, list[str]]],
+    check: str,
+) -> list[dict]:
+    """What the playlist page shows per place (the library disk and each target): the
+    folder and formats (the saved ones, or those the user is trying), the files that
+    writing would create with their full paths, and backups that can be restored. The disk
+    is read to say what would happen to each file; a bucket only when asked (`check`)."""
+    views = []
+    for saved in _places(session, playlist.library):
+        key = _place_key(saved)
+        place, error = saved, None
+        if key in tried:
+            try:
+                place = _place_for(session, playlist.library, key, *tried[key][:1], tried[key][1])
+            except ValueError as e:
+                error = str(e)
+        states: dict[str, str] = {}
+        if key == "disk" or key == check:
+            try:
+                planned = ps.plan_write(session, place, generated)
+                states = {p.path: ps.describe_state(p) for p in planned}
+            except (OSError, ClientError) as e:
+                error = f"Could not read the files: {e}"
+        paths = [
+            pf.file_path(place.folder, g.name, fmt) for g in generated for fmt in place.formats
+        ]
+        views.append({
+            "key": key,
+            "label": "the library disk" if key == "disk" else f"bucket {saved.target.name}",
+            "place": place,
+            "saved": saved,
+            "changed": (place.folder, place.formats) != (saved.folder, saved.formats),
+            "root": place.describe("").rstrip("/") if place.target else str(place.library.root),
+            "names": [pl.safe_filename(g.name) for g in generated],
+            "files": [
+                {"display": place.describe(path), "state": states.get(path, "")} for path in paths
+            ],
+            "checked": key == "disk" or key == check,
+            "error": error,
+            "backups": [
+                {
+                    "id": b.id,
+                    "reason": b.reason,
+                    "when": b.created_at,
+                    "path": place.describe(b.path),
+                }
+                for b in ps.backups(session, place)
+                if pl.safe_filename(playlist.name) in b.path or playlist.group_by
+            ],
+        })  # fmt: skip
+    return views
 
 
 def _order(columns) -> list:

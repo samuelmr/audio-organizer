@@ -18,6 +18,26 @@
  </tbody>
 </table>
 
+<h2 id="files">Playlist files</h2>
+<p>Where the playlists' files are written, relative to the library root or the bucket's prefix; empty is the root itself. Each playlist's page writes them.</p>
+{% for p in places %}
+<form method="post" action="/libraries/{{ library.name }}/playlists/files-settings" class="stacked place"
+      data-root="{{ p.describe('').rstrip('/') if p.target else library.root }}" data-names='["&lt;name&gt;"]'>
+ <h3>{% if p.target %}Bucket {{ p.target.name }}{% else %}Library disk{% endif %}</h3>
+ <input type="hidden" name="place" value="{{ 'disk' if not p.target else 't' ~ p.target.id }}">
+ <label>Folder <input name="folder" value="{{ p.folder }}" placeholder="(the root)" data-live></label>
+ <fieldset class="formats">
+  <legend>Formats</legend>
+  {% for f in all_formats %}<label><input type="checkbox" name="formats" value="{{ f }}" data-live {% if f in p.formats %}checked{% endif %}> {{ format_labels[f] }}</label> {% endfor %}
+ </fieldset>
+ <p>Files go to:</p>
+ <ul class="paths">
+  {% for f in p.formats %}<li><code>{{ p.describe(p.folder).rstrip('/') }}/&lt;name&gt;.{{ f }}</code></li>{% endfor %}
+ </ul>
+ <button class="primary">Save</button>
+</form>
+{% endfor %}
+
 <h2>New playlist</h2>
 {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
 <form method="post" action="/libraries/{{ library.name }}/playlists" class="stacked">
