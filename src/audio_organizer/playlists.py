@@ -101,6 +101,68 @@ def parse_rule(rule: str) -> list[Condition]:
     return conditions
 
 
+def kind(playlist: Playlist) -> str:
+    return "smart" if playlist.is_smart else "static"
+
+
+def name_taken(
+    session: Session, library: Library, name: str, *, smart: bool, except_id: int | None = None
+) -> bool:
+    """Whether a playlist of this kind already has the name. A smart and a static playlist
+    may share one: a static playlist imported from the file a smart one wrote."""
+    query = select(Playlist.id).where(Playlist.library_id == library.id, Playlist.name == name)
+    query = query.where(Playlist.rule.is_not(None) if smart else Playlist.rule.is_(None))
+    if except_id is not None:
+        query = query.where(Playlist.id != except_id)
+    return session.scalar(query) is not None
+
+
+def shared_names(playlists: Iterable[Playlist]) -> set[str]:
+    """The names that a smart and a static playlist both have."""
+    playlists = list(playlists)
+    smart = {p.name for p in playlists if p.is_smart}
+    return smart & {p.name for p in playlists if not p.is_smart}
+
+
+def display_name(playlist: Playlist, shared: set[str]) -> str:
+    """The playlist's name, with its kind added when another kind has the same name."""
+    return f"{playlist.name} ({kind(playlist)})" if playlist.name in shared else playlist.name
+
+
+def find(session: Session, library: Library, name: str) -> Playlist | None:
+    """A playlist by name. When a smart and a static one share it, "Name (smart)" or
+    "Name (static)" picks one; the bare name is then ambiguous (RuleError)."""
+    matches = list(
+        session.scalars(
+            select(Playlist).where(Playlist.library_id == library.id, Playlist.name == name)
+        )
+    )
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise RuleError(
+            f"There is a smart and a static playlist named {name!r}; "
+            f"say '{name} (smart)' or '{name} (static)'"
+        )
+    for suffix in (" (smart)", " (static)"):
+        if name.endswith(suffix):
+            base = name.removesuffix(suffix)
+            wanted = suffix.strip(" ()")
+            return next(
+                (
+                    p
+                    for p in session.scalars(
+                        select(Playlist).where(
+                            Playlist.library_id == library.id, Playlist.name == base
+                        )
+                    )
+                    if kind(p) == wanted
+                ),
+                None,
+            )
+    return None
+
+
 def validate(playlist: Playlist) -> None:
     """Raise RuleError if the playlist's settings are inconsistent."""
     if playlist.sort not in SORTS:
@@ -388,10 +450,8 @@ def import_m3u(
     """Create a static playlist from an .m3u file. Returns it and the unmatched entries,
     which are kept so they can be matched later."""
     name = name or m3u.stem
-    if session.scalar(
-        select(Playlist).where(Playlist.library_id == library.id, Playlist.name == name)
-    ):
-        raise RuleError(f"There is already a playlist named {name!r}")
+    if name_taken(session, library, name, smart=False):
+        raise RuleError(f"There is already a static playlist named {name!r}")
     pairs = read_entries(m3u, PathIndex(session, library))
     playlist = Playlist(library=library, name=name, sort="manual")
     set_entries(playlist, pairs)

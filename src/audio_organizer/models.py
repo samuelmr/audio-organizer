@@ -16,10 +16,12 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     LargeBinary,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -283,7 +285,17 @@ class Playlist(Base):
     name then contains the field as a placeholder, e.g. "Best Of {mood}"."""
 
     __tablename__ = "playlist"
-    __table_args__ = (UniqueConstraint("library_id", "name"),)
+    # A smart and a static playlist may share a name (a static one imported from a file
+    # next to the smart one that wrote it), so the name is unique per kind
+    __table_args__ = (
+        Index(
+            "uq_playlist_library_name_kind",
+            "library_id",
+            "name",
+            text("(rule IS NULL)"),
+            unique=True,
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     library_id: Mapped[int] = mapped_column(ForeignKey("library.id"), index=True)

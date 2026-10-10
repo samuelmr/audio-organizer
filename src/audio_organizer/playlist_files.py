@@ -7,12 +7,18 @@ relative to the playlist's own folder, so changing the folder changes the entrie
 files are generated from the catalog each time, never edited.
 """
 
+import hashlib
 import posixpath
 import unicodedata
 from collections.abc import Iterable
 
 from .playlist_formats import FORMATS
 from .playlists import safe_filename
+
+
+def digest(data: bytes) -> str:
+    """The hash that tells whether a playlist file is as this tool wrote it."""
+    return hashlib.sha1(data).hexdigest()
 
 
 def clean_folder(value: str) -> str:

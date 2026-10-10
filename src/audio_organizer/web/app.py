@@ -106,6 +106,8 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
     templates.env.filters["duration"] = _duration
     templates.env.globals["url"] = _url
     templates.env.globals["format_labels"] = FORMAT_LABELS
+    templates.env.globals["shared_names"] = pl.shared_names
+    templates.env.globals["display_name"] = pl.display_name
     templates.env.globals["asset"] = _asset
     templates.env.globals["move_source"] = ch.move_source
     templates.env.globals["retag_fields"] = ch.retag_fields
@@ -1084,10 +1086,8 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             pl.validate(playlist)
         except pl.RuleError as e:
             error = str(e)
-        if not error and session.scalar(
-            select(Playlist).where(Playlist.library_id == lib.id, Playlist.name == playlist.name)
-        ):
-            error = f"There is already a playlist named {playlist.name!r}"
+        if not error and pl.name_taken(session, lib, playlist.name, smart=playlist.is_smart):
+            error = f"There is already a {pl.kind(playlist)} playlist named {playlist.name!r}"
         if error:
             return render(
                 request, "playlists.html", status_code=400, library=lib,
@@ -1228,6 +1228,15 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         playlist.max_tracks = int(max_tracks) if max_tracks.strip().isdigit() else None
         try:
             pl.validate(playlist)
+            with session.no_autoflush:  # the renamed playlist would clash with itself
+                taken = pl.name_taken(
+                    session, playlist.library, playlist.name,
+                    smart=playlist.is_smart, except_id=playlist.id,
+                )  # fmt: skip
+            if taken:
+                raise pl.RuleError(
+                    f"There is already a {pl.kind(playlist)} playlist named {playlist.name!r}"
+                )
         except pl.RuleError as e:
             session.rollback()
             playlist = _playlist(session, playlist_id)
@@ -1543,6 +1552,14 @@ def _file_places(
     writing would create with their full paths, and backups that can be restored. The disk
     is read to say what would happen to each file; a bucket only when asked (`check`)."""
     views = []
+    stems = {pl.safe_filename(g.name).casefold() for g in generated}
+    everyone = pl.library_playlists(session, playlist.library)
+    shared = pl.shared_names(everyone)
+    clashes = [  # playlists whose files have the same names, so that writing one replaces the other
+        pl.display_name(other, shared | {other.name})
+        for other in everyone
+        if other.id != playlist.id and pl.safe_filename(other.name).casefold() in stems
+    ]
     for saved in _places(session, playlist.library):
         key = _place_key(saved)
         place, error = saved, None
@@ -1574,6 +1591,7 @@ def _file_places(
             ],
             "checked": key == "disk" or key == check,
             "error": error,
+            "clashes": clashes,
             "backups": [
                 {
                     "id": b.id,

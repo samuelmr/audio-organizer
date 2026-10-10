@@ -8,7 +8,6 @@ is kept in a backup so that the change can be undone. What was written is record
 PlaylistFile; a file whose content still matches is this tool's own output.
 """
 
-import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -17,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from .models import Library, Playlist, PlaylistFile, PlaylistFileBackup, SyncTarget, utcnow
 from .objectstore import ObjectStore
-from .playlist_files import entry_location, file_path, parse_formats
+from .playlist_files import digest, entry_location, file_path, parse_formats
 from .playlist_formats import FORMATS, render
 from .playlists import GeneratedPlaylist, generate
 from .sync import object_key, store_for
@@ -115,10 +114,6 @@ class PlannedFile:
     @property
     def changes(self) -> bool:
         return self.state != "unchanged"
-
-
-def digest(data: bytes) -> str:
-    return hashlib.sha1(data).hexdigest()
 
 
 def plan_write(

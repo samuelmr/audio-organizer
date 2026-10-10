@@ -502,6 +502,16 @@ A file that someone else has edited is replaced too, but its old content is kept
 the content of a deleted file. Deleting a playlist's files leaves the playlist in the
 catalog.
 
+`aorg scan` also reads playlists: `.m3u` and `.m3u8` files directly in the library's
+playlist folder (the library root by default; not the playlists some tools leave in album
+folders) become static playlists. Files that `aorg` wrote itself are recognised and left
+alone. A file that someone has edited since becomes a static playlist of its own, so a smart
+and a static playlist can share a name; they are then listed as "Best Of Rock (smart)" and
+"Best Of Rock (static)", and commands take the name with that suffix. A file whose name
+matches a static playlist that differs from it is reported and not imported. A playlist
+deleted from the catalog is imported again by the next scan while its file is there. Use
+`aorg scan --no-playlists` to leave playlist files alone.
+
 Besides `.m3u`, playlists can be written as schema.org `MusicPlaylist` JSON-LD and as an
 HTML page.
 

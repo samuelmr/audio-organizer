@@ -34,9 +34,10 @@
 <table>
  <thead><tr><th>Name</th><th>Kind</th><th>Sort</th><th class="num">Max</th></tr></thead>
  <tbody>
+ {% set shared = shared_names(playlists) %}
  {% for p in playlists %}
   <tr>
-   <td><a href="/playlists/{{ p.id }}">{{ p.name }}</a></td>
+   <td><a href="/playlists/{{ p.id }}">{{ display_name(p, shared) }}</a></td>
    <td>{% if p.is_smart %}<code>{{ p.rule }}</code>{% if p.group_by %} – one per {{ p.group_by }}{% endif %}{% else %}static, {{ p.entries | length }} entries{% endif %}</td>
    <td>{{ p.sort }}</td>
    <td class="num">{{ p.max_tracks or "" }}</td>

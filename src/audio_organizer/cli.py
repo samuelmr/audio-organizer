@@ -223,8 +223,19 @@ def scan_command(
     min_pixels: Annotated[
         int, typer.Option(help="Look up covers for tracks whose cover is smaller than this")
     ] = cv.MIN_PIXELS,
+    playlists: Annotated[
+        bool,
+        typer.Option(
+            "--playlists/--no-playlists",
+            help="Import .m3u files in the library's playlist folder as static playlists",
+        ),
+    ] = True,
 ) -> None:
     """Catalog new and changed files. Unchanged files are skipped.
+
+    Playlist files (.m3u, .m3u8) directly in the library's playlist folder (the library
+    root unless changed with `aorg library set`) are imported as static playlists, except
+    files this tool wrote itself. Playlists in album folders are not imported.
 
     With --deep, files are also read in full to measure their loudness: ReplayGain 2.0
     track gain and peak, and album gain and peak once all of an album's tracks are
@@ -257,13 +268,22 @@ def scan_command(
         lib = _library(session, library)
         stats = scan(
             session, lib, hash_audio=hash_audio, workers=workers, retry_errors=retry_errors,
-            reread=reread, progress=progress,
+            reread=reread, import_playlists=playlists, progress=progress,
         )  # fmt: skip
     typer.echo(
         f"{stats.seen} files: {stats.new} new, {stats.changed} changed, {stats.moved} moved, "
         f"{stats.unchanged} unchanged, {stats.missing} missing, {len(stats.errors)} errors "
         f"({time.monotonic() - started:.0f} s)"
     )
+    found = stats.playlists
+    if found.imported:
+        typer.echo(f"Imported {len(found.imported)} playlists: {', '.join(found.imported[:10])}")
+        if len(found.imported) > 10:
+            typer.echo(f"  ... and {len(found.imported) - 10} more")
+    for path in found.conflicts:
+        typer.echo(f"  {path} differs from the static playlist of that name; not imported")
+    for path, error in found.errors:
+        typer.echo(f"  {path}: {error}")
     for relpath, error in stats.errors[:20]:
         typer.echo(f"  {relpath}: {error}")
     if len(stats.errors) > 20:
@@ -935,9 +955,10 @@ LibraryOption = Annotated[
 
 def _playlist(session: Session, name: str, library: str | None) -> Playlist:
     lib = _library(session, library)
-    playlist = session.scalar(
-        select(Playlist).where(Playlist.library_id == lib.id, Playlist.name == name)
-    )
+    try:
+        playlist = pl.find(session, lib, name)
+    except pl.RuleError as e:
+        raise typer.BadParameter(str(e)) from None
     if playlist is None:
         raise typer.BadParameter(f"No playlist named {name!r} in {lib.name}")
     return playlist
@@ -950,7 +971,7 @@ def _check(playlist: Playlist) -> None:
         raise typer.BadParameter(str(e)) from None
 
 
-def _describe_playlist(playlist: Playlist) -> str:
+def _describe_playlist(playlist: Playlist, shared: set[str] = frozenset()) -> str:
     if not playlist.is_smart:
         kind = f"static, {len(playlist.entries)} entries"
     else:
@@ -958,14 +979,16 @@ def _describe_playlist(playlist: Playlist) -> str:
         if playlist.group_by:
             kind += f"; one per {playlist.group_by}"
     limit = f", max {playlist.max_tracks}" if playlist.max_tracks else ""
-    return f"{playlist.name}\t{kind}; sort: {playlist.sort}{limit}"
+    return f"{pl.display_name(playlist, shared)}\t{kind}; sort: {playlist.sort}{limit}"
 
 
 @playlists_app.command("list")
 def playlists_list(ctx: typer.Context, library: LibraryOption = None) -> None:
     with _session(ctx) as session:
-        for playlist in pl.library_playlists(session, _library(session, library)):
-            typer.echo(_describe_playlist(playlist))
+        playlists = pl.library_playlists(session, _library(session, library))
+        shared = pl.shared_names(playlists)
+        for playlist in playlists:
+            typer.echo(_describe_playlist(playlist, shared))
 
 
 @playlists_app.command("create")
@@ -1009,11 +1032,8 @@ def playlists_create(
             sort=sort or ("shuffle" if rule else "manual"), max_tracks=max_tracks or None,
         )  # fmt: skip
         _check(playlist)
-        existing = session.scalar(
-            select(Playlist).where(Playlist.library_id == lib.id, Playlist.name == name)
-        )
-        if existing:
-            raise typer.BadParameter(f"There is already a playlist named {name!r}")
+        if pl.name_taken(session, lib, name, smart=playlist.is_smart):
+            raise typer.BadParameter(f"There is already a {pl.kind(playlist)} playlist {name!r}")
         session.add(playlist)
         session.commit()
         typer.echo(f"Created {_describe_playlist(playlist)}")
@@ -1044,6 +1064,12 @@ def playlists_edit(
         if max_tracks is not None:
             playlist.max_tracks = max_tracks or None
         if rename is not None:
+            if pl.name_taken(
+                session, playlist.library, rename, smart=playlist.is_smart, except_id=playlist.id
+            ):
+                raise typer.BadParameter(
+                    f"There is already a {pl.kind(playlist)} playlist {rename!r}"
+                )
             playlist.name = rename
         _check(playlist)
         session.commit()
@@ -1070,9 +1096,10 @@ def playlists_show(
     ("Best Of Upbeat")."""
     with _session(ctx) as session:
         lib = _library(session, library)
-        playlist = session.scalar(
-            select(Playlist).where(Playlist.library_id == lib.id, Playlist.name == name)
-        )
+        try:
+            playlist = pl.find(session, lib, name)
+        except pl.RuleError as e:
+            raise typer.BadParameter(str(e)) from None
         if playlist is not None:
             results = pl.generate(session, lib, [playlist])
         else:

@@ -20,6 +20,7 @@ from . import pathparse, tags
 from .audiohash import audio_hash
 from .blockfile import BlockFile
 from .models import AudioFile, Library, TagSnapshot, utcnow
+from .playlist_scan import PlaylistScan, import_from_disk
 from .provenance import set_values
 
 AUDIO_EXTENSIONS = {
@@ -38,6 +39,7 @@ class ScanStats:
     moved: int = 0
     missing: int = 0
     errors: list[tuple[str, str]] = field(default_factory=list)
+    playlists: PlaylistScan = field(default_factory=PlaylistScan)
 
 
 @dataclass
@@ -98,11 +100,14 @@ def scan(
     workers: int = 8,
     retry_errors: bool = False,
     reread: bool = False,
+    import_playlists: bool = True,
     progress: Callable[[ScanStats, str], None] | None = None,
 ) -> ScanStats:
     """Catalog new and changed files. Files that could not be read are only read again
     when they change, or with retry_errors (e.g. after an upgrade that reads more formats);
-    with reread, every file is read again (e.g. after an upgrade that reads more tags)."""
+    with reread, every file is read again (e.g. after an upgrade that reads more tags).
+    Playlist files in the library's playlist folder are imported unless import_playlists
+    is off (see playlist_scan)."""
     stats = ScanStats()
     known = {
         path: (file_id, size, mtime_ns, missing)
@@ -177,6 +182,8 @@ def scan(
         session.execute(update(AudioFile).where(AudioFile.id.in_(still_gone)).values(missing=True))
     stats.missing = len(still_gone)
     session.commit()
+    if import_playlists:
+        stats.playlists = import_from_disk(session, library)
     return stats
 
 

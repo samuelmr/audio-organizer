@@ -69,6 +69,7 @@ without being saved; <a href="/libraries/{{ library.name }}/playlists#files">the
  <input type="hidden" name="place" value="{{ v.key }}">
  {% if group %}<input type="hidden" name="group" value="{{ group }}">{% endif %}
  {% if v.error %}<p class="error" role="alert">{{ v.error }}</p>{% endif %}
+ {% if v.clashes %}<p class="error">Writing this playlist replaces the files of {{ v.clashes | join(", ") }}, which has the same file name.</p>{% endif %}
  <label>Folder <input name="folder" value="{{ v.place.folder }}" placeholder="(the root)" data-live></label>
  <fieldset class="formats">
   <legend>Formats</legend>
