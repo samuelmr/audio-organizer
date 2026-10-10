@@ -48,7 +48,11 @@
   </select>
  </label>
  <label>At most <input name="max_tracks" inputmode="numeric" value="{{ playlist.max_tracks or '' }}" size="5"> tracks</label>
- <button class="primary">Save</button>
+ <div class="actions">
+  <button class="primary">Save</button>
+  <button class="danger" formmethod="post" formaction="/playlists/{{ playlist.id }}/delete" formnovalidate>Delete from database</button>
+ </div>
+ <p><small>Save changes the name, rule, sorting and limit. Delete from database removes the playlist from audio-organizer's database; files already written stay where they are, and a playlist file on the library disk is found again by the next scan.</small></p>
 </form>
 
 <h2>Files</h2>
@@ -56,6 +60,7 @@
 you choose. The files refer to the tracks by paths relative to the folder they are in, so
 a different folder gives different entries. The folder and formats here are tried out
 without being saved; <a href="/libraries/{{ library.name }}/playlists#files">the Playlists page</a> saves them.</p>
+<div class="places">
 {% for v in places %}
 <form method="get" action="/playlists/{{ playlist.id }}" class="stacked place" id="place-{{ v.key }}"
       data-root="{{ v.root }}" data-names="{{ v.names | tojson | forceescape }}"
@@ -103,9 +108,5 @@ without being saved; <a href="/libraries/{{ library.name }}/playlists#files">the
  {% endif %}
 </form>
 {% endfor %}
-
-<form method="post" action="/playlists/{{ playlist.id }}/delete">
- <button class="danger">Delete from database</button>
- <small>Removes the playlist from audio-organizer's database. Files already written stay where they are; a playlist file on the library disk is found again by the next scan.</small>
-</form>
+</div>
 {% endblock %}

@@ -2,6 +2,35 @@
 {% block title %}Playlists – audio-organizer{% endblock %}
 {% block content %}
 <h1>Playlists</h1>
+<details class="settings" id="settings">
+ <summary>Settings: where playlist files go</summary>
+ <form method="post" action="/libraries/{{ library.name }}/playlists/files-settings" class="stacked">
+  <p>These settings only decide where each place's playlist files are written and in which
+  formats. Saving them does not write, change or delete any file on the disk or in a bucket;
+  a playlist's own page does that. Folders are relative to the library root or the bucket's
+  prefix; empty is the root itself.</p>
+  <div class="places">
+  {% for p in places %}
+   <div class="place" data-root="{{ p.describe('').rstrip('/') if p.target else library.root }}" data-names='["&lt;name&gt;"]'>
+    <h3>{% if p.target %}Bucket {{ p.target.name }}{% else %}Library disk{% endif %}</h3>
+    {% set key = 'disk' if not p.target else 't' ~ p.target.id %}
+    <input type="hidden" name="place" value="{{ key }}">
+    <label>Folder <input name="folder" value="{{ p.folder }}" placeholder="(the root)" data-live></label>
+    <fieldset class="formats">
+     <legend>Formats</legend>
+     {% for f in all_formats %}<label><input type="checkbox" name="formats" value="{{ key }}:{{ f }}" data-live {% if f in p.formats %}checked{% endif %}> {{ format_labels[f] }}</label> {% endfor %}
+    </fieldset>
+    <p>Files would go to:</p>
+    <ul class="paths">
+     {% for f in p.formats %}<li><code>{{ p.describe(p.folder).rstrip('/') }}/&lt;name&gt;.{{ f }}</code></li>{% endfor %}
+    </ul>
+   </div>
+  {% endfor %}
+  </div>
+  <div class="actions"><button class="primary">Save settings</button></div>
+ </form>
+</details>
+
 <table>
  <thead><tr><th>Name</th><th>Kind</th><th>Sort</th><th class="num">Max</th></tr></thead>
  <tbody>
@@ -17,26 +46,6 @@
  {% endfor %}
  </tbody>
 </table>
-
-<h2 id="files">Playlist files</h2>
-<p>Where the playlists' files are written, relative to the library root or the bucket's prefix; empty is the root itself. Each playlist's page writes them.</p>
-{% for p in places %}
-<form method="post" action="/libraries/{{ library.name }}/playlists/files-settings" class="stacked place"
-      data-root="{{ p.describe('').rstrip('/') if p.target else library.root }}" data-names='["&lt;name&gt;"]'>
- <h3>{% if p.target %}Bucket {{ p.target.name }}{% else %}Library disk{% endif %}</h3>
- <input type="hidden" name="place" value="{{ 'disk' if not p.target else 't' ~ p.target.id }}">
- <label>Folder <input name="folder" value="{{ p.folder }}" placeholder="(the root)" data-live></label>
- <fieldset class="formats">
-  <legend>Formats</legend>
-  {% for f in all_formats %}<label><input type="checkbox" name="formats" value="{{ f }}" data-live {% if f in p.formats %}checked{% endif %}> {{ format_labels[f] }}</label> {% endfor %}
- </fieldset>
- <p>Files go to:</p>
- <ul class="paths">
-  {% for f in p.formats %}<li><code>{{ p.describe(p.folder).rstrip('/') }}/&lt;name&gt;.{{ f }}</code></li>{% endfor %}
- </ul>
- <button class="primary">Save</button>
-</form>
-{% endfor %}
 
 <h2>New playlist</h2>
 {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}

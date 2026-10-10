@@ -1180,23 +1180,33 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
     @app.post("/libraries/{name}/playlists/files-settings")
     def playlist_files_settings(
         name: str,
-        place: str = Form(...),
-        folder: str = Form(""),
+        place: Annotated[list[str], Form()],
+        folder: Annotated[list[str], Form()],
         formats: Annotated[list[str], Form()] = [],  # noqa: B006
         session: Session = SessionDep,
     ):
+        """Save the folder and formats of every place at once. The form sends the places
+        and their folders in the same order; a chosen format is "<place>:<format>"."""
         lib = _library(session, name)
+        back = f"/libraries/{name}/playlists"
+        if len(place) != len(folder):
+            raise HTTPException(400, "Each place needs a folder")
         try:
-            where = _place_for(session, lib, place, folder, formats)
+            places = [
+                _place_for(
+                    session, lib, key, path,
+                    [f.split(":", 1)[1] for f in formats if f.split(":", 1)[0] == key],
+                )
+                for key, path in zip(place, folder, strict=True)
+            ]  # fmt: skip
         except ValueError as e:
-            return _redirect(f"/libraries/{name}/playlists", str(e))
-        source = where.target or lib
-        source.playlist_folder = where.folder
-        source.playlist_formats = ",".join(where.formats)
+            return _redirect(back, f"Nothing saved: {e}")
+        for where in places:
+            source = where.target or lib
+            source.playlist_folder = where.folder
+            source.playlist_formats = ",".join(where.formats)
         session.commit()
-        return _redirect(
-            f"/libraries/{name}/playlists", f"Playlists go to {where.folder_description()}"
-        )
+        return _redirect(back, "Settings saved; no files were written")
 
     @app.post("/playlists/{playlist_id}/edit", response_class=HTMLResponse)
     def edit_playlist(

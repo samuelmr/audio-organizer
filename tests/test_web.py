@@ -204,10 +204,17 @@ def test_playlist_files_on_the_web(web):
 
     response = web.post(
         "/libraries/music/playlists/files-settings",
-        data={"place": "disk", "folder": "Lists", "formats": ["m3u", "json"]},
+        data={"place": ["disk"], "folder": ["Lists"], "formats": ["disk:m3u", "disk:json"]},
     )
-    assert str(web.root / "Lists") in response.text
+    assert "Settings saved; no files were written" in response.text
     assert str(web.root / "Lists/All.json") in web.get(page_path).text
+    assert not (web.root / "Lists/All.json").exists()
+
+    response = web.post(
+        "/libraries/music/playlists/files-settings",
+        data={"place": ["disk"], "folder": ["../out"], "formats": ["disk:m3u"]},
+    )
+    assert "Nothing saved" in response.text
 
 
 def test_albums_artists_and_folders(web, Session):

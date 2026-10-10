@@ -56,7 +56,7 @@
   // Playlist file places (form.place): typing a folder or choosing formats updates the
   // listed paths at once, so that the buttons visibly act on the path shown. Without
   // JavaScript the "Update paths" button does the same with a page load.
-  document.querySelectorAll("form.place").forEach((form) => {
+  document.querySelectorAll(".place").forEach((form) => {
     const list = form.querySelector("ul.paths");
     const folder = form.querySelector("input[name=folder]");
     if (!list || !folder) return;
@@ -65,7 +65,7 @@
     const render = () => {
       const dir = folder.value.trim().replace(/\\/g, "/").split("/")
         .filter((part) => part && part !== ".").join("/");
-      const formats = [...form.querySelectorAll("input[name=formats]:checked")].map((b) => b.value);
+      const formats = [...form.querySelectorAll("input[name=formats]:checked")].map((b) => b.value.split(":").pop());
       const base = form.dataset.root.replace(/\/+$/, "") + (dir ? "/" + dir : "");
       list.replaceChildren(...names.flatMap((name) => formats.map((fmt) => {
         const item = document.createElement("li");
