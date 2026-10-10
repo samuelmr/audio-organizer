@@ -19,7 +19,7 @@
 <script src="{{ asset('sync.js') }}" defer></script>
 {% elif preview.status == "failed" %}
 <p class="message" role="alert">Planning failed: {{ preview.error }}</p>
-<form method="post" action="/sync/plans"><input type="hidden" name="target" value="{{ target.name }}"><button type="submit">Plan again</button></form>
+<form method="post" action="/sync/plans" data-busy><input type="hidden" name="target" value="{{ target.name }}"><button type="submit">Plan again</button></form>
 {% else %}
 {% set counts = plan.counts() %}
 <p>
@@ -45,7 +45,7 @@
 </table>
 {% if plan.actions | length > 500 %}<p>… and {{ plan.actions | length - 500 }} more.</p>{% endif %}
 {% endif %}
-<form method="post" action="/sync/plans"><input type="hidden" name="target" value="{{ target.name }}"><button type="submit">Plan again</button> <small>if the files changed since this plan was made</small></form>
+<form method="post" action="/sync/plans" data-busy><input type="hidden" name="target" value="{{ target.name }}"><button type="submit">Plan again</button> <small>if the files changed since this plan was made</small></form>
 {% endif %}
 {% if recent %}
 <h2>Recent syncs</h2>

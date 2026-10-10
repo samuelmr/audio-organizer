@@ -10,7 +10,7 @@ kept. The ratings go into the catalog first; you then write them into the files,
 changesets you review.</p>
 
 {% if counts %}
-<form method="post" action="{{ base }}/ratings">
+<form method="post" action="{{ base }}/ratings" data-busy>
 <table>
  <thead><tr><th>Preference</th><th class="num">Files</th><th>Stars</th></tr></thead>
  <tbody>

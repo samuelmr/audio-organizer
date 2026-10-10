@@ -27,7 +27,7 @@ when the changes are applied.</p>
 </form>
 
 {% if found.folders %}
-<form method="post" action="{{ base }}/covers">
+<form method="post" action="{{ base }}/covers" data-busy>
  <input type="hidden" name="path" value="{{ path }}">
  <input type="hidden" name="limit" value="{{ limit }}">
  <input type="hidden" name="min_pixels" value="{{ min_pixels }}">
@@ -44,7 +44,7 @@ when the changes are applied.</p>
    <td class="path"><a href="{{ url(base, folder=f.folder) }}">{{ f.folder }}/</a><br>{% if f.fetched %}{{ f.album }}, found online{% else %}{{ f.image.name }}{% endif %}, {% if dims %}{{ dims[0] }}×{{ dims[1] }} pixels, {% endif %}{{ (f.image_size / 1024) | round | int }} KB{% if f.image_size > 500 * 1024 %} <span class="flag">large</span>{% endif %}{% if f.replace %}<br>replaces the thumbnail of {{ f.replace | length }} tracks{% endif %}{% if f.save_as %}<br>{{ "replaces" if f.overwrite else "to be saved as" }} {{ f.save_as.rsplit("/", 1)[-1] }}{% endif %}</td>
    <td class="num">{{ f.files | length }}</td>
    <td>
-    <form method="post" action="{{ base }}/covers" class="inline">
+    <form method="post" action="{{ base }}/covers" class="inline" data-busy>
      <input type="hidden" name="folder" value="{{ f.folder }}">
      <input type="hidden" name="min_pixels" value="{{ min_pixels }}">
      <input type="hidden" name="save_images" value="{{ save_images | lower }}">

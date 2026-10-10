@@ -6,6 +6,7 @@ create_app() takes the session factory, so the same app can serve a local catalo
 (`aorg web`) or, later, a hosted one.
 """
 
+import threading
 import unicodedata
 from collections.abc import Iterator
 from math import ceil
@@ -99,6 +100,10 @@ FILTERS = {
 }
 
 
+class ActionRunning(Exception):
+    """A long-running action was asked for while another one is under way."""
+
+
 def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
     previews = jobs.Previews(session_factory)
     app = FastAPI(title="audio-organizer", docs_url=None, redoc_url=None)
@@ -118,6 +123,21 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             yield session
 
     SessionDep = Depends(get_session)
+    running = threading.Lock()
+
+    def exclusive() -> Iterator[None]:
+        """Let one long-running action (a lookup, proposal, apply or undo) run at a time,
+        so that a second click, another tab or another page cannot start a parallel run
+        that works on the same files and catalog. The pages disable their buttons while
+        one runs (ui.js); this is the check that holds when they could not."""
+        if not running.acquire(blocking=False):
+            raise ActionRunning
+        try:
+            yield
+        finally:
+            running.release()
+
+    Exclusive = Depends(exclusive)
 
     def render(request: Request, template: str, status_code: int = 200, **context):
         context.setdefault("message", request.query_params.get("msg"))
@@ -143,6 +163,16 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             if source and urlsplit(source).netloc != request.headers.get("host"):
                 return PlainTextResponse("Cross-site request refused", status_code=403)
         return await call_next(request)
+
+    @app.exception_handler(ActionRunning)
+    async def action_running(request: Request, exc: ActionRunning):
+        return HTMLResponse(
+            "<!DOCTYPE html><title>Busy</title>"
+            "<p>Another long-running action is still in progress. Nothing was changed. "
+            "Wait for it to finish, then go back and try again.</p>",
+            status_code=409,
+            headers={"Retry-After": "5"},
+        )
 
     @app.exception_handler(OperationalError)
     async def database_busy(request: Request, exc: OperationalError):
@@ -353,7 +383,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         value = str(form.get("id3_version", ""))
         return int(value) if value in ("3", "4") else None
 
-    @app.post("/libraries/{name}/gnudb")
+    @app.post("/libraries/{name}/gnudb", dependencies=[Exclusive])
     async def gnudb_lookup(request: Request, name: str, session: Session = SessionDep):
         """Look up one album folder in gnudb. It waits for the answer, a few seconds."""
         lib = _library(session, name)
@@ -384,7 +414,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             ),
         )
 
-    @app.post("/libraries/{name}/coverart")
+    @app.post("/libraries/{name}/coverart", dependencies=[Exclusive])
     async def coverart_lookup(request: Request, name: str, session: Session = SessionDep):
         """Look up the missing cover of one album folder online. It waits for the answer."""
         lib = _library(session, name)
@@ -413,7 +443,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             ),
         )
 
-    @app.post("/tracks/{file_id}/write")
+    @app.post("/tracks/{file_id}/write", dependencies=[Exclusive])
     async def write_track(request: Request, file_id: int, session: Session = SessionDep):
         """Propose writing the values not yet in the file (edits, measurements, lookups)."""
         file = _file(session, file_id)
@@ -426,7 +456,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         session.commit()
         return _redirect(f"/changes/{changeset.id}", "Review the change to the file")
 
-    @app.post("/tracks/{file_id}/replaygain")
+    @app.post("/tracks/{file_id}/replaygain", dependencies=[Exclusive])
     def measure_replaygain(file_id: int, session: Session = SessionDep):
         file = _file(session, file_id)
         try:
@@ -491,7 +521,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             )
         raise HTTPException(404, "No cover")
 
-    @app.post("/tracks/{file_id}/cover")
+    @app.post("/tracks/{file_id}/cover", dependencies=[Exclusive])
     def embed_cover(file_id: int, session: Session = SessionDep):
         """Propose embedding the folder's cover image into the file."""
         file = _file(session, file_id)
@@ -573,7 +603,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             compilations=compilations,
         )  # fmt: skip
 
-    @app.post("/libraries/{name}/duplicates")
+    @app.post("/libraries/{name}/duplicates", dependencies=[Exclusive])
     async def propose_duplicates(request: Request, name: str, session: Session = SessionDep):
         """Propose the groups shown on the page (one "keep-<audio hash>" field each, the
         id of the copy to keep), so the batch is what the user saw and chose."""
@@ -620,7 +650,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             limit=limit, replace=replace, compilations=compilations,
         )  # fmt: skip
 
-    @app.post("/libraries/{name}/encodings")
+    @app.post("/libraries/{name}/encodings", dependencies=[Exclusive])
     async def propose_encodings(request: Request, name: str, session: Session = SessionDep):
         """Propose the tracks shown on the page (one "keep-<id kept by default>" field
         each, the id of the file to keep), so the batch is what the user saw and chose."""
@@ -660,7 +690,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             batch=nb.batch(found.albums, limit), path=path, limit=limit,
         )  # fmt: skip
 
-    @app.post("/libraries/{name}/neighbours")
+    @app.post("/libraries/{name}/neighbours", dependencies=[Exclusive])
     async def propose_neighbours(request: Request, name: str, session: Session = SessionDep):
         """Propose the checked albums of the page (one "folder" field each)."""
         lib = _library(session, name)
@@ -690,7 +720,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             others=[m for m in found.merges if not m.batchable], path=path, limit=limit,
         )  # fmt: skip
 
-    @app.post("/libraries/{name}/album-merges")
+    @app.post("/libraries/{name}/album-merges", dependencies=[Exclusive])
     def propose_album_merges(
         name: str,
         path: Annotated[str, Form()] = "",
@@ -753,7 +783,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             suggested=sum(1 for a in everyone if a.suggestion), count=len(everyone),
         )  # fmt: skip
 
-    @app.post("/libraries/{name}/artists")
+    @app.post("/libraries/{name}/artists", dependencies=[Exclusive])
     async def set_artist_sort_names(request: Request, name: str, session: Session = SessionDep):
         """Set one artist's sort name (artist, sort_name), or with accept=all, use the
         suggestions of the artists listed with the given filter."""
@@ -800,7 +830,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             prefer_gnudb=prefer_gnudb, unmeasured=unmeasured,
         )  # fmt: skip
 
-    @app.post("/libraries/{name}/write-tags")
+    @app.post("/libraries/{name}/write-tags", dependencies=[Exclusive])
     def propose_write_tags(
         name: str,
         path: Annotated[str, Form()] = "",
@@ -833,7 +863,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             mapping=rt.get_map(session, lib),
         )  # fmt: skip
 
-    @app.post("/libraries/{name}/ratings")
+    @app.post("/libraries/{name}/ratings", dependencies=[Exclusive])
     async def apply_ratings(request: Request, name: str, session: Session = SessionDep):
         """Save the mapping from preferences to stars (fields "stars-<n>" with "pref-<n>")
         and set the ratings."""
@@ -874,7 +904,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             min_pixels=min_pixels, save_images=save_images,
         )  # fmt: skip
 
-    @app.post("/libraries/{name}/covers")
+    @app.post("/libraries/{name}/covers", dependencies=[Exclusive])
     def propose_covers(
         name: str,
         path: Annotated[str, Form()] = "",
@@ -944,7 +974,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         session.commit()
         return _redirect(f"/libraries/{lib.name}/layout", "Layout saved")
 
-    @app.post("/libraries/{name}/layout/propose")
+    @app.post("/libraries/{name}/layout/propose", dependencies=[Exclusive])
     def propose_layout(
         name: str,
         path: Annotated[str, Form()] = "",
@@ -1008,7 +1038,9 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         session.commit()
         return _redirect(f"/changes/{changeset.id}", f"{count} changes updated")
 
-    @app.post("/changes/{changeset_id}/apply", response_class=HTMLResponse)
+    @app.post(
+        "/changes/{changeset_id}/apply", response_class=HTMLResponse, dependencies=[Exclusive]
+    )
     def changeset_apply(
         request: Request,
         changeset_id: int,
@@ -1022,7 +1054,9 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             outcomes=outcomes, outcome_title="Dry run" if dry_run else "Applied",
         )  # fmt: skip
 
-    @app.post("/changes/{changeset_id}/retry", response_class=HTMLResponse)
+    @app.post(
+        "/changes/{changeset_id}/retry", response_class=HTMLResponse, dependencies=[Exclusive]
+    )
     def changeset_retry(request: Request, changeset_id: int, session: Session = SessionDep):
         changeset = _changeset(session, changeset_id)
         ch.retry_failed(changeset)
@@ -1032,7 +1066,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             outcomes=outcomes, outcome_title="Retried",
         )  # fmt: skip
 
-    @app.post("/changes/{changeset_id}/delete")
+    @app.post("/changes/{changeset_id}/delete", dependencies=[Exclusive])
     def changeset_delete(changeset_id: int, session: Session = SessionDep):
         changeset = _changeset(session, changeset_id)
         try:
@@ -1041,7 +1075,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             return _redirect(f"/changes/{changeset_id}", str(e))
         return _redirect("/changes", f"Changeset {changeset_id} deleted")
 
-    @app.post("/changes/{changeset_id}/undo", response_class=HTMLResponse)
+    @app.post("/changes/{changeset_id}/undo", response_class=HTMLResponse, dependencies=[Exclusive])
     def changeset_undo(request: Request, changeset_id: int, session: Session = SessionDep):
         changeset = _changeset(session, changeset_id)
         outcomes = ch.undo(session, changeset)
@@ -1124,7 +1158,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             if shown else [],
         )  # fmt: skip
 
-    @app.post("/playlists/{playlist_id}/files")
+    @app.post("/playlists/{playlist_id}/files", dependencies=[Exclusive])
     def playlist_files(
         playlist_id: int,
         place: str = Form(...),
@@ -1160,7 +1194,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             message = f"Could not {do} the files: {e}"
         return _redirect(back, message)
 
-    @app.post("/playlists/{playlist_id}/files/{backup_id}/restore")
+    @app.post("/playlists/{playlist_id}/files/{backup_id}/restore", dependencies=[Exclusive])
     def restore_playlist_file(playlist_id: int, backup_id: int, session: Session = SessionDep):
         playlist = _playlist(session, playlist_id)
         backup = session.get(PlaylistFileBackup, backup_id)
@@ -1361,7 +1395,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         previews.forget(target)  # the sync changes what the next plan shows
         return _redirect(f"/sync/jobs/{job.id}")
 
-    @app.post("/sync/plans")
+    @app.post("/sync/plans", dependencies=[Exclusive])
     async def replan_sync(request: Request, session: Session = SessionDep):
         """Make the plan of a target again, as the files may have changed."""
         name = str((await request.form()).get("target", ""))

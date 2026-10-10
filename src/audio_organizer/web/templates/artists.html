@@ -24,7 +24,7 @@ with a suggestion.</p>
 </form>
 
 {% if show == "suggested" and total %}
-<form method="post" action="{{ base }}/artists">
+<form method="post" action="{{ base }}/artists" data-busy>
  <input type="hidden" name="show" value="{{ show }}">
  <input type="hidden" name="q" value="{{ q }}">
  <input type="hidden" name="accept" value="all">
@@ -41,7 +41,7 @@ with a suggestion.</p>
    <td><a href="{{ url(base, artist=a.name) }}">{{ a.name }}</a></td>
    <td class="num">{{ a.tracks }}</td>
    <td>
-    <form method="post" action="{{ base }}/artists" class="inline">
+    <form method="post" action="{{ base }}/artists" class="inline" data-busy>
      <input type="hidden" name="artist" value="{{ a.name }}">
      <input type="hidden" name="show" value="{{ show }}">
      <input type="hidden" name="q" value="{{ q }}">
@@ -51,7 +51,7 @@ with a suggestion.</p>
    </td>
    <td>
     {% if a.suggestion %}
-    <form method="post" action="{{ base }}/artists" class="inline">
+    <form method="post" action="{{ base }}/artists" class="inline" data-busy>
      <input type="hidden" name="artist" value="{{ a.name }}">
      <input type="hidden" name="sort_name" value="{{ a.suggestion }}">
      <input type="hidden" name="show" value="{{ show }}">
@@ -60,7 +60,7 @@ with a suggestion.</p>
     </form>
     {% endif %}
     {% if not a.sort_name %}
-    <form method="post" action="{{ base }}/artists" class="inline">
+    <form method="post" action="{{ base }}/artists" class="inline" data-busy>
      <input type="hidden" name="artist" value="{{ a.name }}">
      <input type="hidden" name="sort_name" value="{{ a.name }}">
      <input type="hidden" name="show" value="{{ show }}">

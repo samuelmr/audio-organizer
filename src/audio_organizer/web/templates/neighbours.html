@@ -23,7 +23,7 @@ review.</p>
 </form>
 
 {% if batch %}
-<form method="post" action="{{ base }}/neighbours">
+<form method="post" action="{{ base }}/neighbours" data-busy>
  <input type="hidden" name="path" value="{{ path }}">
  <p class="hint">Uncheck an album to leave its tracks where they are; ▶ plays a track, ⓘ
  opens its details.</p>

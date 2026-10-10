@@ -31,7 +31,7 @@
 </p>
 
 {% if unwritten %}
-<form method="post" action="/tracks/{{ file.id }}/write" class="notice">
+<form method="post" action="/tracks/{{ file.id }}/write" class="notice" data-busy>
  <p><strong>{{ unwritten | length }} value{{ "s" if unwritten | length > 1 }} not yet in the file</strong>
  ({% for name in unwritten %}{{ labels.get(name, name) }}{% if not loop.last %}, {% endif %}{% endfor %}).</p>
  {% if id3_version %}<label>Write as <select name="id3_version">
@@ -43,7 +43,7 @@
 </form>
 {% endif %}
 
-<form id="replaygain" method="post" action="/tracks/{{ file.id }}/replaygain"></form>
+<form id="replaygain" method="post" action="/tracks/{{ file.id }}/replaygain" data-busy></form>
 
 <form method="post" action="/tracks/{{ file.id }}/edit">
 {% for title, names in groups %}
@@ -111,7 +111,7 @@ drops your edit.</p>
  </figure>
 </div>
 {% if folder_cover and not has_cover %}
-<form method="post" action="/tracks/{{ file.id }}/cover">
+<form method="post" action="/tracks/{{ file.id }}/cover" data-busy>
  <button>Embed the folder's cover in the file…</button>
  <span class="hint">You review the change before it is applied; undo removes it again.</span>
 </form>

@@ -15,23 +15,31 @@
     else img.addEventListener("error", () => img.remove());
   });
 
-  // Forms with data-busy (slow lookups that wait for an online answer): the button is
-  // disabled and shows a spinner while the page loads, so it is not clicked twice.
+  // Forms with data-busy (long-running actions: lookups, proposals, applying and undoing
+  // changes): while one is submitted the page loads, so its button shows a spinner and
+  // every other data-busy button on the page is disabled, so that no second run is
+  // started alongside it. The server refuses a parallel run too (409) for other tabs.
+  const busyButtons = () => [
+    ...document.querySelectorAll("form[data-busy] button, button[form][type=submit]"),
+  ].filter((button) => button.form?.hasAttribute("data-busy"));
+  const setBusy = (active, submitter) => {
+    busyButtons().forEach((button) => {
+      button.disabled = active;
+      button.classList.toggle("busy", active && button === submitter);
+    });
+  };
   document.querySelectorAll("form[data-busy]").forEach((form) => {
-    form.addEventListener("submit", () => {
-      const button = form.querySelector("button");
-      if (!button) return;
-      button.disabled = true;
-      button.classList.add("busy");
+    form.addEventListener("submit", (event) => {
+      // After the event, so that the clicked button's own name and value are still sent,
+      // and not when a confirm() or another handler cancelled the submit
+      setTimeout(() => {
+        if (!event.defaultPrevented) setBusy(true, event.submitter);
+      }, 0);
     });
   });
   // Coming back with the browser's back button restores the page as it was left
   window.addEventListener("pageshow", (event) => {
-    if (!event.persisted) return;
-    document.querySelectorAll("form[data-busy] button").forEach((button) => {
-      button.disabled = false;
-      button.classList.remove("busy");
-    });
+    if (event.persisted) setBusy(false);
   });
 
   // A checkbox with data-select-all="name" selects or deselects all checkboxes of that

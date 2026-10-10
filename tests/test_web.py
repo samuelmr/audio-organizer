@@ -785,6 +785,40 @@ def test_gnudb_button_and_lookup(web, monkeypatch):
     assert asked == ["P!nk/Funhouse"] * 3
 
 
+def test_one_long_action_at_a_time(web, monkeypatch):
+    from audio_organizer import gnudb
+
+    monkeypatch.setenv("AORG_GNUDB_EMAIL", "me@example.org")
+    started, release = threading.Event(), threading.Event()
+
+    def slow_lookup(session, lib, folder):
+        started.set()
+        release.wait(5)
+        return []
+
+    monkeypatch.setattr(gnudb, "lookup_folder", slow_lookup)
+    first = threading.Thread(
+        target=web.post, args=("/libraries/music/gnudb",), kwargs={"data": {"folder": "x"}}
+    )
+    first.start()
+    try:
+        assert started.wait(5)
+        refused = web.post("/changes/1/apply")  # another action, while the lookup waits
+        assert refused.status_code == 409
+        assert "still in progress" in refused.text
+        assert web.get("/libraries/music").status_code == 200  # browsing is not blocked
+    finally:
+        release.set()
+        first.join()
+    assert web.post("/changes/1/apply").status_code == 404  # free again (no such changeset)
+
+
+def test_long_action_forms_disable_their_buttons(web):
+    """Forms of long-running actions carry data-busy, which ui.js turns into spinners."""
+    page = web.get("/libraries/music", params={"folder": "P!nk/Funhouse"}).text
+    assert page.count("data-busy") == 2  # the gnudb and cover lookups
+
+
 def test_cover_lookup_button(web, monkeypatch):
     from audio_organizer import coverart
 

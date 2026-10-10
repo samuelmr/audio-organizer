@@ -85,23 +85,23 @@
 </form>
 
 <div class="actions">
- <form method="post" action="/changes/{{ changeset.id }}/apply" class="inline">
+ <form method="post" action="/changes/{{ changeset.id }}/apply" class="inline" data-busy>
   <input type="hidden" name="dry_run" value="true">
   <button>Dry run</button>
  </form>
- <form method="post" action="/changes/{{ changeset.id }}/apply" class="inline">
+ <form method="post" action="/changes/{{ changeset.id }}/apply" class="inline" data-busy>
   <button class="primary">Apply approved changes</button>
  </form>
  {% if changeset.changes | selectattr("status", "equalto", "failed") | list %}
- <form method="post" action="/changes/{{ changeset.id }}/retry" class="inline">
+ <form method="post" action="/changes/{{ changeset.id }}/retry" class="inline" data-busy>
   <button class="primary">Retry failed changes</button>
  </form>
  {% endif %}
- <form method="post" action="/changes/{{ changeset.id }}/undo" class="inline">
+ <form method="post" action="/changes/{{ changeset.id }}/undo" class="inline" data-busy>
   <button>Undo applied changes</button>
  </form>
  <form method="post" action="/changes/{{ changeset.id }}/delete" class="inline"
-  onsubmit="return confirm('Delete this changeset?')">
+  onsubmit="return confirm('Delete this changeset?')" data-busy>
   <button>Delete changeset</button>
  </form>
 </div>
