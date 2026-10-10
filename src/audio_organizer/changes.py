@@ -6,6 +6,7 @@ each change. A file is only touched if it is unchanged on disk since it was last
 scanned, so edits made elsewhere are never silently overwritten.
 """
 
+import logging
 import os
 import shutil
 from collections.abc import Iterable
@@ -19,6 +20,8 @@ from sqlalchemy.orm import Session
 from . import covers, pathparse, tags
 from .models import AudioFile, Change, Changeset, CoverImage, Library, PlaylistEntry, utcnow
 from .provenance import comparable, resolve, set_value, set_values
+
+log = logging.getLogger(__name__)
 
 # Trashed files are kept here, inside the library root, until `aorg trash empty`. The
 # scanner skips folders whose names start with a dot.
@@ -364,9 +367,15 @@ def apply(session: Session, changeset: Changeset, *, dry_run: bool = False) -> l
             outcomes.append(Outcome(change, True, describe(change)))
         except (ChangeError, OSError, ValueError, MutagenError, tags.UnsupportedFormat) as e:
             change.status, change.error = "failed", str(e)
+            log.warning("%s failed: %s", describe(change), e, exc_info=not _expected(e))
             outcomes.append(Outcome(change, False, f"{describe(change)}: FAILED: {e}"))
         session.commit()
     return outcomes
+
+
+def _expected(e: Exception) -> bool:
+    """Failures that are the file's or the user's doing; others get a traceback in the log."""
+    return isinstance(e, ChangeError | tags.UnsupportedFormat | FileNotFoundError)
 
 
 def undo(session: Session, changeset: Changeset, *, dry_run: bool = False) -> list[Outcome]:
@@ -402,6 +411,7 @@ def undo(session: Session, changeset: Changeset, *, dry_run: bool = False) -> li
             outcomes.append(Outcome(change, True, "undid " + describe(change)))
         except (ChangeError, OSError, ValueError, MutagenError, tags.UnsupportedFormat) as e:
             change.error = f"undo failed: {e}"
+            log.warning("undo %s failed: %s", describe(change), e, exc_info=not _expected(e))
             outcomes.append(Outcome(change, False, f"undo {describe(change)}: FAILED: {e}"))
         session.commit()
     return outcomes
@@ -456,13 +466,24 @@ def _embed_cover(session: Session, change: Change) -> dict:
     if not replace and covers.embedded(path) is not None:
         # The catalog may predate cover info; a second cover would be a surprise
         raise ChangeError("the file already has an embedded cover")
+    size_before = path.stat().st_size
     replaced = covers.embed_data(path, mime, data, replace=replace)
     kept = [
         {"sha1": covers.store_image(session, p.data, "replaced", mime=p.mime).sha1,
          "mime": p.mime, "type": p.type, "desc": p.desc}
         for p in replaced
     ]  # fmt: skip
-    _refresh(session, change.file)
+    try:
+        _refresh(session, change.file)
+    except MutagenError:
+        # The file was readable before the cover went in; keep what is needed to see why not
+        with open(path, "rb") as f:
+            head = f.read(16)
+        log.error(
+            "%s unreadable after embedding a %d byte %s cover: size %d -> %d, starts %r",
+            path, len(data), mime, size_before, path.stat().st_size, head,
+        )  # fmt: skip
+        raise
     return {"embedded": covers.digest(data), "replaced": kept}
 
 
