@@ -58,7 +58,7 @@ run <code>aorg scan --deep</code> to measure them (it reads every file, which ta
 
 {% if found.files %}
 <h2>{% if found.files | length < found.total %}The first {{ found.files | length }} of {{ found.total }} files{% else %}{{ found.total }} file{{ "s" if found.total != 1 }}{% endif %}</h2>
-<form method="post" action="{{ here }}" class="stacked" data-busy>
+<form method="post" action="{{ here }}" class="stacked" id="pending-form" data-busy>
  <input type="hidden" name="path" value="{{ path }}">
  {% if artist is not none %}<input type="hidden" name="artist" value="{{ artist }}">{% endif %}
  {% if album is not none %}<input type="hidden" name="album" value="{{ album }}">{% endif %}
@@ -80,24 +80,24 @@ run <code>aorg scan --deep</code> to measure them (it reads every file, which ta
   <button name="action" value="discard" onclick="return confirm('Drop your edits in the ticked files? Measurements and lookups are kept, and History can bring the edits back.')">Discard my edits in them</button>
  </p>
  {% endif %}
- <table>
-  <thead><tr><th><input type="checkbox" data-select-all="file_ids" aria-label="Select or deselect all files" hidden></th><th>File</th><th>Changes</th></tr></thead>
-  <tbody>
-  {% set ns = namespace(group=none) %}
-  {% for pending in found.files %}
-   {% if not album and (pending.artist, pending.album) != ns.group %}
-    {% set ns.group = (pending.artist, pending.album) %}
-    <tr><th colspan="3"><a href="{{ selection_url(here, artist=pending.artist, album=pending.album, only=only or none, prefer_gnudb=prefer_gnudb or none) }}">{{ pending.artist or "(no artist)" }} – {{ pending.album or "(no album)" }}</a></th></tr>
-   {% endif %}
-   <tr data-select-row>
-    <td><input type="checkbox" name="file_ids" value="{{ pending.file.id }}" checked aria-label="Write {{ pending.file.path }}"></td>
-    <td class="path"><a href="/tracks/{{ pending.file.id }}">{{ pending.file.path }}</a></td>
-    <td>{% for name, value in pending.fields.items() %}{{ labels.get(name, name) }}: {% if pending.before.get(name) %}<span class="old">{{ pending.before[name] }}</span> → {% endif %}{{ value }}{% if not loop.last %}<br>{% endif %}{% endfor %}</td>
-   </tr>
-  {% endfor %}
-  </tbody>
- </table>
 </form>
+<table>
+ <thead><tr><th><input type="checkbox" form="pending-form" data-select-all="file_ids" aria-label="Select or deselect all files" hidden></th><th>File</th><th>Changes</th></tr></thead>
+ <tbody>
+ {% set ns = namespace(group=none) %}
+ {% for pending in found.files %}
+  {% if not album and (pending.artist, pending.album) != ns.group %}
+   {% set ns.group = (pending.artist, pending.album) %}
+   <tr><th colspan="3"><a href="{{ selection_url(here, artist=pending.artist, album=pending.album, only=only or none, prefer_gnudb=prefer_gnudb or none) }}">{{ pending.artist or "(no artist)" }} – {{ pending.album or "(no album)" }}</a></th></tr>
+  {% endif %}
+  <tr data-select-row>
+   <td><input type="checkbox" form="pending-form" name="file_ids" value="{{ pending.file.id }}" checked aria-label="Write {{ pending.file.path }}"></td>
+   <td class="path"><a href="/tracks/{{ pending.file.id }}">{{ pending.file.path }}</a></td>
+   <td>{% for name, value in pending.fields.items() %}{{ labels.get(name, name) }}: {% if pending.before.get(name) %}<span class="old">{{ pending.before[name] }}</span> → {% endif %}{{ value }}{% if not loop.last %}<br>{% endif %}{% endfor %}</td>
+  </tr>
+ {% endfor %}
+ </tbody>
+</table>
 {% elif not groups %}
 <p>Nothing to write{% if chosen or path or only %} here{% endif %}.</p>
 {% endif %}
