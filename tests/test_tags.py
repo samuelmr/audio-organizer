@@ -6,7 +6,7 @@ import pytest
 from conftest import needs_ffmpeg
 from mutagen.id3 import COMM, ID3
 
-from audio_organizer import tags
+from audio_organizer import audiohash, tags
 from audio_organizer.audiohash import audio_hash
 
 
@@ -33,6 +33,24 @@ def test_adts_aac_with_id3_tag(copy_audio, tmp_path):
     assert tags.read(path).fields["title"] == "Born Slippy .NUXX"
     assert tags.read(path).fields["tracknumber"] == "8"
     assert audio_hash(path) == before
+
+
+def test_adts_aac_with_leftover_bytes_after_id3_tag(copy_audio, tmp_path):
+    """A tagger that writes the ID3 size too small for a big cover leaves the rest of the
+    picture between the tag and the stream: mutagen's AAC reader gives up on it ("sync not
+    found"), the detection falls back to MP3 ("can't sync to MPEG frame"). Real file:
+    Aguilera, Christina/Stripped/Can't Hold Us Down Ft. Lil Kim.AAC"""
+    clean = copy_audio("aac", tmp_path / "clean.aac")
+    start = audiohash.id3_stream_range(clean.open("rb"))[0]
+    data = clean.read_bytes()
+    path = tmp_path / "x.AAC"
+    path.write_bytes(data[:start] + bytes(range(1, 200)) * 40 + data[start:])
+    with pytest.raises(mutagen.aac.AACError):
+        mutagen.aac.AAC(path)
+    info = tags.read(path)
+    assert info.format == "aac"
+    assert info.duration
+    assert info.fields == {"artist": "Underworld", "album": "Trainspotting", "title": "Born Slippy"}
 
 
 @needs_ffmpeg

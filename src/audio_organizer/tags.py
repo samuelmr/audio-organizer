@@ -11,6 +11,7 @@ has (2.3 for files without a tag, as more players read it), or the one asked for
 """
 
 import base64
+import io
 import re
 from contextlib import nullcontext
 from dataclasses import dataclass, field
@@ -19,7 +20,7 @@ from typing import BinaryIO
 
 import mutagen
 from mutagen import MutagenError
-from mutagen.aac import AAC, AACError
+from mutagen.aac import AAC, AACError, AACInfo
 from mutagen.flac import Picture
 from mutagen.id3 import (
     COMM,
@@ -165,8 +166,8 @@ def load_tags(source: str | Path | BinaryIO) -> tuple[mutagen.FileType | None, o
         try:
             audio = AAC(source)
         except AACError:
-            pass  # e.g. an MP4 file named .aac
-        else:
+            audio = _aac_after_junk(source)  # None for e.g. an MP4 file named .aac
+        if audio is not None:
             _rewind(source)
             try:
                 return audio, ID3(source)
@@ -175,6 +176,34 @@ def load_tags(source: str | Path | BinaryIO) -> tuple[mutagen.FileType | None, o
         _rewind(source)
     audio = mutagen.File(source)
     return audio, audio.tags if audio is not None else None
+
+
+def _aac_after_junk(source: str | Path | BinaryIO) -> AAC | None:
+    """An AAC object for an ADTS stream whose first frame lies far behind the ID3 tag.
+
+    mutagen looks for the first frame in the 512 bytes after the tag size the ID3 header
+    gives. Some taggers write that size too small when they embed a large cover, leaving
+    the rest of the picture between the tag and the stream; ffmpeg and players cope, so
+    we search further and hand mutagen the stream from the first frame on."""
+    context = open(source, "rb") if isinstance(source, str | Path) else nullcontext(source)
+    with context as f:
+        start, end = audiohash.id3_stream_range(f)
+        f.seek(start)
+        data = f.read(min(end - start, ADTS_SEARCH_BYTES))
+    pos = data.find(b"\xff")
+    while pos >= 0 and pos + 1 < len(data) and data[pos + 1] & 0xF6 != 0xF0:
+        pos = data.find(b"\xff", pos + 1)
+    if pos < 0 or pos + 1 >= len(data):
+        return None
+    try:
+        info = AACInfo(io.BytesIO(data[pos:]))
+    except AACError:
+        return None
+    audio = AAC.__new__(AAC)  # AAC() without a file name is deprecated, and AAC(path) fails
+    audio.info = info
+    if isinstance(source, str | Path):
+        audio.filename = str(source)
+    return audio
 
 
 def _rewind(source) -> None:
@@ -216,6 +245,7 @@ def read(path: str | Path | BinaryIO) -> AudioInfo:
     return info
 
 
+ADTS_SEARCH_BYTES = 1 << 20  # how far behind an ID3 tag to look for the first ADTS frame
 ADTS_SAMPLE_RATES = (
     96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350,
 )  # fmt: skip
