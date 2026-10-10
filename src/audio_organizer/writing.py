@@ -24,9 +24,9 @@ from .models import (
     AudioFile,
     Change,
     Changeset,
-    CoverDesire,
     EffectiveMetadata,
     FieldValue,
+    FileDesire,
     Library,
 )
 from .models import PendingField as P
@@ -38,8 +38,8 @@ M = EffectiveMetadata
 ARTIST = func.coalesce(func.nullif(M.albumartist, ""), func.nullif(M.artist, ""), "")
 ALBUM = func.coalesce(M.album, "")
 # Decided covers are pending like tag fields: the cover to embed, and the image file to
-# save in the folder (on the folder's first track); CoverDesire kinds by their field name
-COVER_FIELDS = {"cover": "embed", "cover-file": "image"}
+# save in the folder (on the folder's first track); FileDesire kinds by their field name
+DESIRE_FIELDS = {"cover": "embed", "cover-file": "image", "trash": "trash"}
 
 
 @dataclass
@@ -60,7 +60,7 @@ class Pending:
     file: AudioFile
     fields: dict[str, str]  # field -> value to write (for covers a description of it)
     before: dict[str, str | None] = field(default_factory=dict)  # field -> the tag now
-    covers: dict[str, dict] = field(default_factory=dict)  # cover field -> CoverDesire.spec
+    covers: dict[str, dict] = field(default_factory=dict)  # cover field -> FileDesire.spec
     artist: str = ""
     album: str = ""
 
@@ -101,8 +101,8 @@ def _waiting():
     )
 
 
-def _cover_fields(only: list[str] | None) -> list[str]:
-    return [name for name in COVER_FIELDS if matches(name, only)]
+def _desire_fields(only: list[str] | None) -> list[str]:
+    return [name for name in DESIRE_FIELDS if matches(name, only)]
 
 
 def _selected(library: Library, selection: Selection) -> list:
@@ -124,10 +124,10 @@ def _candidates(library: Library, selection: Selection):
     PendingField of the chosen fields, and with prefer also those with a value from a
     preferred source (whether it is to replace the tag is decided per file)."""
     parts = [select(P.file_id).where(_field_condition(selection.only))]
-    if kinds := [COVER_FIELDS[n] for n in _cover_fields(selection.only)]:
+    if kinds := [DESIRE_FIELDS[n] for n in _desire_fields(selection.only)]:
         parts.append(
-            select(CoverDesire.file_id).where(
-                CoverDesire.written.is_(False), CoverDesire.kind.in_(kinds)
+            select(FileDesire.file_id).where(
+                FileDesire.written.is_(False), FileDesire.kind.in_(kinds)
             )
         )
     if selection.prefer:
@@ -176,12 +176,12 @@ def survey(session: Session, library: Library, selection: Selection, limit: int 
                 ).all()
             )
         )
-        for name in _cover_fields(selection.only):
+        for name in _desire_fields(selection.only):
             count = session.scalar(
                 select(func.count()).where(
-                    CoverDesire.file_id.in_(candidates),
-                    CoverDesire.written.is_(False),
-                    CoverDesire.kind == COVER_FIELDS[name],
+                    FileDesire.file_id.in_(candidates),
+                    FileDesire.written.is_(False),
+                    FileDesire.kind == DESIRE_FIELDS[name],
                 )
             )
             if count:
@@ -194,7 +194,7 @@ def survey(session: Session, library: Library, selection: Selection, limit: int 
             .options(selectinload(AudioFile.values))
         ).all()
         by_id = {file.id: file for file in files}
-        desired = _desired_covers(session, list(by_id), selection.only)
+        desired = _desired(session, list(by_id), selection.only)
         for row in batch:
             file = by_id[row.id]
             fields = {
@@ -232,17 +232,17 @@ def survey(session: Session, library: Library, selection: Selection, limit: int 
     return result
 
 
-def _desired_covers(
+def _desired(
     session: Session, file_ids: list[int], only: list[str] | None
 ) -> dict[int, dict[str, dict]]:
     """The covers decided for these files and not yet written: file id -> cover field -> spec."""
-    kinds = {COVER_FIELDS[n]: n for n in _cover_fields(only)}
+    kinds = {DESIRE_FIELDS[n]: n for n in _desire_fields(only)}
     found: dict[int, dict[str, dict]] = {}
     for desire in session.scalars(
-        select(CoverDesire).where(
-            CoverDesire.file_id.in_(file_ids),
-            CoverDesire.written.is_(False),
-            CoverDesire.kind.in_(kinds),
+        select(FileDesire).where(
+            FileDesire.file_id.in_(file_ids),
+            FileDesire.written.is_(False),
+            FileDesire.kind.in_(kinds),
         )
     ):
         found.setdefault(desire.file_id, {})[kinds[desire.kind]] = desire.spec
@@ -251,6 +251,8 @@ def _desired_covers(
 
 def describe_cover(spec: dict) -> str:
     """What a decided cover is, for the diff: where it comes from, and where it goes."""
+    if "replacement_path" in spec:
+        return f"move to the trash (a copy of {spec['replacement_path']})"
     source = spec.get("label") or spec.get("image") or "an image"
     if "to" in spec:
         source = f"{PurePosixPath(spec['to']).name} from {source}"
@@ -310,12 +312,19 @@ def write(
     were written are no longer pending (undoing the changeset makes them pending again)."""
     changeset = ch.new_changeset(session, description, "writing")
     for pending in files:
-        tag_fields = {k: v for k, v in pending.fields.items() if k not in COVER_FIELDS}
-        if tag_fields:
+        tag_fields = {k: v for k, v in pending.fields.items() if k not in DESIRE_FIELDS}
+        if tag_fields and "trash" not in pending.covers:  # a trashed file is not retagged
             change = ch.propose_retag(changeset, pending.file, tag_fields, id3_version)
             change.status = "approved"
         for name, spec in pending.covers.items():
-            if name == "cover":
+            if name == "trash":
+                change = ch.propose_trash(
+                    changeset,
+                    pending.file,
+                    session.get(AudioFile, spec["replacement"]),
+                    same=spec.get("same", "audio"),
+                )
+            elif name == "cover":
                 change = ch.propose_embed_cover(
                     changeset, pending.file, spec.get("image"), cover_image=spec.get("cover_image"),
                     label=spec.get("label"), replace=bool(spec.get("replace")),
@@ -329,9 +338,9 @@ def write(
     session.commit()
     outcomes = ch.apply(session, changeset)
     for outcome in outcomes:
-        kind = ch.COVER_DESIRE_KINDS.get(outcome.change.kind)
+        kind = ch.DESIRE_KINDS.get(outcome.change.kind)
         if kind and outcome.ok:
-            desire = session.get(CoverDesire, (outcome.change.file_id, kind))
+            desire = session.get(FileDesire, (outcome.change.file_id, kind))
             if desire:
                 desire.written = True
     session.commit()
@@ -347,8 +356,8 @@ def discard(session: Session, files: list[Pending]) -> tuple[int, int]:
     for pending in files:
         resolved = resolve(pending.file.values)
         for name in pending.fields:
-            if name in COVER_FIELDS:
-                covers.append(ops.Desire(pending.file.id, COVER_FIELDS[name], None))
+            if name in DESIRE_FIELDS:
+                covers.append(ops.Desire(pending.file.id, DESIRE_FIELDS[name], None))
             elif name in resolved and resolved[name].source == "manual":
                 dropped.append(ops.Value(pending.file.id, "manual", name, None))
             else:

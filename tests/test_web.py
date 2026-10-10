@@ -494,15 +494,9 @@ def test_duplicates(web):
     assert "data-play" in page
     [(name, (proposed, other))] = _keep_choices(page).items()
     response = web.post("/libraries/music/duplicates", data={name: proposed})
-    assert re.fullmatch(r"/changes/\d+", response.url.path)
-    assert "trash Texas/Texas_Halo.mp3 (same audio as Texas/Greatest Hits/11 Halo.mp3)" in (
-        response.text
-    )
-    assert f'href="/tracks/{proposed}/audio"' in response.text  # play the kept copy too
-    assert ">will be trashed</span>" in response.text
-    assert ">will be kept</span>" in response.text
-    assert re.search(r'href="/static/style\.css\?v=\d+"', response.text)
-    assert "data-select-row" in response.text and 'data-select-all="change_ids"' in response.text
+    assert response.url.path == "/libraries/music/pending"
+    assert "Trash: move to the trash (a copy of Texas/Greatest Hits/11 Halo.mp3)" in response.text
+    assert "Mood: Upbeat" in response.text  # the tag copied to the kept copy
     assert "1 with changes waiting" in web.get("/libraries/music/duplicates").text
     assert 'for="keep-' in page  # clicking a copy's path selects it
 
@@ -511,9 +505,7 @@ def test_duplicates_keep_another_copy(web):
     page = web.get("/libraries/music/duplicates").text
     [(name, (proposed, other))] = _keep_choices(page).items()
     response = web.post("/libraries/music/duplicates", data={name: other})
-    assert "trash Texas/Greatest Hits/11 Halo.mp3 (same audio as Texas/Texas_Halo.mp3)" in (
-        response.text
-    )
+    assert "Trash: move to the trash (a copy of Texas/Texas_Halo.mp3)" in response.text
 
 
 def test_duplicates_limit_clamped(web):
@@ -574,9 +566,8 @@ def test_audio(web, Session):
     # After trashing, it plays from the trash
     page = web.get("/libraries/music/duplicates").text
     [(name, (proposed, other))] = _keep_choices(page).items()
-    changeset_path = web.post("/libraries/music/duplicates", data={name: proposed}).url.path
-    web.post(f"{changeset_path}/status", data={"action": "approve-all"})
-    web.post(f"{changeset_path}/apply", data={})
+    web.post("/libraries/music/duplicates", data={name: proposed})
+    web.post("/libraries/music/pending", data={"action": "write", "file_ids": [file_id]})
     assert not (web.root / "Texas/Texas_Halo.mp3").exists()
     assert web.get(f"/tracks/{file_id}/audio").status_code == 200
     assert web.get("/tracks/99999/audio").status_code == 404

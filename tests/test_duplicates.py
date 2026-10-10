@@ -5,6 +5,7 @@ from audio_organizer import changes as ch
 from audio_organizer import duplicates as du
 from audio_organizer import playlists as pl
 from audio_organizer import tags
+from audio_organizer import writing as wr
 from audio_organizer.models import AudioFile, Library, Playlist
 from audio_organizer.scanner import scan
 
@@ -63,12 +64,12 @@ def test_propose_apply_and_undo(library):
     session.commit()
 
     found = du.survey(session, lib)
-    changeset = du.propose(session, found.proposals, "Trash loose copies")
-    assert [c.kind for c in changeset.changes] == ["retag", "trash", "trash"]
-    assert du.survey(session, lib).pending == 1  # not proposed twice
-
-    ch.set_status(changeset.changes, "approved")
-    outcomes = ch.apply(session, changeset)
+    operation = du.decide(session, lib, found.proposals, "Trash loose copies")
+    assert operation.kind == "duplicates" and len(operation.values) == 4  # 2 tags, 2 copies
+    assert du.survey(session, lib).pending == 1  # not decided twice
+    assert (root / "Texas/Texas_Halo.mp3").exists()  # the files are untouched
+    changeset, outcomes = wr.write(session, wr.survey(session, lib, wr.Selection()).files, "x")
+    assert sorted(c.kind for c in changeset.changes) == ["retag", "trash", "trash"]
     assert all(o.ok for o in outcomes), [o.message for o in outcomes]
     assert not (root / "Texas/Texas_Halo.mp3").exists()
     assert not (root / "Texas/Greatest Hits/11 Halo 1.mp3").exists()
@@ -84,6 +85,7 @@ def test_propose_apply_and_undo(library):
     stats = scan(session, lib)
     assert stats.new == 0
     assert du.survey(session, lib).groups == 2
+    assert wr.survey(session, lib, wr.Selection()).total == 0  # written
 
     outcomes = ch.undo(session, changeset)
     assert all(o.ok for o in outcomes), [o.message for o in outcomes]
@@ -94,17 +96,22 @@ def test_propose_apply_and_undo(library):
     assert not session.get(AudioFile, flat.id).missing
     assert session.get(Playlist, playlist.id).entries[0].file_id == flat.id
     assert scan(session, lib).unchanged == 7
+    # The decision stays: the copies are to be trashed again
+    assert wr.survey(session, lib, wr.Selection(only=["trash"])).total == 2
 
 
 def test_trash_refuses_changed_file(library):
     session, lib, root = library
     found = du.survey(session, lib)
-    changeset = du.propose(session, found.proposals, "Trash loose copies")
+    du.decide(session, lib, found.proposals, "Trash loose copies")
     (root / "Texas/Texas_Halo.mp3").write_bytes(b"changed")
-    ch.set_status(changeset.changes, "approved")
-    outcomes = {o.change.file.path: o for o in ch.apply(session, changeset)}
+    _, outcomes = wr.write(session, wr.survey(session, lib, wr.Selection()).files, "x")
+    outcomes = {o.change.file.path: o for o in outcomes if o.change.kind == "trash"}
     assert not outcomes["Texas/Texas_Halo.mp3"].ok
     assert (root / "Texas/Texas_Halo.mp3").exists()
+    # What failed stays pending
+    pending = wr.survey(session, lib, wr.Selection(only=["trash"]))
+    assert [p.file.path for p in pending.files] == ["Texas/Texas_Halo.mp3"]
 
 
 def test_trashed_path_is_free_for_another_file(library):

@@ -281,7 +281,7 @@ def test_survey_leaves_out_tracks_whose_format_cannot_hold_a_cover(library):
 
 def test_decided_covers_are_undone_from_the_history(library):
     from audio_organizer import operations as ops
-    from audio_organizer.models import CoverDesire
+    from audio_organizer.models import FileDesire
 
     session, lib, root, tmp_path = library
     _image(root / "Texas/Greatest Hits/cover.jpg", "320x240")
@@ -290,12 +290,12 @@ def test_decided_covers_are_undone_from_the_history(library):
     assert (operation.kind, len(operation.values)) == ("covers", 2)
     assert covers.decide(session, lib, found.folders, "Embed") is None  # nothing new
     assert covers.embedded(root / "Texas/Greatest Hits/11 Halo.mp3") is None  # files untouched
-    assert session.query(CoverDesire).count() == 2
+    assert session.query(FileDesire).count() == 2
 
     undone = ops.undo(session, operation)
     session.commit()
     assert (undone.reverted, undone.kept) == (2, 0)
-    assert session.query(CoverDesire).count() == 0
+    assert session.query(FileDesire).count() == 0
     assert wr.survey(session, lib, wr.Selection(only=["cover"])).total == 0
 
     ops.undo(session, undone.operation)  # redo

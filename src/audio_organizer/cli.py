@@ -1409,7 +1409,7 @@ def dupes(
         str | None, typer.Option(help="Only copies under this path, e.g. an artist folder")
     ] = None,
     limit: Annotated[int, typer.Option(help="Tracks to include")] = 50,
-    propose: Annotated[bool, typer.Option("--propose", help="Create a changeset for them")] = False,
+    decide: Annotated[bool, typer.Option("--decide", help="Decide on them")] = False,
     include_compilations: Annotated[
         bool,
         typer.Option(
@@ -1419,14 +1419,16 @@ def dupes(
     ] = False,
     library: LibraryOption = None,
 ) -> None:
-    """Find identical copies of tracks and propose to trash the loose ones.
+    """Find identical copies of tracks and decide to trash the loose ones.
 
     A copy in an album folder is kept; copies lying loose in an artist folder, in
-    "Unknown Album" or next to it as iTunes copies ("Title 1.mp3") are proposed for the
+    "Unknown Album" or next to it as iTunes copies ("Title 1.mp3") are chosen for the
     trash, after copying any tags only they have to the kept file. Tracks with copies
     in several album folders are left for you to decide, and so, unless you add
     --include-compilations, are tracks whose only album copy is on a compilation.
-    Trashed files can be restored by undoing the changeset until the trash is emptied.
+    Deciding only changes the catalog (undo it with `aorg history`); `aorg pending` then
+    shows the trashing and writes it. Trashed files can be restored by undoing that write
+    until the trash is emptied.
     """
     with _session(ctx) as session:
         lib = _library(session, library)
@@ -1439,25 +1441,28 @@ def dupes(
             f"folder, {found.pending} with changes waiting for review."
         )
         batch = found.proposals[:limit]
-        for proposal in batch[:20] if not propose else []:
+        for proposal in batch[:20] if not decide else []:
             typer.echo(f"  keep  {proposal.keep.file.path}")
             for copy in proposal.trash:
                 typer.echo(f"  trash {copy.file.path}")
             if proposal.fill:
                 typer.echo(f"        copying tags: {', '.join(proposal.fill)}")
-        if not propose:
+        if not decide:
             if len(batch) > 20:
                 typer.echo(f"  ... and {len(batch) - 20} more in this batch")
             if batch:
-                typer.echo(f"Run with --propose to create a changeset for {len(batch)} tracks.")
+                typer.echo(f"Run with --decide to choose these for {len(batch)} tracks.")
             return
         if not batch:
             return
         where = f" in {path}" if path else ""
-        changeset = du.propose(session, batch, f"Trash loose copies of {len(batch)} tracks{where}")
+        operation = du.decide(
+            session, lib, batch, f"Trash loose copies of {len(batch)} tracks{where}"
+        )
         typer.echo(
-            f"Changeset {changeset.id}: {len(changeset.changes)} changes. Review with "
-            f"`aorg changes show {changeset.id}` or in the web UI."
+            f"Decided on {len(batch)} tracks"
+            + (f" (operation {operation.id})" if operation else " (already decided)")
+            + ". Review and write them with `aorg pending`."
         )
 
 

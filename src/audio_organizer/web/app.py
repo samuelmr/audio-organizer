@@ -90,7 +90,8 @@ FIELD_LABELS = {
     "mood": "Mood", "rating": "Rating", "tempo": "Tempo", "situation": "Situation",
     "preference": "Preference", "replaygain_track_gain": "Track gain",
     "replaygain_track_peak": "Track peak", "replaygain_album_gain": "Album gain",
-    "replaygain_album_peak": "Album peak", "discid": "gnudb disc ID", "cover": "Cover",
+    "replaygain_album_peak": "Album peak", "discid": "gnudb disc ID",
+    "cover": "Cover", "trash": "Trash",
     "cover-file": "Folder image",
 }  # fmt: skip
 PAGE_SIZE = 50
@@ -696,8 +697,12 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         if not batch:
             return _redirect(f"/libraries/{lib.name}/duplicates", "Nothing to propose")
         where = f" in {path}" if path else ""
-        changeset = du.propose(session, batch, f"Trash loose copies of {len(batch)} tracks{where}")
-        return _redirect(f"/changes/{changeset.id}", "Proposed; review and approve the changes")
+        du.decide(session, lib, batch, f"Trash loose copies of {len(batch)} tracks{where}")
+        return _redirect(
+            _url(f"/libraries/{lib.name}/pending", path=path or None),
+            "Decided; review and write the trashing here",
+            link=(f"/libraries/{lib.name}/history", "Undo on the History page"),
+        )
 
     # ---- encodings ------------------------------------------------------------------
 

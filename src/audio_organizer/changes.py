@@ -21,8 +21,8 @@ from .models import (
     AudioFile,
     Change,
     Changeset,
-    CoverDesire,
     CoverImage,
+    FileDesire,
     Library,
     PlaylistEntry,
     utcnow,
@@ -36,8 +36,8 @@ log = logging.getLogger(__name__)
 TRASH_DIR = ".aorg-trash"
 
 
-# The CoverDesire kind (models.py) that a change of this kind carries out
-COVER_DESIRE_KINDS = {"cover": "embed", "image": "image"}
+# The FileDesire kind (models.py) that a change of this kind carries out
+DESIRE_KINDS = {"cover": "embed", "image": "image", "trash": "trash"}
 
 
 class ChangeError(Exception):
@@ -380,8 +380,8 @@ def undo(session: Session, changeset: Changeset, *, dry_run: bool = False) -> li
             elif change.kind == "image":
                 _unsave_image(session, change)
             change.status = "undone"
-            if kind := COVER_DESIRE_KINDS.get(change.kind):
-                desire = session.get(CoverDesire, (change.file_id, kind))
+            if kind := DESIRE_KINDS.get(change.kind):
+                desire = session.get(FileDesire, (change.file_id, kind))
                 if desire:
                     desire.written = False  # the decided cover is pending again
             outcomes.append(Outcome(change, True, "undid " + describe(change)))

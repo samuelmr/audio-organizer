@@ -293,15 +293,19 @@ Loose tracks page does the same, album by album.
 ### Duplicates
 
 Files with identical audio are copies of one track, even when their tags and names
-differ. `aorg dupes` finds them and proposes, in batches, to trash the loose copies:
+differ. `aorg dupes` finds them and chooses, in batches, to trash the loose copies:
 
-    aorg dupes                                # what would be proposed
-    aorg dupes --path "Texas" --propose       # a changeset for the copies under Texas/
-    aorg dupes --propose --limit 100          # or the next 100 tracks anywhere
+    aorg dupes                                # what would be chosen
+    aorg dupes --path "Texas" --decide        # choose the copies under Texas/
+    aorg dupes --decide --limit 100           # or the next 100 tracks anywhere
+    aorg pending --path "Texas" --write       # review and trash them (undoable)
+
+Choosing only changes the catalog (`aorg history` undoes it); the trashing is written
+from the Pending page, with other pending changes.
 
 When exactly one album folder (`Artist/Album/…`) holds a copy, that copy is kept. Copies
 lying loose in an artist folder, in "Unknown Album", or next to it as iTunes copies
-("Title 1.mp3") are proposed for the trash. Tags only the loose copies have are first
+("Title 1.mp3") are chosen for the trash. Tags only the loose copies have are first
 copied to the kept file, and static playlists switch to it. Tracks with copies in
 several album folders are left for you to decide, and so are tracks whose only album
 copy is on a compilation while another copy is in the artist's own folder (add

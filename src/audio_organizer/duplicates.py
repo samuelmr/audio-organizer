@@ -17,8 +17,8 @@ from pathlib import PurePosixPath
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from . import changes as ch
-from .models import AudioFile, Change, Changeset, FieldValue, Library
+from . import operations as ops
+from .models import AudioFile, Change, FieldValue, FileDesire, Library, Operation
 from .provenance import resolve
 from .tags import FIELDS
 from .tracks import present
@@ -69,7 +69,7 @@ class Survey:
     groups: int = 0
     several_albums: int = 0  # copies in more than one album folder
     no_album: int = 0  # no copy in an album folder
-    pending: int = 0  # some copy already has changes waiting for review
+    pending: int = 0  # some copy already has changes waiting for review or to be written
     compilations: int = 0  # left out: only a compilation's copy would be kept
 
     @property
@@ -102,6 +102,12 @@ def survey(
     ).all()
     pending = set(
         session.scalars(select(Change.file_id).where(Change.status.in_(("proposed", "approved"))))
+    ) | set(
+        session.scalars(
+            select(FileDesire.file_id).where(
+                FileDesire.kind == "trash", FileDesire.written.is_(False)
+            )
+        )
     )
     copies = load_copies(session, files)
     groups: dict[str, list[Copy]] = {}
@@ -163,17 +169,26 @@ def choose(proposals: list[Proposal], keep_ids: dict[str, int]) -> list[Proposal
     return chosen
 
 
-def propose(session: Session, proposals: list[Proposal], description: str) -> Changeset:
-    """One changeset for the proposals: for each, copying tags to the kept file, then
-    trashing the other copies."""
-    changeset = ch.new_changeset(session, description, "duplicates")
+def decide(
+    session: Session, library: Library, proposals: list[Proposal], description: str
+) -> Operation | None:
+    """Decide on the proposals: for each, the tags only the other copies have become
+    the kept file's own values, and the other copies are to be trashed. Only the catalog
+    changes (as an operation that can be undone); the files are written from the Pending
+    page (writing.py). None when it was all decided already."""
+    values, desires = [], []
     for proposal in proposals:
-        if proposal.fill:
-            ch.propose_retag(changeset, proposal.keep.file, proposal.fill)
-        for copy in proposal.trash:
-            ch.propose_trash(changeset, copy.file, replacement=proposal.keep.file)
+        values += [
+            ops.Value(proposal.keep.file.id, "manual", n, v) for n, v in proposal.fill.items()
+        ]
+        spec = {
+            "replacement": proposal.keep.file.id,
+            "replacement_path": proposal.keep.file.path,
+        }
+        desires += [ops.Desire(copy.file.id, "trash", spec) for copy in proposal.trash]
+    operation = ops.record(session, library.id, "duplicates", description, values, desires=desires)
     session.commit()
-    return changeset
+    return operation
 
 
 def load_copies(session: Session, files: list[AudioFile]) -> list[Copy]:

@@ -20,15 +20,15 @@ from typing import NamedTuple
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .models import AudioFile, CoverDesire, FieldValue, Operation, OperationValue
+from .models import AudioFile, FieldValue, FileDesire, Operation, OperationValue
 from .provenance import refresh_effective
 
 # What an operation did: user edits (one file, an album, a folder), a rule set on the
 # library (ratings from preferences), values of a lookup taken as the user's own, the
-# user's edits dropped, covers chosen, and undoing another operation.
-KINDS = ("edit", "ratings", "accept", "discard", "covers", "undo")
+# user's edits dropped, covers chosen, duplicates trashed, and undoing another operation.
+KINDS = ("edit", "ratings", "accept", "discard", "covers", "duplicates", "undo")
 
-# The source of an operation value that is a desired cover (models.CoverDesire), not a
+# The source of an operation value that is a desired state (models.FileDesire), not a
 # FieldValue: its field is the desire's kind, before and after are its spec as JSON.
 DESIRE = "desire"
 
@@ -141,7 +141,7 @@ def _set_desires(session: Session, desires: Iterable[Desire]) -> list[OperationV
         (row.file_id, row.kind): row
         for batch in batched(wanted, BATCH, strict=False)
         for row in session.scalars(
-            select(CoverDesire).where(CoverDesire.file_id.in_({f for f, _ in batch}))
+            select(FileDesire).where(FileDesire.file_id.in_({f for f, _ in batch}))
         )
     }
     changed = []
@@ -153,7 +153,7 @@ def _set_desires(session: Session, desires: Iterable[Desire]) -> list[OperationV
         if row is None and spec is None:
             continue
         if row is None:
-            session.add(CoverDesire(file_id=file_id, kind=kind, spec=spec))
+            session.add(FileDesire(file_id=file_id, kind=kind, spec=spec))
         elif spec is None:
             session.delete(row)
         else:
@@ -185,7 +185,7 @@ def undo(session: Session, operation: Operation) -> Undone:
         for v in batch:
             if v.source != DESIRE:
                 continue
-            row = session.get(CoverDesire, (v.file_id, v.field))
+            row = session.get(FileDesire, (v.file_id, v.field))
             now = None if row is None else "written" if row.written else json.dumps(row.spec)
             if now == v.after:
                 back_desires.append(
