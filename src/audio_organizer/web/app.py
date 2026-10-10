@@ -913,9 +913,13 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         min_pixels: Annotated[int, Form()] = covers.MIN_PIXELS,
         save_images: Annotated[bool, Form()] = True,
         folder: Annotated[str, Form()] = "",
+        picking: Annotated[bool, Form()] = False,
+        pick: Annotated[list[str] | None, Form()] = None,
         session: Session = SessionDep,
     ):
-        """A batch of folders, or with folder, just that one."""
+        """The folders ticked on the page (picking says the page had ticks, so that none
+        ticked proposes nothing, not the whole batch), a batch of folders, or with folder,
+        just that one. The folders are looked at afresh, as the page may be out of date."""
         lib = _library(session, name)
         if folder:
             found = covers.survey(
@@ -929,8 +933,13 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
                 min_pixels=min_pixels, save_images=save_images,
             )  # fmt: skip
             chosen = found.folders
+            if picking:
+                chosen = [f for f in chosen if f.folder in set(pick or [])]
         if not chosen:
-            return _redirect(f"/libraries/{lib.name}/covers", "Nothing to embed")
+            return _redirect(
+                f"/libraries/{lib.name}/covers",
+                "No folder selected" if picking and not pick else "Nothing to embed",
+            )
         changeset = covers.propose(
             session, lib, chosen,
             f"Embed the cover of {chosen[0].folder}" if folder

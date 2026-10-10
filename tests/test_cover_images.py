@@ -1,10 +1,11 @@
 """Saving covers found online as the folder's cover.jpg."""
 
+from sqlalchemy import delete
 from test_coverart import _image, library  # noqa: F401 (a fixture)
 
 from audio_organizer import changes as ch
 from audio_organizer import covers, sync, tags
-from audio_organizer.models import CoverLookup
+from audio_organizer.models import CoverLookup, FolderImages
 from audio_organizer.scanner import scan
 
 
@@ -124,6 +125,8 @@ def test_cached_survey_lists_folders_only_when_needed(library, monkeypatch):  # 
     session, lib, root, tmp_path = library
     folder = root / "Texas/Greatest Hits"
     _image(folder / "cover.jpg", "500x500")
+    session.execute(delete(FolderImages))  # as in a catalog the scan has not seen the image in
+    session.commit()
     listed = []
     real = covers.os.listdir
     monkeypatch.setattr(covers.os, "listdir", lambda p: listed.append(p) or real(p))

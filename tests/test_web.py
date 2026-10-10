@@ -684,6 +684,15 @@ def test_ratings_and_covers_pages(web, Session):
     assert re.fullmatch(r"/changes/\d+", response.url.path)
     assert "will get the cover image" in response.text
 
+    # The ticked folders are proposed; none ticked proposes nothing, not the whole batch
+    assert 'name="pick" value="Texas/Greatest Hits"' in page
+    response = web.post("/libraries/music/covers", data={"picking": "true"})
+    assert "No folder selected" in response.text
+    response = web.post(
+        "/libraries/music/covers", data={"picking": "true", "pick": "Texas/Greatest Hits"}
+    )
+    assert re.fullmatch(r"/changes/\d+", response.url.path)
+
 
 def test_covers_found_online(web, Session, tmp_path):
     image = tmp_path / "found.jpg"

@@ -392,8 +392,7 @@ class _Listings:
     def get(self, folder: str, check: bool = False) -> FolderImages | None:
         """The folder's listing: the remembered one unless check (or not cached, or never
         listed), when it is checked against the disk: listed again if the modification time
-        has changed, or always when not cached. None when the
-        folder cannot be read."""
+        has changed, or always when not cached. None when the folder cannot be read."""
         known = self.known.get(folder)
         if known is not None and self.cached and not check:
             return known
@@ -409,21 +408,55 @@ class _Listings:
             names = os.listdir(directory)
         except OSError:
             return None
-        from .sync import image_names, pick_cover
-
-        cover = pick_cover(names)
-        size = dimensions(directory / cover) if cover else None
-        if known is None:
-            known = FolderImages(library_id=self.library.id, folder=folder)
-            self.session.add(known)
-            self.known[folder] = known
-        known.dir_mtime_ns, known.images, known.cover = mtime, sorted(image_names(names)), cover
-        known.cover_width, known.cover_height = size if size else (None, None)
+        known = _remember(self.session, self.library, folder, mtime, names, known)
+        self.known[folder] = known
         return known
 
     def save(self) -> None:
         if self.checked:
             self.session.commit()
+
+
+def _remember(
+    session: Session,
+    library: Library,
+    folder: str,
+    mtime: int,
+    names: list[str],
+    known: FolderImages | None,
+) -> FolderImages:
+    """Keep what a folder holds: the image files among its entries, and the dimensions of
+    the one that serves as its cover."""
+    from .sync import image_names, pick_cover
+
+    cover = pick_cover(names)
+    size = dimensions(Path(library.root) / folder / cover) if cover else None
+    if known is None:
+        known = FolderImages(library_id=library.id, folder=folder)
+        session.add(known)
+    known.dir_mtime_ns, known.images, known.cover = mtime, sorted(image_names(names)), cover
+    known.cover_width, known.cover_height = size if size else (None, None)
+    return known
+
+
+def remember_folders(
+    session: Session, library: Library, folders: dict[str, tuple[int, list[str]]]
+) -> int:
+    """Bring the remembered folders up to date with what a scan saw: {folder: (modification
+    time, entry names)} of every folder with audio files. Folders that have not changed
+    cost nothing; those that are gone are forgotten. Returns how many were read anew."""
+    known = {
+        f.folder: f
+        for f in session.scalars(select(FolderImages).where(FolderImages.library_id == library.id))
+    }
+    for folder in known.keys() - folders.keys():
+        session.delete(known[folder])
+    changed = 0
+    for folder, (mtime, names) in folders.items():
+        if folder not in known or known[folder].dir_mtime_ns != mtime:
+            _remember(session, library, folder, mtime, names, known.get(folder))
+            changed += 1
+    return changed
 
 
 def _survey_folder(

@@ -395,7 +395,11 @@ another one. The web UI's Covers page does the same, also for single folders, an
 track's page can embed its folder's cover into that one file. Listing folders is slow on a
 network share, so the page remembers what each folder holds and lists a folder again only
 when it is about to be shown and has changed; proposing changes always checks the disk.
-*Check the folders again* lists every folder again, if the counts below the table are stale.
+`aorg scan` fills this memory as it walks the library (it sees every folder anyway), so
+the page is fast from the first view. *Check the folders again* lists every folder again,
+if the counts below the table are stale. Every folder on the page is ticked; untick the
+ones you do not want, or use the box in the header to select or deselect all, and
+propose a changeset for the ticked ones.
 
 A cover found online is also saved as the folder's `cover.jpg` (`cover.png` for a PNG),
 so that players that read folder images and [sync](#syncing-to-object-storage) have it

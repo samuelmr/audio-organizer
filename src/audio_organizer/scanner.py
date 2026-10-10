@@ -16,7 +16,7 @@ from pathlib import Path
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from . import pathparse, tags
+from . import covers, pathparse, tags
 from .audiohash import audio_hash
 from .blockfile import BlockFile
 from .models import AudioFile, Library, TagSnapshot, utcnow
@@ -52,9 +52,15 @@ class _Result:
     error: str | None = None
 
 
-def walk(root: str | Path) -> Iterator[tuple[str, os.stat_result]]:
+def walk(
+    root: str | Path, folders: dict[str, tuple[int, list[str]]] | None = None
+) -> Iterator[tuple[str, os.stat_result]]:
     """Yield (relative POSIX path, stat) of the audio files under root, skipping hidden
-    and system folders ('.', '@' prefixes) and AppleDouble files ('._')."""
+    and system folders ('.', '@' prefixes) and AppleDouble files ('._').
+
+    The folders that hold audio files are also noted in `folders`, as (modification time,
+    names of all their entries), for the cover cache (covers.remember_folders): the
+    folder is listed anyway, so this costs one stat."""
     root = os.fspath(root)
     stack = [root]
     while stack:
@@ -63,14 +69,23 @@ def walk(root: str | Path) -> Iterator[tuple[str, os.stat_result]]:
             entries = sorted(os.scandir(current), key=lambda e: e.name)
         except OSError:
             continue
+        has_audio = False
         for entry in entries:
             if entry.name.startswith((".", "@")):
                 continue
             if entry.is_dir(follow_symlinks=False):
                 stack.append(entry.path)
             elif os.path.splitext(entry.name)[1].lower() in AUDIO_EXTENSIONS:
+                has_audio = True
                 relpath = Path(os.path.relpath(entry.path, root)).as_posix()
                 yield relpath, entry.stat()
+        if has_audio and folders is not None:
+            try:
+                mtime = os.stat(current).st_mtime_ns
+            except OSError:
+                continue
+            folder = Path(os.path.relpath(current, root)).as_posix()
+            folders[folder] = (mtime, [e.name for e in entries])
 
 
 def _read(root: str, relpath: str, st: os.stat_result, hash_audio: bool) -> _Result:
@@ -153,8 +168,9 @@ def scan(
         if progress:
             progress(stats, result.relpath)
 
+    folders: dict[str, tuple[int, list[str]]] = {}
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        for relpath, st in walk(library.root):
+        for relpath, st in walk(library.root, folders):
             stats.seen += 1
             seen.add(relpath)
             entry = known.get(relpath)
@@ -181,6 +197,7 @@ def scan(
     if still_gone:
         session.execute(update(AudioFile).where(AudioFile.id.in_(still_gone)).values(missing=True))
     stats.missing = len(still_gone)
+    covers.remember_folders(session, library, folders)
     session.commit()
     if import_playlists:
         stats.playlists = import_from_disk(session, library)

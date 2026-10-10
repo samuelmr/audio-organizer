@@ -28,19 +28,21 @@ when the changes are applied.</p>
 </form>
 
 {% if found.folders %}
-<form method="post" action="{{ base }}/covers" data-busy>
+<form method="post" action="{{ base }}/covers" id="propose" data-busy>
  <input type="hidden" name="path" value="{{ path }}">
  <input type="hidden" name="limit" value="{{ limit }}">
  <input type="hidden" name="min_pixels" value="{{ min_pixels }}">
  <input type="hidden" name="save_images" value="{{ save_images | lower }}">
- <button class="primary">Propose a changeset for these {{ found.folders | length }} folders</button>
+ <input type="hidden" name="picking" value="true">
+ <button class="primary">Propose a changeset for the selected folders</button>
 </form>
 <table>
- <thead><tr><th>Cover</th><th>Folder</th><th class="num">Tracks</th><th></th></tr></thead>
+ <thead><tr><th><input type="checkbox" data-select-all="pick" aria-label="Select or deselect all folders" hidden></th><th>Cover</th><th>Folder</th><th class="num">Tracks</th><th></th></tr></thead>
  <tbody>
  {% for f in found.folders %}
   {% set dims = f.fetched.size if f.fetched else f.dimensions %}
-  <tr>
+  <tr data-select-row>
+   <td><input type="checkbox" name="pick" value="{{ f.folder }}" form="propose" checked aria-label="Select {{ f.folder }}"></td>
    <td><img src="{{ '/cover-images/' ~ f.fetched.sha1 if f.fetched else '/tracks/' ~ f.files[0].id ~ '/cover?folder=1' }}" alt="" width="56" height="56" loading="lazy" class="thumb"></td>
    <td class="path"><a href="{{ url(base, folder=f.folder) }}">{{ f.folder }}/</a><br>{% if f.fetched %}{{ f.album }}, found online{% else %}{{ f.image.name }}{% endif %}, {% if dims %}{{ dims[0] }}×{{ dims[1] }} pixels, {% endif %}{{ (f.image_size / 1024) | round | int }} KB{% if f.image_size > 500 * 1024 %} <span class="flag">large</span>{% endif %}{% if f.replace %}<br>replaces the thumbnail of {{ f.replace | length }} tracks{% endif %}{% if f.save_as %}<br>{{ "replaces" if f.overwrite else "to be saved as" }} {{ f.save_as.rsplit("/", 1)[-1] }}{% endif %}</td>
    <td class="num">{{ f.files | length }}</td>

@@ -100,3 +100,35 @@ def test_unreadable_file_is_recorded(Session, tmp_path):
         assert scan(session, library).unchanged == 1  # not retried until it changes
         stats = scan(session, library, retry_errors=True)
         assert (stats.unchanged, stats.changed, len(stats.errors)) == (0, 1, 1)
+
+
+def test_scan_remembers_the_images_of_folders(Session, copy_audio, tmp_path):
+    from audio_organizer.models import FolderImages
+
+    root = tmp_path / "music"
+    copy_audio("mp3", root / "Texas/Greatest Hits/11 Halo.mp3")
+    copy_audio("mp3", root / "Texas/Other/01 x.mp3")
+    (root / "Texas/Greatest Hits/Cover.JPG").write_bytes(b"x")
+    (root / "Texas/Greatest Hits/notes.txt").write_text("x")
+
+    def remembered(session):
+        return {f.folder: f for f in session.scalars(select(FolderImages))}
+
+    with Session() as session:
+        library = _library(session, root)
+        scan(session, library)
+        found = remembered(session)
+        assert set(found) == {"Texas/Greatest Hits", "Texas/Other"}
+        assert found["Texas/Greatest Hits"].images == ["Cover.JPG"]
+        assert found["Texas/Greatest Hits"].cover == "Cover.JPG"
+        assert found["Texas/Other"].cover is None
+
+        (root / "Texas/Other/folder.png").write_bytes(b"x")
+        scan(session, library)
+        assert remembered(session)["Texas/Other"].cover == "folder.png"
+
+        (root / "Texas/Other/01 x.mp3").unlink()
+        (root / "Texas/Other/folder.png").unlink()
+        (root / "Texas/Other").rmdir()
+        scan(session, library)
+        assert set(remembered(session)) == {"Texas/Greatest Hits"}  # a gone folder is forgotten
