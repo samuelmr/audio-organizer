@@ -19,7 +19,6 @@ case are left alone too: on case-insensitive file systems (macOS, most NAS share
 are the same path.
 """
 
-import os
 import re
 import string
 import unicodedata
@@ -32,9 +31,9 @@ from sqlalchemy.orm import Session
 
 from . import artists
 from . import changes as ch
+from .leftovers import folder_files
 from .models import AudioFile, Change, Changeset, EffectiveMetadata, Library, LibrarySetting
 from .pathparse import normalize_name
-from .scanner import AUDIO_EXTENSIONS
 from .tracks import present
 
 DEFAULT_LAYOUT = "{albumartistsort}/{album}/{disc}{track} {title}"
@@ -274,65 +273,28 @@ def render(
 def with_extras(album: AlbumMove, library: Library) -> AlbumMove:
     """Add the other files of the folders that the album's last tracks leave: the cover,
     a .cue or .nfo, a booklet, and subfolders without audio (Scans, Artwork), so that the
-    old folder empties and disappears. A folder where other tracks stay keeps them all, and
-    so does the library root. Subfolders holding audio, hidden or system ones ('.', '@'
-    prefixes) and those on the way to the album's new folder stay where they are."""
+    old folder empties and disappears (see leftovers.folder_files). A folder where other
+    tracks stay keeps them all, and so does the library root, and subfolders on the way to
+    the album's new folder stay where they are."""
     root = Path(library.root)
     leaving: dict[str, int] = defaultdict(int)
     for move in album.moves:
         leaving[str(PurePosixPath(move.file.path).parent)] += 1
     album.extras = {}
+    target = PurePosixPath(album.folder)
     for source, count in leaving.items():
         if source == ".":
             continue
-        try:
-            entries = list(os.scandir(root / source))
-        except OSError:
-            continue
-        audio_left = [e for e in entries if e.is_file() and _is_audio(e.name)]
-        if len(audio_left) > count:
+        contents = folder_files(root / source)
+        if contents is None or contents[0] > count:
             continue  # other tracks stay in the folder, and so do its other files
-        target, extras = PurePosixPath(album.folder), album.extras.setdefault(source, [])
-        for entry in sorted(entries, key=lambda e: e.name):
-            path = PurePosixPath(source, entry.name)
-            if entry.is_dir(follow_symlinks=False):
-                if entry.name.startswith((".", "@")) or path == target or path in target.parents:
-                    continue
-                files = _files_without_audio(Path(entry.path))
-                if files is None:
-                    continue  # another album's or disc's folder
-                for relative in files:
-                    extras.append((f"{path}/{relative}", f"{album.folder}/{entry.name}/{relative}"))
-            elif entry.is_file(follow_symlinks=False) and not _is_audio(entry.name):
-                extras.append((str(path), f"{album.folder}/{entry.name}"))
-    return album
-
-
-def _is_audio(name: str) -> bool:
-    return not name.startswith(".") and os.path.splitext(name)[1].lower() in AUDIO_EXTENSIONS
-
-
-def _files_without_audio(directory: Path) -> list[str] | None:
-    """The files below directory, relative to it, or None if any of them is audio (or the
-    folder cannot be read). Hidden and system folders inside are left out."""
-    found = []
-    try:
-        entries = sorted(os.scandir(directory), key=lambda e: e.name)
-    except OSError:
-        return None
-    for entry in entries:
-        if entry.is_dir(follow_symlinks=False):
-            if entry.name.startswith((".", "@")):
+        extras = album.extras.setdefault(source, [])
+        for relative in contents[1]:
+            top = PurePosixPath(source, relative.split("/")[0])
+            if "/" in relative and (top == target or top in target.parents):
                 continue
-            below = _files_without_audio(Path(entry.path))
-            if below is None:
-                return None
-            found.extend(f"{entry.name}/{name}" for name in below)
-        elif _is_audio(entry.name):
-            return None
-        elif entry.is_file(follow_symlinks=False):
-            found.append(entry.name)
-    return found
+            extras.append((f"{source}/{relative}", f"{album.folder}/{relative}"))
+    return album
 
 
 def propose(

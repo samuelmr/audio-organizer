@@ -40,9 +40,11 @@
     {% elif change.kind == "leftover" %}
      <div class="file"><span class="path">{{ change.payload.path }}</span>
       <span class="verdict trash">{{ "was trashed" if done else ("was restored" if change.status == "undone" else "will be trashed") }}</span></div>
+     {% if change.payload.same_as %}<div class="file indent">same as <span class="path">{{ change.payload.same_as }}</span>, which stays</div>{% endif %}
     {% elif change.kind == "rename" %}
+     {% set verb = "renamed" if is_rename_in_place(change) else "moved" %}
      <div class="file"><span class="path">{{ change.payload.path }}</span>
-      <span class="verdict">{{ "was renamed to" if done else ("was renamed back" if change.status == "undone" else "will be renamed to") }}</span></div>
+      <span class="verdict">{{ ("was " ~ verb ~ " to") if done else (("was " ~ verb ~ " back") if change.status == "undone" else ("will be " ~ verb ~ " to")) }}</span></div>
      <div class="file indent"><span class="path">{{ change.payload.to }}</span></div>
     {% elif change.kind == "cover" %}
      <div class="file">{{ play(change.file.id, change.file.path) }} <span class="path">{{ change.file.path }}</span>

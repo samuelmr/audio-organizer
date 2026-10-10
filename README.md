@@ -258,6 +258,15 @@ the same album name and no clashes; merge the others one by one in the direction
 choose, here or on the web UI's Album folders page. To go the other way after proposing
 a merge, reject its changeset (or undo it, if applied) and propose the other direction.
 
+When no track stays behind, the folder's other files move too (the cover, a `.cue` or
+`.nfo`, a booklet, a Scans folder), so the merged folder disappears. Where the other folder
+already has a file of that name, an identical copy and system files such as `.DS_Store`
+are trashed. Of two different images, the bigger one keeps the name and the other one is
+kept beside it with its folder's name added: `cover (Greatest Hits).jpg`, or
+`cover (Texas - Greatest Hits).jpg` when both folders have the same name. Any other file,
+such as a different `.cue`, gets the merged folder's name added in the same way. Each of
+these is a change of its own in the changeset, so you can reject any of them.
+
 ### Loose tracks
 
 Flat folders ("Williams, John/John Williams_Cantina Band.mp3") often hold tracks whose

@@ -112,29 +112,31 @@ def propose_trash(
     return change
 
 
-def propose_trash_leftover(changeset: Changeset, library: Library, path: str) -> Change:
+def propose_trash_leftover(
+    changeset: Changeset, library: Library, path: str, same_as: str | None = None
+) -> Change:
     """Propose moving a file the catalog does not know (litter such as Folder.jpg or an old
-    playlist in a folder without music) to the trash. Its size and modification time are
-    recorded, so a file that changed in the meantime is left alone."""
+    playlist in a folder without music) to the trash; same_as names an identical file that
+    stays. Its size and modification time are recorded, so a file that changed in the
+    meantime is left alone."""
     st = (Path(library.root) / path).stat()
-    change = Change(
-        file=None,
-        kind="leftover",
-        payload={
-            "library_id": library.id,
-            "path": path,
-            "size": st.st_size,
-            "mtime_ns": st.st_mtime_ns,
-        },
-        status="proposed",
-    )
+    payload = {
+        "library_id": library.id,
+        "path": path,
+        "size": st.st_size,
+        "mtime_ns": st.st_mtime_ns,
+    }
+    if same_as:
+        payload["same_as"] = same_as
+    change = Change(file=None, kind="leftover", payload=payload, status="proposed")
     changeset.changes.append(change)
     return change
 
 
 def propose_rename_file(changeset: Changeset, library: Library, path: str, to: str) -> Change:
     """Propose renaming a file the catalog does not know (an album's image to cover.jpg),
-    within its folder. Size and modification time are recorded, as for a leftover."""
+    or moving it to another folder (a merged album's booklet). Size and modification time
+    are recorded, as for a leftover."""
     st = (Path(library.root) / path).stat()
     change = Change(
         file=None,
@@ -324,9 +326,11 @@ def describe(change: Change) -> str:
             return f"replace {change.payload['to']} with {change.payload['label']}"
         return f"save {change.payload['label']} as {change.payload['to']}"
     if change.kind == "rename":
-        return f"rename {change.payload['path']} -> {change.payload['to']}"
+        verb = "rename" if is_rename_in_place(change) else "move"
+        return f"{verb} {change.payload['path']} -> {change.payload['to']}"
     if change.kind == "leftover":
-        return f"trash {change.payload['path']} (not music)"
+        same = change.payload.get("same_as")
+        return f"trash {change.payload['path']} ({f'same as {same}' if same else 'not music'})"
     if change.kind == "trash":
         keeper = change.payload.get("replacement_path")
         same = change.payload.get("same", "audio")
@@ -340,6 +344,12 @@ def move_source(change: Change) -> str:
     if change.status == "applied" and change.undo:
         return change.undo.get("from", change.file.path)  # trashed before "from" was kept
     return change.file.path
+
+
+def is_rename_in_place(change: Change) -> bool:
+    """Whether a rename change keeps the file in its folder (else it moves it)."""
+    path, to = PurePosixPath(change.payload["path"]), PurePosixPath(change.payload["to"])
+    return path.parent == to.parent
 
 
 def move_extras(change: Change) -> list[str]:
@@ -665,7 +675,9 @@ def _rename_file(session: Session, change: Change) -> dict:
         raise ChangeError(f"{path} has changed since it was proposed")
     if (root / to).exists():
         raise ChangeError(f"{to} already exists")
+    (root / to).parent.mkdir(parents=True, exist_ok=True)
     os.rename(root / path, root / to)
+    _remove_empty_dirs((root / path).parent, root)
     return {}
 
 
@@ -676,7 +688,9 @@ def _unrename_file(session: Session, change: Change) -> None:
         raise ChangeError(f"{to} no longer exists")
     if (root / path).exists():
         raise ChangeError(f"{path} exists again; move it away first")
+    (root / path).parent.mkdir(parents=True, exist_ok=True)
     os.rename(root / to, root / path)
+    _remove_empty_dirs((root / to).parent, root)
 
 
 def _untrash_leftover(session: Session, change: Change) -> None:

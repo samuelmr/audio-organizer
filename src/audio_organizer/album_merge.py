@@ -10,16 +10,22 @@ already has (the target's copy is kept and static playlists move to it) and move
 source's other tracks into the target. A track whose number the target already uses on
 the same disc is a clash: such folders are usually different editions of an album, so
 clashing tracks are not moved, and a merge with clashes is never proposed in a batch.
+When all of the source's tracks leave, its other files (cover, booklet, .cue, Scans) move
+too, so that the folder disappears; see leftovers().
 """
 
+import filecmp
+import os
 from collections import Counter
 from dataclasses import dataclass, field
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import changes as ch
+from . import leftovers as lo
+from .images import IMAGE_TYPES, dimensions
 from .models import AudioFile, Change, Changeset, EffectiveMetadata, FieldValue, Library
 from .pathparse import normalize_name
 from .tracks import present
@@ -164,14 +170,101 @@ def batch(merges: list[Merge], limit: int) -> list[Merge]:
 
 
 def propose(session: Session, merges: list[Merge], description: str) -> Changeset:
+    """One changeset with the merges' trashes and moves, then the moves of the source
+    folders' other files (see leftovers), so that the source folders disappear."""
     changeset = ch.new_changeset(session, description, "album_merge")
     for merge in merges:
         for track, keep in merge.trash:
             ch.propose_trash(changeset, track.file, replacement=keep.file)
         for track, path in merge.move:
             ch.propose_move(changeset, track.file, path)
+        library = merge.source.tracks[0].file.library
+        for action in leftovers(merge, Path(library.root)):
+            if action.to is None:
+                ch.propose_trash_leftover(changeset, library, action.path, action.same_as)
+            else:
+                ch.propose_rename_file(changeset, library, action.path, action.to)
     session.commit()
     return changeset
+
+
+@dataclass
+class Leftover:
+    """A file of the source folder (or, to make way, of the target) and what becomes of
+    it: moved to `to`, or trashed (to is None), possibly as a copy of same_as."""
+
+    path: str
+    to: str | None
+    same_as: str | None = None
+
+
+def leftovers(merge: Merge, root: Path) -> list[Leftover]:
+    """What becomes of the source folder's other files (cover, .cue, booklet, Scans; see
+    leftovers.folder_files) when all its tracks leave: they move into the target. When
+    the target has a file of that name, an identical copy (or a system file such as
+    .DS_Store) is trashed. Of two different images the bigger one ends up under the name,
+    and the other next to it with its folder's name added ("cover (Greatest Hits).jpg");
+    any other file gets the source folder's name added. Nothing when some audio stays."""
+    source, target = merge.source, merge.target
+    contents = lo.folder_files(root / source.path)
+    if merge.clashes or contents is None or contents[0] > len(source.tracks):
+        return []
+    result: list[Leftover] = []
+    planned: set[str] = set()  # destinations taken by earlier actions, casefolded
+
+    def free(path: str) -> bool:
+        return path.casefold() not in planned and not os.path.lexists(root / path)
+
+    # Folders of the same name ("Texas/Greatest Hits", "Texas (1)/Greatest Hits") are told
+    # apart by their parents
+    same_name = source.name.casefold() == target.name.casefold()
+
+    def suffixed(path: str, folder: Folder) -> str:
+        """The path with the folder's name added, and a number if that is taken too."""
+        stem, extension = os.path.splitext(path)
+        label = " - ".join(PurePosixPath(folder.path).parts[-2:]) if same_name else folder.name
+        for n in range(1, 1000):
+            candidate = f"{stem} ({label}{f' {n}' if n > 1 else ''}){extension}"
+            if free(candidate):
+                return candidate
+        raise ValueError(f"No free name for {path}")
+
+    for relative in contents[1]:
+        path, to = f"{source.path}/{relative}", f"{target.path}/{relative}"
+        if free(to):
+            result.append(Leftover(path, to))
+        elif _same_content(root / path, root / to):
+            result.append(Leftover(path, None, same_as=to))
+        elif lo.is_system_file(PurePosixPath(relative).name):
+            result.append(Leftover(path, None))
+        elif _is_image(relative) and _image_size(root / path) > _image_size(root / to):
+            result.append(Leftover(to, suffixed(to, target)))  # the target's smaller image
+            result.append(Leftover(path, to))
+        else:
+            result.append(Leftover(path, suffixed(to, source)))
+        planned.update(a.to.casefold() for a in result[-2:] if a.to)
+    return result
+
+
+def _same_content(a: Path, b: Path) -> bool:
+    try:
+        return filecmp.cmp(a, b, shallow=False)
+    except OSError:
+        return False
+
+
+def _is_image(path: str) -> bool:
+    return os.path.splitext(path)[1].lower() in IMAGE_TYPES
+
+
+def _image_size(path: Path) -> tuple[int, int]:
+    """(pixels, bytes) of an image, to tell the bigger of two; unknown pixels count as 0."""
+    try:
+        with open(path, "rb") as f:
+            size = dimensions(f.read(65536))
+        return (size[0] * size[1] if size else 0, path.stat().st_size)
+    except OSError:
+        return (0, 0)
 
 
 def _target_score(folder: Folder) -> tuple:

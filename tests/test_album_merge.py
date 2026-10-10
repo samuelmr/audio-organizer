@@ -82,6 +82,69 @@ def test_merge_apply_and_undo(library):
     assert (root / "Aguilera, Christina/Stripped/02 Can't Hold Us Down.mp3").exists()
 
 
+def png(width: int, height: int) -> bytes:
+    """Enough of a PNG for its size to be read."""
+    size = width.to_bytes(4, "big") + height.to_bytes(4, "big")
+    return b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR" + size + bytes(5)
+
+
+def test_merge_takes_the_other_files_along(library):
+    """The source's other files move into the target; of same-named files, identical
+    copies and system files are trashed, the bigger image takes the name and the other
+    files get the folder's name added. Undo restores both folders."""
+    session, lib, root = library
+    source, target = root / "Aguilera, Christina/Stripped", root / "Christina Aguilera/Stripped"
+    files = {
+        source: {"booklet.pdf": b"booklet", "Scans/back.jpg": b"back", "folder.jpg": b"same",
+                 "cover.png": png(500, 500), "front.png": png(100, 100), "album.cue": b"a",
+                 ".DS_Store": b"source"},
+        target: {"folder.jpg": b"same", "cover.png": png(250, 250), "front.png": png(300, 300),
+                 "album.cue": b"b", ".DS_Store": b"target"},
+    }  # fmt: skip
+    for folder, contents in files.items():
+        for name, data in contents.items():
+            (folder / name).parent.mkdir(parents=True, exist_ok=True)
+            (folder / name).write_bytes(data)
+    merge = am.plan_folders(
+        session, lib, "Aguilera, Christina/Stripped", "Christina Aguilera/Stripped"
+    )
+    changeset = am.propose(session, [merge], "Merge")
+    s, t = "Aguilera, Christina/Stripped", "Christina Aguilera/Stripped"
+    assert [ch.describe(c) for c in changeset.changes[2:]] == [
+        f"trash {s}/.DS_Store (not music)",
+        f"move {s}/Scans/back.jpg -> {t}/Scans/back.jpg",
+        f"move {s}/album.cue -> {t}/album (Aguilera, Christina - Stripped).cue",
+        f"move {s}/booklet.pdf -> {t}/booklet.pdf",
+        f"rename {t}/cover.png -> {t}/cover (Christina Aguilera - Stripped).png",
+        f"move {s}/cover.png -> {t}/cover.png",
+        f"trash {s}/folder.jpg (same as {t}/folder.jpg)",
+        f"move {s}/front.png -> {t}/front (Aguilera, Christina - Stripped).png",
+    ]
+    ch.set_status(changeset.changes, "approved")
+    outcomes = ch.apply(session, changeset)
+    assert all(o.ok for o in outcomes), [o.message for o in outcomes]
+    assert not (root / "Aguilera, Christina").exists()
+    assert (target / "cover.png").read_bytes() == png(500, 500)
+    assert (target / "Scans/back.jpg").read_bytes() == b"back"
+
+    outcomes = ch.undo(session, changeset)
+    assert all(o.ok for o in outcomes), [o.message for o in outcomes]
+    for folder, contents in files.items():
+        for name, data in contents.items():
+            assert (folder / name).read_bytes() == data, folder / name
+    assert sorted(p.name for p in target.iterdir()) == [
+        ".DS_Store", "01 Stripped Intro.mp3", "03 Walk Away.mp3", "album.cue", "cover.png",
+        "folder.jpg", "front.png",
+    ]  # fmt: skip
+
+
+def test_no_leftovers_move_while_tracks_stay(library):
+    session, lib, root = library
+    (root / "Texas/Greatest Hits/booklet.pdf").write_bytes(b"booklet")
+    merge = am.plan_folders(session, lib, "Texas/Greatest Hits", "Texas/The Greatest Hits")
+    assert merge.clashes and am.leftovers(merge, root) == []
+
+
 def test_plan_folders_rejects_unknown_folders(library):
     session, lib, root = library
     with pytest.raises(ValueError, match="not an album folder"):

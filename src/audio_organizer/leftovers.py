@@ -45,6 +45,66 @@ _TRACK = re.compile(
 )
 
 
+# Files the operating system or file manager makes; they are never worth keeping twice.
+SYSTEM_FILES = (".ds_store", "desktop.ini", "thumbs.db")
+
+
+def is_system_file(name: str) -> bool:
+    name = name.lower()
+    return name.startswith("._") or name in SYSTEM_FILES
+
+
+def is_audio(name: str) -> bool:
+    return not name.startswith(".") and os.path.splitext(name)[1].lower() in AUDIO_EXTENSIONS
+
+
+def folder_files(directory: Path) -> tuple[int, list[str]] | None:
+    """(audio files directly in an album folder, its other files) when its music leaves:
+    the cover, a .cue, a booklet, and the files of subfolders without audio (Scans,
+    Artwork), as paths relative to it, sorted. Subfolders holding audio (another disc)
+    and hidden or system ones ('.', '@' prefixes, such as Synology's @eaDir) are left out.
+    None if the folder cannot be read."""
+    try:
+        entries = sorted(os.scandir(directory), key=lambda e: e.name)
+    except OSError:
+        return None
+    audio, others = 0, []
+    for entry in entries:
+        if entry.is_dir(follow_symlinks=False):
+            if entry.name.startswith((".", "@")):
+                continue
+            below = _files_without_audio(Path(entry.path))
+            others.extend(f"{entry.name}/{name}" for name in below or [])
+        elif is_audio(entry.name):
+            audio += 1
+        elif entry.is_file(follow_symlinks=False):
+            others.append(entry.name)
+    return audio, others
+
+
+def _files_without_audio(directory: Path) -> list[str] | None:
+    """The files below directory, relative to it, or None if any of them is audio (or the
+    folder cannot be read)."""
+    found = []
+    try:
+        entries = sorted(os.scandir(directory), key=lambda e: e.name)
+    except OSError:
+        return None
+    for entry in entries:
+        if entry.is_dir(follow_symlinks=False):
+            if entry.name.startswith((".", "@")):
+                continue
+            below = _files_without_audio(Path(entry.path))
+            if below is None:
+                return None
+            found.extend(f"{entry.name}/{name}" for name in below)
+        elif is_audio(entry.name):
+            return None
+        elif entry.is_file(follow_symlinks=False):
+            found.append(entry.name)
+    return found
+
+
 def is_litter(name: str) -> bool:
     name = name.lower()
     return name.startswith("._") or any(fnmatch.fnmatchcase(name, p) for p in LITTER)

@@ -1561,9 +1561,10 @@ def merge_albums(
 
     Merging trashes the source folder's copies of tracks the target already has and
     moves its other tracks into the target. A track whose number the target already uses
-    is a clash and stays where it is. Batches (--propose) only include folders with the
-    same album name and no clashes; merge others one at a time with --from and --into,
-    in the direction you choose.
+    is a clash and stays where it is. When no track stays, the source folder's other
+    files (cover, booklet, .cue) move along too. Batches (--propose) only include folders
+    with the same album name and no clashes; merge others one at a time with --from and
+    --into, in the direction you choose.
     """
     with _session(ctx) as session:
         lib = _library(session, library)
