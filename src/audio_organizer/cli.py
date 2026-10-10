@@ -685,13 +685,13 @@ def edit_album(
             )
         else:
             typer.echo(f"Saved for {len(files)} tracks in {where}; their tags already match.")
-        if edit.changeset is None:
+        if not edit.moves:
             if edit.plan is not None:
                 typer.echo("No folders to rename.")
         else:
-            typer.echo(f"Changeset {edit.changeset.id} renames the folders:")
-            for change in edit.moves:
-                typer.echo(f"  {ch.describe(change)}")
+            typer.echo("Chosen to rename the folders:")
+            for move in edit.moves:
+                typer.echo(f"  {move.file.path} -> {move.target}")
         if edit.plan is not None:
             for file, target, why in edit.plan.conflicts:
                 typer.echo(f"  not moved: {file.path} -> {target} ({why})")
@@ -700,10 +700,8 @@ def edit_album(
                     f"  not moved: {edit.plan.case_only} files whose folders would differ only "
                     "in letter case"
                 )
-        if edit.changeset is not None:
-            typer.echo(
-                f"Review with `aorg changes show {edit.changeset.id}`, then approve and apply."
-            )
+        if edit.moves:
+            typer.echo("Review and write the moves with `aorg pending --only path`.")
 
 
 def _edit_values(set_: list[str], unset: list[str]) -> dict[str, str | None]:
@@ -2182,12 +2180,15 @@ def reorganize(
     ctx: typer.Context,
     path: Annotated[str | None, typer.Option(help="Only files under this path")] = None,
     limit: Annotated[int, typer.Option(help="Albums to propose in a batch")] = 20,
-    propose: Annotated[
-        bool, typer.Option("--propose", help="Create a changeset for a batch")
+    decide: Annotated[
+        bool, typer.Option("--decide", help="Choose the moves of a batch, to write from Pending")
     ] = False,
     library: LibraryOption = None,
 ) -> None:
     """Move files into the library's layout (see `aorg layout`), album by album.
+
+    Choosing only changes the catalog (`aorg history` undoes it); the files move when
+    written with `aorg pending --only path --write`.
 
     Run the duplicate and album folder cleanups first: copies that would get the same
     path are conflicts and stay where they are.
@@ -2201,17 +2202,18 @@ def reorganize(
             f"{plan.files} files in {len(plan.albums)} albums can move; {plan.in_place} are "
             f"in place, {plan.case_only} differ only in letter case, {plan.incomplete} lack "
             f"a field the layout needs, {len(plan.conflicts)} conflict, {plan.pending} have "
-            "changes waiting for review."
+            "changes pending or waiting for review."
         )
         batch = plan.albums[:limit]
-        if propose:
+        if decide:
             if batch:
-                changeset = lo.propose(
+                operation = lo.decide(
                     session, lib, batch, f"Move {len(batch)} albums into the layout"
                 )
                 typer.echo(
-                    f"Changeset {changeset.id}: {len(changeset.changes)} moves. Review with "
-                    f"`aorg changes show {changeset.id}`."
+                    f"Decided on {len(batch)} albums"
+                    + (f" (operation {operation.id})" if operation else " (already decided)")
+                    + ". Review and write them with `aorg pending`."
                 )
             return
         for album in batch:
@@ -2221,7 +2223,7 @@ def reorganize(
         if len(plan.albums) > len(batch):
             typer.echo(f"  ... and {len(plan.albums) - len(batch)} more albums")
         if batch:
-            typer.echo(f"Run with --propose to create a changeset for {len(batch)} albums.")
+            typer.echo(f"Run with --decide to choose these {len(batch)} albums.")
 
 
 trash_app = typer.Typer(

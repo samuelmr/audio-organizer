@@ -37,9 +37,10 @@ M = EffectiveMetadata
 # Pending changes are grouped by album artist, or artist where there is none, and album
 ARTIST = func.coalesce(func.nullif(M.albumartist, ""), func.nullif(M.artist, ""), "")
 ALBUM = func.coalesce(M.album, "")
-# Decided covers are pending like tag fields: the cover to embed, and the image file to
-# save in the folder (on the folder's first track); FileDesire kinds by their field name
-DESIRE_FIELDS = {"cover": "embed", "cover-file": "image", "trash": "trash"}
+# Decided covers, trashing and moves are pending like tag fields: the cover to embed, the
+# image file to save in the folder (on the folder's first track), the file to trash, the
+# path to move it to; FileDesire kinds by their field name
+DESIRE_FIELDS = {"cover": "embed", "cover-file": "image", "trash": "trash", "path": "move"}
 
 
 @dataclass
@@ -202,7 +203,7 @@ def survey(session: Session, library: Library, selection: Selection, limit: int 
                 if matches(k, selection.only)
             }  # fmt: skip
             covers = desired.get(file.id, {})
-            fields.update({name: describe_cover(spec) for name, spec in covers.items()})
+            fields.update({name: describe_cover(spec, name) for name, spec in covers.items()})
             if not fields:
                 continue
             if selection.prefer:
@@ -249,8 +250,14 @@ def _desired(
     return found
 
 
-def describe_cover(spec: dict) -> str:
-    """What a decided cover is, for the diff: where it comes from, and where it goes."""
+def describe_cover(spec: dict, name: str = "cover") -> str:
+    """What a decided cover, trashing or move is, for the diff: where a cover comes from,
+    and where it goes."""
+    if name == "path":
+        extras = len(spec.get("extras", []))
+        # Every track leaving a folder has the list; the last one written takes them along
+        files = f" (+{extras} folder file{'s' if extras != 1 else ''} with the last track)"
+        return spec["to"] + (files if extras else "")
     if "replacement_path" in spec:
         return f"move to the trash (a copy of {spec['replacement_path']})"
     source = spec.get("label") or spec.get("image") or "an image"
@@ -311,13 +318,25 @@ def write(
     change per kind, and keep them as a changeset that can be undone. The covers that
     were written are no longer pending (undoing the changeset makes them pending again)."""
     changeset = ch.new_changeset(session, description, "writing")
+    leaving = {  # files that leave their folder in this write: trashed, or moved elsewhere
+        p.file.id for p in files if "trash" in p.covers or "path" in p.covers
+    }
+    carrier = {  # per folder, the last file moved from it: the one the other files go with
+        str(PurePosixPath(p.file.path).parent): p.file.id for p in files if "path" in p.covers
+    }
     for pending in files:
         tag_fields = {k: v for k, v in pending.fields.items() if k not in DESIRE_FIELDS}
         if tag_fields and "trash" not in pending.covers:  # a trashed file is not retagged
             change = ch.propose_retag(changeset, pending.file, tag_fields, id3_version)
             change.status = "approved"
-        for name, spec in pending.covers.items():
-            if name == "trash":
+        # A file moves last, after its tags and cover are written
+        for name, spec in sorted(pending.covers.items(), key=lambda item: item[0] == "path"):
+            if name == "path":
+                if "trash" in pending.covers:
+                    continue
+                extras = _extras_to_move(session, pending.file, spec, leaving, carrier)
+                change = ch.propose_move(changeset, pending.file, spec["to"], extras)
+            elif name == "trash":
                 change = ch.propose_trash(
                     changeset,
                     pending.file,
@@ -338,13 +357,32 @@ def write(
     session.commit()
     outcomes = ch.apply(session, changeset)
     for outcome in outcomes:
-        kind = ch.DESIRE_KINDS.get(outcome.change.kind)
-        if kind and outcome.ok:
-            desire = session.get(FileDesire, (outcome.change.file_id, kind))
-            if desire:
-                desire.written = True
+        if outcome.ok and (desire := ch.desire_of(session, outcome.change)):
+            desire.written = True
     session.commit()
     return changeset, outcomes
+
+
+def _extras_to_move(
+    session: Session, file: AudioFile, spec: dict, leaving: set[int], carrier: dict[str, int]
+) -> list[tuple[str, str]]:
+    """The folder's other files that go with a decided move: with the last file written
+    from the folder, and only if no track stays in it. A move is written in parts (a
+    selection), and the folder's other files must not be taken away from tracks still in
+    it; the decision gives every track of the folder the list, so whichever is last has it."""
+    folder = str(PurePosixPath(file.path).parent)
+    if not spec.get("extras") or carrier.get(folder) != file.id:
+        return []
+    staying = session.scalars(
+        select(AudioFile.path).where(
+            present(file.library_id),
+            AudioFile.path.startswith(folder + "/", autoescape=True),
+            AudioFile.id.not_in(leaving),
+        )
+    )
+    if any(str(PurePosixPath(path).parent) == folder for path in staying):
+        return []
+    return [(source, target) for source, target in spec["extras"]]
 
 
 def discard(session: Session, files: list[Pending]) -> tuple[int, int]:

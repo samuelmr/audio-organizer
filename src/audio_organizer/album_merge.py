@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 from . import changes as ch
 from . import leftovers as lo
 from .images import IMAGE_TYPES, dimensions
-from .models import AudioFile, Change, Changeset, EffectiveMetadata, FieldValue, Library
+from .models import AudioFile, Changeset, EffectiveMetadata, FieldValue, Library
 from .pathparse import normalize_name
 from .tracks import present
 
@@ -98,9 +98,7 @@ def survey(session: Session, library: Library, *, path_prefix: str | None = None
             for b in paths:
                 if a < b:
                     shared[(a, b)] += 1
-    pending = set(
-        session.scalars(select(Change.file_id).where(Change.status.in_(("proposed", "approved"))))
-    )
+    pending = ch.waiting_files(session)
     result = Survey()
     for (a, b), count in sorted(shared.items()):
         fa, fb = folders[a], folders[b]

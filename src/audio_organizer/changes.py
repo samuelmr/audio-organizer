@@ -37,7 +37,7 @@ TRASH_DIR = ".aorg-trash"
 
 
 # The FileDesire kind (models.py) that a change of this kind carries out
-DESIRE_KINDS = {"cover": "embed", "image": "image", "trash": "trash"}
+DESIRE_KINDS = {"cover": "embed", "image": "image", "trash": "trash", "move": "move"}
 
 
 class ChangeError(Exception):
@@ -380,10 +380,8 @@ def undo(session: Session, changeset: Changeset, *, dry_run: bool = False) -> li
             elif change.kind == "image":
                 _unsave_image(session, change)
             change.status = "undone"
-            if kind := DESIRE_KINDS.get(change.kind):
-                desire = session.get(FileDesire, (change.file_id, kind))
-                if desire:
-                    desire.written = False  # the decided cover is pending again
+            if desire := desire_of(session, change):
+                desire.written = False  # the decided cover is pending again
             outcomes.append(Outcome(change, True, "undid " + describe(change)))
         except (ChangeError, OSError, ValueError, MutagenError, tags.UnsupportedFormat) as e:
             change.error = f"undo failed: {e}"
@@ -391,6 +389,27 @@ def undo(session: Session, changeset: Changeset, *, dry_run: bool = False) -> li
             outcomes.append(Outcome(change, False, f"undo {describe(change)}: FAILED: {e}"))
         session.commit()
     return outcomes
+
+
+def waiting_files(session: Session, kinds: tuple[str, ...] = ("trash", "move")) -> set[int]:
+    """The files that something is already to do with: changes proposed or approved for
+    review, and decided state (models.FileDesire of these kinds) not yet written. Other
+    features leave them alone, so that nothing is proposed twice for one file."""
+    in_changesets = select(Change.file_id).where(Change.status.in_(("proposed", "approved")))
+    decided = select(FileDesire.file_id).where(
+        FileDesire.written.is_(False), FileDesire.kind.in_(kinds)
+    )
+    return set(session.scalars(in_changesets)) | set(session.scalars(decided))
+
+
+def desire_of(session: Session, change: Change) -> FileDesire | None:
+    """The decided state (models.FileDesire) that this change carries out, if any. A move
+    made by another feature is not the decided move unless it goes to the same path."""
+    kind = DESIRE_KINDS.get(change.kind)
+    desire = session.get(FileDesire, (change.file_id, kind)) if kind and change.file_id else None
+    if desire and kind == "move" and desire.spec.get("to") != change.payload.get("to"):
+        return None
+    return desire
 
 
 def _full_path(file: AudioFile) -> Path:

@@ -816,9 +816,9 @@ def test_layout_page(web):
     page = web.post("/libraries/music/layout", data={"template": template}).text
     assert "Layout saved" in page and "Texas/2000 Greatest Hits/" in page
     response = web.post(
-        "/libraries/music/layout/propose", data={"folder": "Texas/2000 Greatest Hits"}
+        "/libraries/music/layout/decide", data={"folder": "Texas/2000 Greatest Hits"}
     )
-    assert re.fullmatch(r"/changes/\d+", response.url.path)
+    assert response.url.path == "/libraries/music/pending"
     assert "Texas/2000 Greatest Hits/11 Halo.mp3" in response.text
 
 

@@ -23,6 +23,7 @@ import re
 import string
 import unicodedata
 from collections import Counter, defaultdict
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
@@ -31,8 +32,18 @@ from sqlalchemy.orm import Session
 
 from . import artists
 from . import changes as ch
+from . import operations as ops
 from .leftovers import folder_files
-from .models import AudioFile, Change, Changeset, EffectiveMetadata, Library, LibrarySetting
+from .models import (
+    AudioFile,
+    Change,
+    Changeset,
+    EffectiveMetadata,
+    FileDesire,
+    Library,
+    LibrarySetting,
+    Operation,
+)
 from .pathparse import normalize_name
 from .tracks import present
 
@@ -105,7 +116,7 @@ class Plan:
     case_only: int = 0  # differ only in letter case
     incomplete: int = 0  # lack a field the layout needs
     conflicts: list[tuple[AudioFile, str, str]] = field(default_factory=list)  # file, target, why
-    pending: int = 0  # have changes waiting for review
+    pending: int = 0  # have changes waiting for review, or decided and not yet written
 
     @property
     def files(self) -> int:
@@ -123,9 +134,13 @@ def plan(
         .where(present(library.id))
         .order_by(AudioFile.path)
     ).all()
-    pending = set(
-        session.scalars(select(Change.file_id).where(Change.status.in_(("proposed", "approved"))))
-    )
+    # A cover or trashing decided for a file leaves it alone too: they name its folder
+    pending = ch.waiting_files(session, ("embed", "image", "trash", "move"))
+    desired = session.execute(
+        select(FileDesire.file_id, FileDesire.spec).where(
+            FileDesire.written.is_(False), FileDesire.kind == "move"
+        )
+    ).all()
     album_artists = _album_artists(rows)
     sorting = artists.sort_names(session, library)
     discs: dict[tuple[str, str], int] = defaultdict(int)  # album -> most discs
@@ -134,6 +149,10 @@ def plan(
         discs[key] = max(discs[key], meta.disctotal or 0, meta.discnumber or 0)
 
     taken = {file.path.casefold(): file for file, _ in rows}  # where files are now
+    by_id = {file.id: file for file, _ in rows}
+    for file_id, spec in desired:  # and where decided moves will put them
+        if file_id in by_id:
+            taken.setdefault(spec["to"].casefold(), by_id[file_id])
     wanted: dict[str, list[Move]] = defaultdict(list)
     for file, meta in rows:
         if path_prefix and not file.path.startswith(path_prefix):
@@ -308,10 +327,11 @@ def propose(
     return changeset
 
 
-def add_moves(changeset: Changeset, library: Library, albums: list[AlbumMove]) -> list[Change]:
-    """Propose moving the albums' files in a changeset; a folder's other files (see
-    with_extras) go with the last track that leaves it."""
-    changes = []
+def _with_their_extras(
+    library: Library, albums: list[AlbumMove], *, every_track: bool = False
+) -> Iterator[tuple[Move, list[tuple[str, str]] | None]]:
+    """The albums' moves, each with the folder's other files (see with_extras) if it is the
+    last track that leaves its folder, or with every_track, whichever track it is."""
     for album in albums:
         with_extras(album, library)
         last_from: dict[str, Move] = {}
@@ -319,9 +339,38 @@ def add_moves(changeset: Changeset, library: Library, albums: list[AlbumMove]) -
             last_from[str(PurePosixPath(move.file.path).parent)] = move
         for move in album.moves:
             folder = str(PurePosixPath(move.file.path).parent)
-            extras = album.extras.get(folder) if last_from[folder] is move else None
-            changes.append(ch.propose_move(changeset, move.file, move.target, extras))
-    return changes
+            last = every_track or last_from[folder] is move
+            yield move, album.extras.get(folder) if last else None
+
+
+def add_moves(changeset: Changeset, library: Library, albums: list[AlbumMove]) -> list[Change]:
+    """Propose moving the albums' files in a changeset; a folder's other files (see
+    with_extras) go with the last track that leaves it."""
+    return [
+        ch.propose_move(changeset, move.file, move.target, extras)
+        for move, extras in _with_their_extras(library, albums)
+    ]
+
+
+def decide(
+    session: Session, library: Library, albums: list[AlbumMove], description: str
+) -> Operation | None:
+    """Decide that the albums' files are to move: only the catalog changes (as an
+    operation that can be undone), and the files move when written from the Pending page
+    (writing.py), together with their other pending changes. The decision keeps the target
+    paths, so after changing the layout, undo it and decide again. Every track leaving a
+    folder gets the folder's other files, as it is not known which will be written last.
+    None when it was all decided already."""
+    desires = [
+        ops.Desire(
+            move.file.id, "move",
+            {"to": move.target, **({"extras": [list(e) for e in extras]} if extras else {})},
+        )
+        for move, extras in _with_their_extras(library, albums, every_track=True)
+    ]  # fmt: skip
+    operation = ops.record(session, library.id, "layout", description, [], desires=desires)
+    session.commit()
+    return operation
 
 
 def _album_artists(rows) -> dict[int, str | None]:

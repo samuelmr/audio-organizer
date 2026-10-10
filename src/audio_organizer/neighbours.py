@@ -23,14 +23,13 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import changes as ch
 from . import duplicates as du
 from .encodings import Track, load_tracks
 from .layout import file_name
-from .models import Change, Changeset, Library
+from .models import Changeset, Library
 from .pathparse import normalize_name
 
 # Album-wide tags a moved track takes from its neighbours, when they all agree; a genre
@@ -91,9 +90,7 @@ def survey(session: Session, library: Library, *, path_prefix: str | None = None
             for album in albums - {""}:
                 index.setdefault((artist, album), set()).add(folder)
     in_albums = {t.file.audio_hash for t in tracks if t.album_folder is not None}
-    pending = set(
-        session.scalars(select(Change.file_id).where(Change.status.in_(("proposed", "approved"))))
-    )
+    pending = ch.waiting_files(session)
 
     claims: dict[tuple[str, int, int], list[Track]] = {}
     for track in tracks:

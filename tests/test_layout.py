@@ -7,6 +7,8 @@ from sqlalchemy import select
 
 from audio_organizer import changes as ch
 from audio_organizer import layout as lo
+from audio_organizer import operations as ops
+from audio_organizer import writing as wr
 from audio_organizer.models import AudioFile, EffectiveMetadata, Library
 from audio_organizer.scanner import scan
 
@@ -123,6 +125,81 @@ def test_propose_apply_and_undo_with_cover(library):
     assert (root / "Pan, Rebecca/Rebecca Pan_Quizas.mp3").exists()
     assert not (root / "Rebecca Pan/In the Mood for Love/Folder.jpg").exists()
     assert scan(session, lib).unchanged == 6
+
+
+def test_decide_and_write_with_pending_tags(library):
+    """A move is a decision like any other: it waits on the Pending page, is written once
+    with the file's tag edits, and undoing the write leaves it pending again."""
+    session, lib, root = library
+    plan = lo.plan(session, lib, lo.DEFAULT_LAYOUT)
+    operation = lo.decide(session, lib, plan.albums, "Move")
+    assert operation.kind == "layout" and len(operation.values) == 2
+    assert lo.decide(session, lib, plan.albums, "Move") is None  # not decided twice
+    assert (root / "Pan, Rebecca/Rebecca Pan_Quizas.mp3").exists()  # the files are untouched
+    again = lo.plan(session, lib, lo.DEFAULT_LAYOUT)
+    assert again.albums == [] and again.pending == 2
+
+    quizas = session.scalar(select(AudioFile).where(AudioFile.path.like("%Quizas.mp3")))
+    wr.store_edit(session, [quizas], {"genre": "Latin"}, "Genre")
+    found = wr.survey(session, lib, wr.Selection())
+    assert found.by_field["path"] == 2 and found.by_field["genre"] == 1
+    [pending] = [p for p in found.files if p.file.id == quizas.id]
+    assert pending.fields["path"].startswith("Rebecca Pan/In the Mood for Love/11 Quizas.mp3")
+
+    changeset, outcomes = wr.write(session, found.files, "Write")
+    assert all(o.ok for o in outcomes), [o.message for o in outcomes]
+    assert sorted(c.kind for c in changeset.changes) == ["move", "move", "retag"]
+    moved = root / "Rebecca Pan/In the Mood for Love"
+    assert (moved / "11 Quizas.mp3").exists() and (moved / "Folder.jpg").exists()
+    assert not (root / "Pan, Rebecca").exists()
+    assert wr.survey(session, lib, wr.Selection()).total == 0
+
+    outcomes = ch.undo(session, changeset)
+    assert all(o.ok for o in outcomes), [o.message for o in outcomes]
+    assert (root / "Pan, Rebecca/Folder.jpg").exists()
+    assert wr.survey(session, lib, wr.Selection(only=["path"])).total == 2
+
+
+def test_undoing_the_decision_drops_the_move(library):
+    session, lib, root = library
+    plan = lo.plan(session, lib, lo.DEFAULT_LAYOUT)
+    operation = lo.decide(session, lib, plan.albums, "Move")
+    undone = ops.undo(session, operation)
+    session.commit()
+    assert undone.reverted == 2
+    assert wr.survey(session, lib, wr.Selection()).total == 0
+    assert len(lo.plan(session, lib, lo.DEFAULT_LAYOUT).albums) == 1  # to decide again
+
+
+def test_other_files_go_with_the_last_track(library):
+    """Written in parts, the folder's cover goes only when no track stays in the folder."""
+    session, lib, root = library
+    lo.decide(session, lib, lo.plan(session, lib, lo.DEFAULT_LAYOUT).albums, "Move")
+    first, last = wr.survey(session, lib, wr.Selection()).files
+    _, outcomes = wr.write(session, [last], "Write")  # the other track stays
+    assert all(o.ok for o in outcomes), [o.message for o in outcomes]
+    assert (root / "Pan, Rebecca/Folder.jpg").exists()
+    _, outcomes = wr.write(session, [first], "Write")
+    assert all(o.ok for o in outcomes), [o.message for o in outcomes]
+    assert (root / "Rebecca Pan/In the Mood for Love/Folder.jpg").exists()
+    assert not (root / "Pan, Rebecca").exists()
+
+
+def test_decided_target_is_taken(library):
+    """Another file does not get a path that a decided move is about to take."""
+    session, lib, root = library
+    plan = lo.plan(session, lib, lo.DEFAULT_LAYOUT)
+    lo.decide(session, lib, plan.albums, "Move")
+    taken = "Rebecca Pan/In the Mood for Love/11 Quizas.mp3"
+    twin = make_audio(root / "Rebecca Pan/Quizas.mp3", freq=1900, seconds=0.3,
+                      artist="Rebecca Pan", album="In the Mood for Love", title="Quizas",
+                      track="11")  # fmt: skip
+    scan(session, lib)
+    again = lo.plan(session, lib, lo.DEFAULT_LAYOUT)
+    assert [(f.path, why) for f, target, why in again.conflicts if target == taken] == [
+        ("Rebecca Pan/Quizas.mp3", "taken by Pan, Rebecca/Rebecca Pan_Quizas.mp3")
+    ]
+    assert twin.exists()
 
 
 def test_extras_only_from_folders_the_album_leaves(tmp_path):

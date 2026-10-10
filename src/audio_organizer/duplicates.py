@@ -17,8 +17,9 @@ from pathlib import PurePosixPath
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from . import changes as ch
 from . import operations as ops
-from .models import AudioFile, Change, FieldValue, FileDesire, Library, Operation
+from .models import AudioFile, FieldValue, Library, Operation
 from .provenance import resolve
 from .tags import FIELDS
 from .tracks import present
@@ -100,15 +101,7 @@ def survey(
         .where(present(library.id), AudioFile.audio_hash.in_(hashes))
         .order_by(AudioFile.path)
     ).all()
-    pending = set(
-        session.scalars(select(Change.file_id).where(Change.status.in_(("proposed", "approved"))))
-    ) | set(
-        session.scalars(
-            select(FileDesire.file_id).where(
-                FileDesire.kind == "trash", FileDesire.written.is_(False)
-            )
-        )
-    )
+    pending = ch.waiting_files(session)
     copies = load_copies(session, files)
     groups: dict[str, list[Copy]] = {}
     for copy in copies:

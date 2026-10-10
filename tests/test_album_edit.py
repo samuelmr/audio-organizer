@@ -67,7 +67,7 @@ def test_edit_album_write_and_undo(Session, library):
         lib = session.scalar(select(Library))
         files = album_files(session, lib.id, album="Best of Foriegner")
         edit = ae.edit(session, lib, files, {"album": "Best of Foreigner"}, "edit")
-        assert len(edit.pending) == 3 and edit.changeset is None
+        assert len(edit.pending) == 3 and edit.operation is None
         assert session.scalar(select(Changeset)) is None
         for file in files:
             assert tags.read(library / file.path).fields["album"] == "Best of Foriegner"
@@ -201,11 +201,15 @@ def test_edit_album_moving_files(Session, library):
             move_files=True,
         )  # fmt: skip
         assert len(edit.pending) == 3 and len(edit.moves) == 3
-        changes = edit.changeset.changes
-        assert [c.kind for c in changes] == ["move"] * 3  # the tags are written separately
-        ch.set_status(changes, "approved")
-        outcomes = ch.apply(session, edit.changeset)
+        assert edit.operation.kind == "layout"
+        assert (library / ALBUM / "01 Urgent.mp3").exists()  # nothing moves until written
+
+        # The moves are written with the tags, from the Pending page
+        found = wr.survey(session, lib, wr.Selection())
+        assert found.by_field["path"] == 3 and found.total == 3
+        changeset, outcomes = wr.write(session, found.files, "write")
         assert all(o.ok for o in outcomes), outcomes
+        assert sorted(c.kind for c in changeset.changes) == ["move"] * 3 + ["retag"] * 3
         new = "Foreigner/Best of Foreigner"
         assert _paths(album_files(session, lib.id, album="Best of Foreigner")) == [
             f"{new}/01 Urgent.mp3", f"{new}/02 Juke Box Hero.mp3",
@@ -213,18 +217,13 @@ def test_edit_album_moving_files(Session, library):
         ]  # fmt: skip
         assert (library / new / "folder.jpg").exists()  # the cover went along
         assert not (library / ALBUM).exists()
-
-        # Writing after the move writes the files where they are now
-        found = wr.survey(session, lib, wr.Selection(path=new + "/"))
-        assert found.total == 3
-        _, outcomes = wr.write(session, found.files, "write")
-        assert all(o.ok for o in outcomes), outcomes
         assert tags.read(library / new / "02 Juke Box Hero.mp3").fields["genre"] == "Rock"
 
-        outcomes = ch.undo(session, edit.changeset)
+        outcomes = ch.undo(session, changeset)
         assert all(o.ok for o in outcomes), outcomes
         assert (library / ALBUM / "folder.jpg").exists()
         assert not (library / new).exists()
+        assert wr.survey(session, lib, wr.Selection(only=["path"])).total == 3  # pending again
 
 
 def test_edit_album_takes_the_folders_other_files_along(Session, library):
@@ -239,27 +238,21 @@ def test_edit_album_takes_the_folders_other_files_along(Session, library):
         lib = session.scalar(select(Library))
         files = album_files(session, lib.id, album="Best of Foriegner")
         edit = ae.edit(session, lib, files, {"album": "Best of Foreigner"}, "edit", move_files=True)
-        described = [ch.describe(c) for c in edit.moves]
-        assert described[-2:] == [
-            f"move {ALBUM}/02 Juke Box Hero.mp3 -> Foreigner/Best of Foreigner/02 Juke Box "
-            "Hero.mp3 with 6 other files: Best of Foriegner.cue, Scans/back.jpg, "
-            "Scans/inlay/1.png, booklet.pdf, folder.jpg, info.nfo",
-            f"move {ALBUM}/Bonus/03 Cold as Ice.mp3 -> Foreigner/Best of Foreigner/Bonus/03 "
-            "Cold as Ice.mp3 with 1 other file: notes.txt",
-        ]
-        page = TestClient(create_app(Session)).get(f"/changes/{edit.changeset.id}").text
-        assert "with 6 other files:" in page and "Scans/inlay/1.png" in page
-        ch.set_status(edit.changeset.changes, "approved")
-        outcomes = ch.apply(session, edit.changeset)
+        found = wr.survey(session, lib, wr.Selection(only=["path"]))
+        described = sorted(p.fields["path"] for p in found.files)
+        assert described[0].endswith("(+6 folder files with the last track)")
+        assert described[-1].endswith("Cold as Ice.mp3 (+1 folder file with the last track)")
+        changeset, outcomes = wr.write(session, found.files, "write")
         assert all(o.ok for o in outcomes), outcomes
         new = library / "Foreigner/Best of Foreigner"
         assert all((new / name).read_bytes() == name.encode() for name in others)
         assert not (library / ALBUM).exists()
 
-        outcomes = ch.undo(session, edit.changeset)
+        outcomes = ch.undo(session, changeset)
         assert all(o.ok for o in outcomes), outcomes
         assert all((library / ALBUM / name).read_bytes() == name.encode() for name in others)
         assert not new.exists()
+        assert len(edit.moves) == 3
 
 
 def test_edit_album_leaves_taken_paths(Session, library, copy_audio):
@@ -269,7 +262,7 @@ def test_edit_album_leaves_taken_paths(Session, library, copy_audio):
         scan(session, lib)
         files = album_files(session, lib.id, folder=ALBUM)
         edit = ae.edit(session, lib, files, {"album": "Best of Foreigner"}, "edit", move_files=True)
-        assert [c.payload["to"] for c in edit.moves] == [
+        assert [m.target for m in edit.moves] == [
             "Foreigner/Best of Foreigner/02 Juke Box Hero.mp3"
         ]
         [(file, _, why)] = edit.plan.conflicts
@@ -293,9 +286,8 @@ def test_cli_edit_album_moving_files(Session, library):
               "--move-files"],
     )  # fmt: skip
     assert result.exit_code == 0, result.output
-    assert (
-        f"move {ALBUM}/01 Urgent.mp3 -> Foreigner/Best of Foreigner/01 Urgent.mp3" in result.output
-    )
+    assert f"{ALBUM}/01 Urgent.mp3 -> Foreigner/Best of Foreigner/01 Urgent.mp3" in result.output
+    assert "aorg pending --only path" in result.output
 
 
 def test_web_rename_album_link_and_moves(Session, library):
@@ -311,8 +303,6 @@ def test_web_rename_album_link_and_moves(Session, library):
         data={"of_album": "Best of Foriegner", "album": "Best of Foreigner",
               "move_files": "true"},
     )  # fmt: skip
-    assert re.fullmatch(r"/changes/\d+", response.url.path)
-    assert "Review the 3 moves renaming the folders" in response.text
-    assert "The tags of 3 files are not yet written" in response.text
-    assert "Review and write them" in response.text
-    assert "move Foreigner/Best of Foriegner/Bonus/03 Cold as Ice.mp3" in response.text
+    assert response.url.path == "/libraries/music/pending"
+    assert "3 files are not yet written, and 3 are to move to renamed folders" in response.text
+    assert "Foreigner/Best of Foreigner/Bonus/03 Cold as Ice.mp3" in response.text

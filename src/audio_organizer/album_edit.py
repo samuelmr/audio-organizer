@@ -1,17 +1,16 @@
 """Editing all tracks of an album or folder at once, such as fixing a typo in the album's
 name: the same manual values for every track, stored in the catalog as one operation
 (which can be undone) and written into the files later with their other pending changes
-(writing.py). Optionally the folders named after the old album or artist are renamed,
-proposed as a changeset of moves."""
+(writing.py). Optionally the folders named after the old album or artist are renamed:
+the moves are decided too, and written with the tags."""
 
 from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
-from . import changes as ch
 from . import layout as lo
 from . import writing as wr
-from .models import AudioFile, Change, Changeset, Library
+from .models import AudioFile, Library, Operation
 from .provenance import resolve
 
 # The fields whose renaming can rename folders (see layout.follow_renames)
@@ -21,8 +20,8 @@ FOLDER_FIELDS = ("album", "albumartist", "artist")
 @dataclass
 class AlbumEdit:
     pending: list[AudioFile]  # the files whose tags now differ from the edit
-    changeset: Changeset | None  # the folder moves; None when there are none
-    moves: list[Change]
+    operation: Operation | None  # the decision to move the folders; None when none is new
+    moves: list[lo.Move]  # the folder moves decided on
     plan: lo.Plan | None  # the moves' plan, with what could not be moved and why
 
 
@@ -35,12 +34,12 @@ def edit(
     *,
     move_files: bool = False,
 ) -> AlbumEdit:
-    """Store the values as manual values of every file. With move_files, also propose
-    renaming the folders named after an album or artist being renamed. Moving and
-    writing the tags do not depend on each other, so either can be done first."""
+    """Store the values as manual values of every file. With move_files, also decide on
+    renaming the folders named after an album or artist being renamed; the files move
+    when written from the Pending page, with their tags."""
     before = [(file, resolve(file.values)) for file in files]
     pending = wr.store_edit(session, files, values, description)
-    plan, changeset, moves = None, None, []
+    plan, operation, moves = None, None, []
     if move_files:
         renames = []
         for file, resolved in before:
@@ -53,13 +52,9 @@ def edit(
             if changed:
                 renames.append((file, changed))
         plan = lo.follow_renames(session, library, renames)
-        changeset = ch.new_changeset(session, f"Rename folders: {description}", "manual")
-        moves = lo.add_moves(changeset, library, plan.albums)
-        if not moves:
-            session.expunge(changeset)
-            changeset = None
-        session.commit()
-    return AlbumEdit(pending, changeset, moves, plan)
+        moves = [move for album in plan.albums for move in album.moves]
+        operation = lo.decide(session, library, plan.albums, f"Rename folders: {description}")
+    return AlbumEdit(pending, operation, moves, plan)
 
 
 def description(album: str | None, folder: str | None) -> str:

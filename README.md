@@ -213,8 +213,13 @@ default is the iTunes-style `{albumartist}/{album}/{disc}{track} {title}`:
     aorg layout                               # show it
     aorg layout --set "{albumartist}/{year} {album}/{track} {title}"
     aorg reorganize                           # what would move
-    aorg reorganize --path "Elfman, Danny" --propose
-    aorg reorganize --propose --limit 20      # or the next 20 albums
+    aorg reorganize --path "Elfman, Danny" --decide
+    aorg reorganize --decide --limit 20       # or the next 20 albums
+    aorg pending --only path --write          # review, then move the files (undoable)
+
+Choosing only changes the catalog (`aorg history` undoes it); the files move when written
+from the Pending page, together with any tags waiting for them. The chosen paths are kept
+as they were worked out, so after changing the layout, undo the choice and choose again.
 
 Fields: `{albumartist}`, `{artist}`, `{album}`, `{title}`, `{genre}`, `{year}`, `{track}`
 (two digits) and `{disc}` ("2-" on albums with several discs, otherwise empty). Without
@@ -240,11 +245,12 @@ page lists the artists, with their suggestions to accept one by one or all at on
 Files move album by album. When an album's last track leaves a folder, the folder's other
 files go with it: the cover, a `.cue` or `.nfo`, a PDF booklet, and subfolders without
 music such as Scans, so the old folder empties and disappears. A folder where other
-tracks stay keeps all of them, and nothing is taken from the library's top folder. A
-changeset lists the files each move takes along. Files lacking a field the template needs stay where they are, and so do
+tracks stay keeps all of them, and nothing is taken from the library's top folder. The
+Pending page lists the files each move takes along; when the tracks are written in parts,
+they go with the last one. Files lacking a field the template needs stay where they are, and so do
 conflicts: a path that is taken, or that several files would get. These are mostly
 duplicates, so clean up duplicates and album folders first. Names that differ only in
-letter case are left alone. The web UI's Layout page does the same, and lets you propose
+letter case are left alone. The web UI's Layout page does the same, and lets you choose
 a single album.
 
 ### Album folders
@@ -391,12 +397,13 @@ differ from their tags:
 as "Greatest Hits" needs `--albumartist`; the command lists the folders it found.
 `--folder` takes the tracks directly in one folder, not those in its subfolders.
 
-If the folders have the typo too, `--move-files` also proposes a changeset of moves: a
+If the folders have the typo too, `--move-files` also chooses moves for the folders: a
 folder whose name holds the old album name as whole words ("1992 Best of Foriegner")
 gets the new one ("1992 Best of Foreigner"), and a folder named exactly after an artist
 or album artist being renamed gets the new name. File names stay as they are, and the
 folder's other files (cover, booklet, `.cue`, Scans) go along with its last track. The
-moves and writing the tags do not depend on each other, so either can come first. A
+moves are chosen like the edit and written with the tags from the Pending page
+(`aorg pending --only path` for the moves alone). A
 track stays where it is if its new path is taken, or differs only in letter case (the
 same folder on macOS and most NAS shares). To move files into your library's layout
 instead, use `aorg reorganize` (see above).
@@ -716,7 +723,7 @@ Design principles:
 | `album_merge.py` | Album folders holding the same album, and merging them |
 | `neighbours.py` | Loose tracks that belong in an album folder, and moving them there |
 | `leftovers.py` | Litter in folders without music, and trashing it |
-| `layout.py` | The folder layout template, and moving files into it |
+| `layout.py` | The folder layout template, and choosing the moves into it |
 | `artists.py` | Artists' sort names and suggestions for them |
 | `loudness.py` | ReplayGain 2.0: measuring tracks with ffmpeg, album gains (`scan --deep`) |
 | `covers.py` | Embedded cover images: reading, embedding, replacing thumbnails; which tracks get which cover |

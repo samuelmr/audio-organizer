@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 
 from . import changes as ch
 from . import duplicates as du
-from .models import AudioFile, Change, Changeset, EffectiveMetadata, FieldValue, Library
+from .models import AudioFile, Changeset, EffectiveMetadata, FieldValue, Library
 from .pathparse import normalize_name, unflip
 from .tracks import present
 
@@ -140,9 +140,7 @@ def survey(
             continue
         members[id(song)].append(track)
 
-    pending = set(
-        session.scalars(select(Change.file_id).where(Change.status.in_(("proposed", "approved"))))
-    )
+    pending = ch.waiting_files(session)
     groups = []
     for song in songs:
         group = members[id(song)]

@@ -635,30 +635,23 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             move_files=form.get("move_files") == "true",
         )  # fmt: skip
         pending = None
-        if edit.pending:
-            artist, album = wr.group_of(edit.pending[0])
+        if edit.pending or edit.moves:
+            artist, album = wr.group_of((edit.pending or [edit.moves[0].file])[0])
             pending = selection_url(f"/libraries/{lib.name}/pending", artist=artist, album=album)
-        if edit.changeset is None:
-            if pending is None:
-                return _redirect(back, "Saved; the files' tags already match")
-            message = f"Saved; {len(edit.pending)} files are not yet written"
-            if edit.plan is not None:
-                message += "; no folders to rename"
-            return _redirect(pending, message + ". Review and write them here.")
-        message = f"Saved. Review the {len(edit.moves)} moves renaming the folders"
+        if pending is None:
+            return _redirect(back, "Saved; the files' tags already match")
+        message = f"Saved; {len(edit.pending)} files are not yet written"
+        if edit.moves:
+            message += f", and {len(edit.moves)} are to move to renamed folders"
+        elif edit.plan is not None:
+            message += "; no folders to rename"
         left = len(edit.plan.conflicts) + edit.plan.case_only if edit.plan else 0
         if left:
             message += (
                 f"; {left} files stay where they are: their new path is taken, or "
                 "differs only in letter case"
             )
-        if pending is None:
-            return _redirect(f"/changes/{edit.changeset.id}", message + ".")
-        return _redirect(
-            f"/changes/{edit.changeset.id}",
-            message + f". The tags of {len(edit.pending)} files are not yet written:",
-            link=(pending, "Review and write them"),
-        )
+        return _redirect(pending, message + ". Review and write them here.")
 
     # ---- duplicates ----------------------------------------------------------------------
 
@@ -1176,15 +1169,15 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         session.commit()
         return _redirect(f"/libraries/{lib.name}/layout", "Layout saved")
 
-    @app.post("/libraries/{name}/layout/propose", dependencies=[Exclusive])
-    def propose_layout(
+    @app.post("/libraries/{name}/layout/decide", dependencies=[Exclusive])
+    def decide_layout(
         name: str,
         path: Annotated[str, Form()] = "",
         limit: Annotated[int, Form()] = 20,
         folder: Annotated[str, Form()] = "",
         session: Session = SessionDep,
     ):
-        """A batch of albums, or with folder, the one album going into that folder."""
+        """Decide on a batch of albums, or with folder, the one album going into that folder."""
         lib = _library(session, name)
         plan = lo.plan(session, lib, lo.get_layout(session, lib), path_prefix=path or None)
         if folder:
@@ -1197,8 +1190,12 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             f"Move {albums[0].folder} into place" if folder
             else f"Move {len(albums)} albums into the layout"
         )  # fmt: skip
-        changeset = lo.propose(session, lib, albums, description)
-        return _redirect(f"/changes/{changeset.id}", "Proposed; review and approve the moves")
+        lo.decide(session, lib, albums, description)
+        return _redirect(
+            _url(f"/libraries/{lib.name}/pending", path=path or None),
+            "Decided; review and write the moves here",
+            link=(f"/libraries/{lib.name}/history", "Undo on the History page"),
+        )
 
     # ---- changesets ----------------------------------------------------------------------
 

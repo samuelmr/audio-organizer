@@ -521,21 +521,23 @@ class FolderImages(Base):
 class FileDesire(Base):
     """What the user decided a file should become (covers.decide, duplicates.decide) and
     the files do not hold yet: a cover embedded (kind "embed"), an image file saved in its
-    folder (kind "image", kept on one of the folder's tracks), or the file itself in the
-    trash (kind "trash"). It is pending until writing.write has made it so; undoing that
-    write makes it pending again, undoing the decision (an operation) removes it.
+    folder (kind "image", kept on one of the folder's tracks), the file itself in the
+    trash (kind "trash"), or the file at another path (kind "move"). It is pending until
+    writing.write has made it so; undoing that write makes it pending again, undoing the
+    decision (an operation) removes it.
 
     spec, for a cover: {"cover_image": CoverImage sha1, "label"} or {"image": library path},
     with "to" (library path to save as, for "image") and "replace" (a thumbnail goes) when
     set; for the trash: {"replacement": id, "replacement_path"} of the copy that stays, and
-    "same": "recording" when it is another encoding."""
+    "same": "recording" when it is another encoding; for a move: {"to": library path} and
+    "extras": [[from, to], ...], the folder's other files that go with the file."""
 
     __tablename__ = "file_desire"
 
     file_id: Mapped[int] = mapped_column(
         ForeignKey("audio_file.id", ondelete="CASCADE"), primary_key=True
     )
-    kind: Mapped[str] = mapped_column(String(10), primary_key=True)  # embed | image | trash
+    kind: Mapped[str] = mapped_column(String(10), primary_key=True)  # embed | image | trash | move
     spec: Mapped[dict[str, Any]]
     written: Mapped[bool] = mapped_column(default=False, index=True)
 
