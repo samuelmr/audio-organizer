@@ -28,6 +28,7 @@ from .models import (
     CoverLookup,
     EffectiveMetadata,
     FieldValue,
+    FileDesire,
     FolderImages,
     Library,
     Operation,
@@ -271,6 +272,7 @@ class Album:
     files: list[int]  # ids of the files without a cover, or with a thumbnail
     replace: set[int]  # ids of files whose embedded cover is a thumbnail
     first: int  # id of the album's first track in the folder
+    image_decided: bool = False  # saving the folder's image is decided, but not written yet
 
     @property
     def key(self) -> str | None:
@@ -352,7 +354,10 @@ def survey(
     for folder, albums in by_folder.items():
         needy = [a for a in albums if a.files]
         only = albums[0] if len(albums) == 1 else None
-        to_save = save_images and only is not None and only.key in found_online
+        to_save = (
+            save_images and only is not None and only.key in found_online
+            and not only.image_decided
+        )  # fmt: skip
         if not needy and not to_save:
             continue
         if enough is not None and len(result.folders) >= enough:
@@ -488,7 +493,8 @@ def _survey_folder(
     left = []
     for album in albums:
         fetched = found_online.get(album.key) if album.key else None
-        target = _save_target(names, fetched.mime) if fetched and to_save else None
+        wanted = to_save and not album.image_decided
+        target = _save_target(names, fetched.mime) if fetched and wanted else None
         if fetched is None or not (album.files or target):
             if album.files:
                 left.append(album)
@@ -552,17 +558,25 @@ def _albums(
     )  # fmt: skip
     if path_prefix:
         query = query.where(AudioFile.path.startswith(path_prefix, autoescape=True))
+    # Covers already chosen and waiting to be written are not suggested again
+    decided: dict[str, set[int]] = {"embed": set(), "image": set()}
+    for file_id, kind in session.execute(
+        select(FileDesire.file_id, FileDesire.kind).where(
+            FileDesire.kind.in_(decided), FileDesire.written.is_(False)
+        )
+    ):
+        decided[kind].add(file_id)
     groups: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
     for row in session.execute(query):
         folder = str(PurePosixPath(row.path).parent)
         groups[folder][normalize_name(row.album) if row.album else ""].append(row)
     return {
-        folder: [_album(folder, members, min_pixels) for members in albums.values()]
+        folder: [_album(folder, members, min_pixels, decided) for members in albums.values()]
         for folder, albums in groups.items()
     }
 
 
-def _album(folder: str, members: list, min_pixels: int) -> Album:
+def _album(folder: str, members: list, min_pixels: int, decided: dict[str, set[int]]) -> Album:
     """The album's artist: the album artist, else the tracks' common artist, else
     "Various Artists" (as MusicBrainz credits compilations)."""
     album = Counter(m.album for m in members if m.album).most_common(1)
@@ -579,6 +593,7 @@ def _album(folder: str, members: list, min_pixels: int) -> Album:
         m
         for m in members
         if m.format in EMBEDDABLE
+        and m.id not in decided["embed"]
         and (m.value is None or small(images.parse_size(m.value), min_pixels))
     ]
     return Album(
@@ -588,6 +603,7 @@ def _album(folder: str, members: list, min_pixels: int) -> Album:
         files=[m.id for m in needing],
         replace={m.id for m in needing if m.value is not None},
         first=members[0].id,
+        image_decided=members[0].id in decided["image"],
     )
 
 

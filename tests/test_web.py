@@ -755,8 +755,10 @@ def test_ratings_and_covers_pages(web, Session):
     response = web.post(
         "/libraries/music/covers", data={"picking": "true", "pick": "Texas/Greatest Hits"}
     )
-    assert response.url.path == "/libraries/music/pending"
-    assert "These covers were decided already" in response.text  # by the first one
+    # The first POST decided them, so the page no longer suggests that folder
+    assert response.url.path == "/libraries/music/covers"
+    assert "Nothing to embed" in response.text
+    assert 'name="pick" value="Texas/Greatest Hits"' not in web.get("/libraries/music/covers").text
 
 
 def test_covers_found_online(web, Session, tmp_path):
@@ -776,12 +778,14 @@ def test_covers_found_online(web, Session, tmp_path):
     page = web.get("/libraries/music/covers", params={"min_pixels": 400}).text
     assert "Greatest Hits, found online" not in page and "coverart --min-pixels 400" in page
 
+    page = web.get("/libraries/music/covers", params={"save_images": "false"}).text
+    assert "to be saved as" not in page and "Greatest Hits, found online" in page
+
     response = web.post("/libraries/music/covers", data={"folder": "Texas/Greatest Hits"})
     assert "Archive&#39;s image of Texas – Greatest Hits (300x300)" in response.text
     assert "Folder image: cover.jpg from" in response.text
-
-    page = web.get("/libraries/music/covers", params={"save_images": "false"}).text
-    assert "to be saved as" not in page and "Greatest Hits, found online" in page
+    # Chosen, so not suggested again until written or undone
+    assert "Greatest Hits, found online" not in web.get("/libraries/music/covers").text
 
 
 def test_artists_page(web):

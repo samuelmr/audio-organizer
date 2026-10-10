@@ -79,6 +79,26 @@ def test_saving_replaces_a_small_cover_jpg(library):  # noqa: F811
     assert (root / "Texas/Greatest Hits/Cover.JPG").read_bytes() == thumbnail
 
 
+def test_decided_covers_are_not_suggested_again(library):  # noqa: F811
+    from audio_organizer import operations as ops
+
+    session, lib, root, tmp_path = library
+    _found_texas(session, tmp_path)
+    [folder] = covers.survey(session, lib, path_prefix="Texas/").folders
+    assert folder.files and folder.save_as
+    operation = covers.decide(session, lib, [folder], "Covers")
+
+    # Chosen but not written: neither the embedding nor the folder image is suggested
+    found = covers.survey(session, lib, path_prefix="Texas/")
+    assert found.folders == [] and found.missing == []
+    assert covers.survey(session, lib, path_prefix="Texas/", cached=True).folders == []
+
+    ops.undo(session, operation)
+    session.commit()
+    [again] = covers.survey(session, lib, path_prefix="Texas/").folders
+    assert again.files and again.save_as
+
+
 def test_saved_image_changed_since_is_not_undone(library):  # noqa: F811
     session, lib, root, tmp_path = library
     _found_texas(session, tmp_path)
