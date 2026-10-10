@@ -926,8 +926,8 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         action: Annotated[str, Form()],
         file_ids: Annotated[list[int] | None, Form()] = None,
         path: Annotated[str, Form()] = "",
-        artist: Annotated[str | None, Form()] = None,
-        album: Annotated[str | None, Form()] = None,
+        artist: Annotated[list[str] | None, Form()] = None,
+        album: Annotated[list[str] | None, Form()] = None,
         only: Annotated[str, Form()] = "",
         prefer_gnudb: Annotated[bool, Form()] = False,
         id3_version: Annotated[str, Form()] = "",
@@ -936,17 +936,21 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         """Write the ticked files' pending changes (each file once, with all of them), drop
         the user's edits among them, or (with prefer_gnudb) accept gnudb's values in them
         as the user's edits. The changes are worked out again here, so a file is written
-        as it is pending now."""
+        as it is pending now.
+
+        The artist and album are lists because FastAPI reads an empty form field as missing,
+        while artist="" chooses the tracks without an artist; a list keeps the empty value."""
         lib = _library(session, name)
+        artist, album = (values[0] if values else None for values in (artist, album))
         if action not in ("write", "discard", "accept"):
             raise HTTPException(400, f"Unknown action {action}")
         if (action == "accept") != prefer_gnudb and action != "discard":
             raise HTTPException(400, "gnudb's values are accepted first, then written")
         selection = _selection(path, artist, album, file_ids or [], only, prefer_gnudb)
         found = wr.survey(session, lib, selection, MAX_BATCH)
-        back = _url(
-            f"/libraries/{lib.name}/pending", path=path, artist=artist, album=album, only=only,
-            prefer_gnudb="true" if prefer_gnudb else None,
+        back = selection_url(
+            f"/libraries/{lib.name}/pending", path=path or None, artist=artist, album=album,
+            only=only or None, prefer_gnudb="true" if prefer_gnudb else None,
         )  # fmt: skip
         if not found.files:
             return _redirect(back, "Nothing to write: no ticked file has pending changes")
@@ -958,9 +962,9 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         if action == "accept":
             description = wr.description(selection, len(found.files), accept="gnudb")
             taken = wr.accept(session, found.files, "gnudb", description)
-            pending = _url(
-                f"/libraries/{lib.name}/pending", path=path, artist=artist, album=album,
-                only=only,
+            pending = selection_url(
+                f"/libraries/{lib.name}/pending", path=path or None, artist=artist, album=album,
+                only=only or None,
             )  # fmt: skip
             return _redirect(
                 pending, f"Accepted {taken} of gnudb's values; write them here.", link=history

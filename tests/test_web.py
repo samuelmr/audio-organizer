@@ -708,6 +708,31 @@ def test_pending_page_writes_by_selection(web, Session):
     assert "1 file has values not yet in it" in web.get("/libraries/music/pending").text
 
 
+def test_pending_page_keeps_tracks_without_an_artist_apart(web, Session):
+    """A group without an artist is chosen by artist="", which no redirect may drop."""
+    loose = web.root / "Loose.mp3"
+    loose.write_bytes((web.root / "Texas/Texas_Halo.mp3").read_bytes())
+    tags.write(loose, {"artist": None, "albumartist": None, "album": None, "title": None})
+    with Session() as session:
+        scan(session, session.scalar(select(Library)))
+    loose_id = _file_id(Session, "Loose.mp3")
+    web.post(f"/tracks/{loose_id}/edit", data={"rating": "5"})
+    web.post(f"/tracks/{_file_id(Session, 'Texas/Texas_Halo.mp3')}/edit", data={"rating": "4"})
+
+    page = web.get("/libraries/music/pending").text
+    assert re.search(r'artist=&amp;album=">\(no album\)</a>', page)
+    page = web.get("/libraries/music/pending", params={"artist": ""}).text
+    assert "<h1>Pending: (no artist)</h1>" in page
+    assert page.count('name="file_ids"') == 1 and "Loose.mp3" in page
+
+    response = web.post(
+        "/libraries/music/pending",
+        data={"action": "discard", "artist": "", "album": "", "file_ids": [loose_id]},
+    )  # fmt: skip
+    assert response.url.params["artist"] == "" and response.url.params["album"] == ""
+    assert "Nothing to write" in web.get(response.url.path, params={"artist": ""}).text
+
+
 def test_ratings_and_covers_pages(web, Session):
     tags.write(web.root / "Texas/Texas_Halo.mp3", {"preference": "Very Good"})
     (web.root / "Texas/Greatest Hits/Folder.jpg").write_bytes(b"\xff\xd8\xff\xe0 cover")
