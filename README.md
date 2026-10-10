@@ -23,6 +23,7 @@ file.
   - [Ratings from MusicMatch preferences](#ratings-from-musicmatch-preferences)
   - [Writing tags](#writing-tags)
   - [Undoing decisions](#undoing-decisions)
+  - [Files retagged elsewhere](#files-retagged-elsewhere)
   - [Playlists](#playlists)
   - [Syncing to object storage](#syncing-to-object-storage)
   - [Trash](#trash)
@@ -608,6 +609,22 @@ decision, so it can be undone too. The web UI's History page lists the decisions
 with its values and an *Undo* button. To undo what was written into files, undo the
 changeset instead (`aorg changes undo`, or the Changes page).
 
+### Files retagged elsewhere
+
+Your edits win over the files' tags. So when another program changes a tag you have an
+edit for, writing would quietly put your value back. Instead, `aorg scan` notices
+such a change and holds that field back from writing until you decide:
+
+    aorg conflicts                                        # your value, the tag before and now
+    aorg conflicts --path "Texas/Greatest Hits" --keep-edits
+    aorg conflicts --take-files
+
+`--keep-edits` makes your values pending again, to be written over the other program's
+change; `--take-files` drops your edits so that the tags count (a decision `aorg history
+undo` reverts). A new edit of the field settles it too, and so does a later retag that
+agrees with your value. In the web UI, the Pending page links to the Conflicts page, and a
+track's page shows its conflicts.
+
 ### Playlists
 
 *Smart* playlists are rules over the catalog and stay up to date as the library
@@ -811,6 +828,7 @@ Design principles:
 | `coverart.py` | Looking up album covers online (MusicBrainz, Cover Art Archive), `aorg coverart`, `scan --with-covers` |
 | `images.py` | Size and type of JPEG and PNG images from their headers |
 | `operations.py` | The decision log: operations that set field values, recording before and after; undo |
+| `conflicts.py` | Fields retagged outside aorg after the user edited them: found by scans, held back from writing until settled |
 | `writing.py` | Pending changes (values not yet in the files) by artist and album; storing edits, accepting lookups, writing a selection |
 | `album_edit.py` | Editing all tracks of an album or folder, and renaming its folders |
 | `ratings.py` | Star ratings from MusicMatch preferences |

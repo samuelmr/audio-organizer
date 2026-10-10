@@ -76,6 +76,9 @@ class AudioFile(Base):
     snapshots: Mapped[list["TagSnapshot"]] = relationship(
         back_populates="file", cascade="all, delete-orphan", passive_deletes=True
     )
+    conflicts: Mapped[list["FieldConflict"]] = relationship(
+        back_populates="file", cascade="all, delete-orphan", passive_deletes=True
+    )
 
 
 class FieldValue(Base):
@@ -130,6 +133,27 @@ class EffectiveMetadata(Base):
     disputed: Mapped[bool] = mapped_column(default=False, index=True)
 
     file: Mapped[AudioFile] = relationship()
+
+
+class FieldConflict(Base):
+    """A field whose tag was changed outside aorg while the user had an edit for it, to a
+    value other than the edit's: someone retagged the file elsewhere after (or without
+    seeing) the decision. Until the user keeps the edit or takes the file's value
+    (conflicts.py), the field is not pending, so writing does not silently undo the
+    change made elsewhere. Found by scans; not derived, as the tag before is gone."""
+
+    __tablename__ = "field_conflict"
+
+    file_id: Mapped[int] = mapped_column(
+        ForeignKey("audio_file.id", ondelete="CASCADE"), primary_key=True
+    )
+    field: Mapped[str] = mapped_column(String(40), primary_key=True)
+    decided: Mapped[str] = mapped_column(Text)  # the user's value
+    before: Mapped[str | None] = mapped_column(Text)  # the tag before the change, None: none
+    after: Mapped[str | None] = mapped_column(Text)  # the tag now, None: removed
+    found_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    file: Mapped[AudioFile] = relationship(back_populates="conflicts")
 
 
 class PendingField(Base):

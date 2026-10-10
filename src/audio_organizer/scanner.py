@@ -23,7 +23,7 @@ from pathlib import Path
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from . import covers, pathparse, tags
+from . import conflicts, covers, pathparse, tags
 from .audiohash import audio_hash
 from .blockfile import BlockFile
 from .models import AudioFile, Library, TagSnapshot, utcnow
@@ -45,6 +45,8 @@ class ScanStats:
     changed: int = 0
     moved: int = 0
     missing: int = 0
+    # Fields retagged elsewhere that the user has an edit for (conflicts.py)
+    conflicts: int = 0
     errors: list[tuple[str, str]] = field(default_factory=list)
     aliases: list[tuple[str, str]] = field(default_factory=list)  # (skipped name, its twin)
     playlists: PlaylistScan = field(default_factory=PlaylistScan)
@@ -210,7 +212,7 @@ def scan(
         else:
             file = session.get(AudioFile, file_id)
             stats.changed += 1
-        _update(session, file, result, first_time=file_id is None)
+        stats.conflicts += _update(session, file, result, first_time=file_id is None)
         if result.error:
             stats.errors.append((result.relpath, result.error))
         done_since_commit += 1
@@ -242,7 +244,7 @@ def scan(
         session.execute(update(AudioFile).where(AudioFile.id.in_(reappeared)).values(missing=False))
 
     gone = [entry[0] for path, entry in known.items() if path not in seen and not entry[3]]
-    moved = _match_moves(session, gone, new_files)
+    moved = _match_moves(session, gone, new_files, stats)
     stats.moved = len(moved)
     stats.new -= stats.moved
     still_gone = [file_id for file_id in gone if file_id not in moved]
@@ -256,7 +258,9 @@ def scan(
     return stats
 
 
-def _update(session: Session, file: AudioFile, result: _Result, *, first_time: bool) -> None:
+def _update(session: Session, file: AudioFile, result: _Result, *, first_time: bool) -> int:
+    """Store what was read from the file; returns how many of its fields are now in
+    conflict with the user's edits."""
     info = result.info or tags.AudioInfo()
     file.size = result.size
     file.mtime_ns = result.mtime_ns
@@ -270,13 +274,17 @@ def _update(session: Session, file: AudioFile, result: _Result, *, first_time: b
     file.error = result.error
     file.missing = False
     file.scanned_at = utcnow()
+    found = 0 if first_time or result.error else conflicts.detect(session, file, info.fields)
     set_values(session, file, "tag", info.fields)
     set_values(session, file, "path", pathparse.parse(result.relpath))
     if first_time:
         session.add(TagSnapshot(file=file, reason="first_seen", tags=info.fields))
+    return found
 
 
-def _match_moves(session: Session, gone_ids: list[int], new_files: list[AudioFile]) -> set[int]:
+def _match_moves(
+    session: Session, gone_ids: list[int], new_files: list[AudioFile], stats: ScanStats
+) -> set[int]:
     """Turn (vanished file, new file with the same audio hash) pairs into moves of the
     original record, so its id, snapshots and manual edits survive. Returns the moved ids."""
     moved: set[int] = set()
@@ -306,6 +314,7 @@ def _match_moves(session: Session, gone_ids: list[int], new_files: list[AudioFil
         for name, value in attrs.items():
             setattr(old, name, value)
         old.missing = False
+        stats.conflicts += conflicts.detect(session, old, fields["tag"])  # and retagged
         for source, values in fields.items():
             set_values(session, old, source, values)
         moved.add(old.id)

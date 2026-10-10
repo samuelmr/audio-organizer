@@ -19,6 +19,11 @@
  {% if file.error %}<strong>– {{ file.error }}</strong>{% endif %}
 </p>
 
+{% if conflicts %}
+<p class="notice"><strong>Retagged elsewhere since you edited it:</strong>
+{% for c in conflicts %}{{ labels.get(c.field, c.field) }} is now {{ c.after if c.after is not none else "removed" }} (yours: {{ c.decided }}){% if not loop.last %}; {% endif %}{% endfor %}.
+<a href="{{ url(base ~ '/conflicts', path=file.path) }}">Keep yours or take the file's</a></p>
+{% endif %}
 {% if unwritten %}
 <form method="get" action="{{ base }}/pending" class="notice">
  <input type="hidden" name="file" value="{{ file.id }}">

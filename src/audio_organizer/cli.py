@@ -17,6 +17,7 @@ from . import album_edit as ae
 from . import album_merge as am
 from . import artists as art
 from . import changes as ch
+from . import conflicts as cf
 from . import covers as cv
 from . import duplicates as du
 from . import encodings as rec
@@ -322,6 +323,11 @@ def scan_command(
         )
         for alias, twin in stats.aliases:
             typer.echo(f"  {alias}  (reads as {twin})")
+    if stats.conflicts:
+        typer.echo(
+            f"{stats.conflicts} fields were retagged elsewhere since you edited them; they are "
+            "not written until you decide: see `aorg conflicts`."
+        )
     if deep:
         _deep_scan(ctx, library, deep_limit, retry_failed)
     if with_gnudb:
@@ -1969,6 +1975,11 @@ def pending_command(
             + (f"; {found.waiting} more have changes waiting for review" if found.waiting else "")
             + "."
         )
+        if found.conflicts:
+            typer.echo(
+                f"{found.conflicts} fields retagged elsewhere since you edited them are held "
+                "back: see `aorg conflicts`."
+            )
         batch = found.files
         if write and batch:
             changeset, outcomes = wr.write(
@@ -2104,6 +2115,61 @@ def history_undo(ctx: typer.Context, operation_id: int) -> None:
             f"Set {undone.reverted} values back{kept} (operation {undone.operation.id}). "
             "See what to write with `aorg pending`."
         )
+
+
+@app.command("conflicts")
+def conflicts_command(
+    ctx: typer.Context,
+    path: Annotated[str | None, typer.Option(help="Only files under this path")] = None,
+    keep_edits: Annotated[
+        bool, typer.Option("--keep-edits", help="Keep your values: write them over the tags")
+    ] = False,
+    take_files: Annotated[
+        bool, typer.Option("--take-files", help="Drop your values: the files' tags count")
+    ] = False,
+    limit: Annotated[int, typer.Option(help="How many to list or settle at once")] = 200,
+    library: LibraryOption = None,
+) -> None:
+    """Fields retagged by another program after you edited them. Your edits would win and
+    be written over the change, so these fields are held back from `aorg pending` until
+    you decide:
+
+        aorg conflicts
+        aorg conflicts --path "Texas/Greatest Hits" --keep-edits
+        aorg conflicts --take-files
+
+    --keep-edits makes the fields pending again; --take-files drops your edits, as a
+    decision that `aorg history undo` reverts."""
+    if keep_edits and take_files:
+        raise typer.BadParameter("give --keep-edits or --take-files, not both")
+    with _session(ctx) as session:
+        lib = _library(session, library)
+        found = cf.find(session, lib.id, path, limit=limit)
+        if not found.total:
+            typer.echo("No conflicts.")
+            return
+        if keep_edits:
+            count = cf.keep_edits(session, found.rows)
+            session.commit()
+            typer.echo(f"Kept {count} edits; write them with `aorg pending --write`.")
+        elif take_files:
+            count = cf.take_files(session, lib.id, found.rows)
+            session.commit()
+            typer.echo(f"Took the tags of {count} fields (`aorg history` can undo this).")
+        else:
+            current = None
+            for conflict, file in found.rows:
+                if file.path != current:
+                    current = file.path
+                    typer.echo(file.path)
+                typer.echo(
+                    f"  {conflict.field}: yours {conflict.decided!r}; the tag was "
+                    f"{conflict.before!r}, is now {conflict.after!r}"
+                )
+            typer.echo("Settle them with --keep-edits or --take-files.")
+            return
+        if found.total > len(found.rows):
+            typer.echo(f"{found.total - len(found.rows)} more are left.")
 
 
 @app.command("ratings")

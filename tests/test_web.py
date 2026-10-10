@@ -1274,3 +1274,24 @@ def test_write_all_measurements_that_fails_keeps_what_was_written(web, Session, 
     assert len(state["changesets"]) == 1 and state["written"] == 2
     # and it let go of its turn
     assert web.post("/libraries/music/pending", data={"action": "write"}).status_code == 200
+
+
+def test_conflicts_page(web, Session):
+    file_id = _file_id(Session, "Texas/Texas_Halo.mp3")
+    web.post(f"/tracks/{file_id}/edit", data={"genre": "Rock"})
+    tags.write(web.root / "Texas/Texas_Halo.mp3", {"genre": "Jazz"})
+    with Session() as session:
+        assert scan(session, session.scalar(select(Library))).conflicts == 1
+    page = web.get("/libraries/music/pending").text
+    assert "1 field retagged elsewhere since you edited it is held back" in page
+    page = web.get(f"/tracks/{file_id}").text
+    assert "Retagged elsewhere since you edited it" in page and "is now Jazz (yours: Rock)" in page
+    page = web.get("/libraries/music/conflicts").text
+    assert f'value="{file_id}:genre"' in page and "<td>Rock</td>" in page
+
+    form = {"action": "take", "keys": [f"{file_id}:genre"]}
+    page = web.post("/libraries/music/conflicts", data=form).text
+    assert "Took the tags of 1 fields" in page and "No conflicts" in page
+    assert "Take the tags of 1 file retagged elsewhere" in web.get("/libraries/music/history").text
+    page = web.post("/libraries/music/conflicts", data={"action": "keep"}).text
+    assert "Nothing ticked" in page

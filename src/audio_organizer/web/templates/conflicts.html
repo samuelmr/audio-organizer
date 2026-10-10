@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% set labels = field_labels %}
+{% block title %}Conflicts – audio-organizer{% endblock %}
+{% block content %}
+{% set base = '/libraries/' ~ library.name %}
+{% set here = base ~ '/conflicts' %}
+<h1>Conflicts</h1>
+<p>These fields were retagged by another program after you edited them. Your edit would
+win and be written over that change, so they are held back from the
+<a href="{{ base }}/pending">Pending</a> page until you decide: keep your value (it is
+written with the file's other changes), or take the file's (your edit is dropped; the
+<a href="{{ base }}/history">History</a> page can bring it back).</p>
+
+<form class="search" method="get" action="{{ here }}">
+ <input type="search" name="path" value="{{ path }}" placeholder="Only files under a path" aria-label="Path">
+ <button>Show</button>
+</form>
+
+{% if found.rows %}
+<h2>{% if found.rows | length < found.total %}The first {{ found.rows | length }} of {{ found.total }} fields{% else %}{{ found.total }} field{{ "s" if found.total != 1 }}{% endif %}</h2>
+<form method="post" action="{{ here }}" class="stacked" data-busy>
+ <input type="hidden" name="path" value="{{ path }}">
+ <p>
+  <button class="primary" name="action" value="keep">Keep my values in the ticked fields</button>
+  <button name="action" value="take">Take the files' values</button>
+ </p>
+ <table>
+  <thead><tr><th><input type="checkbox" data-select-all="keys" aria-label="Select or deselect all fields" hidden></th><th>File</th><th>Field</th><th>Your value</th><th>The tag was</th><th>The tag is now</th></tr></thead>
+  <tbody>
+  {% for conflict, file in found.rows %}
+   <tr data-select-row>
+    <td><input type="checkbox" name="keys" value="{{ file.id }}:{{ conflict.field }}" checked aria-label="{{ file.path }}: {{ labels.get(conflict.field, conflict.field) }}"></td>
+    <td class="path"><a href="/tracks/{{ file.id }}">{{ file.path }}</a></td>
+    <td>{{ labels.get(conflict.field, conflict.field) }}</td>
+    <td>{{ conflict.decided }}</td>
+    <td>{% if conflict.before is none %}<span class="hint">none</span>{% else %}<span class="old">{{ conflict.before }}</span>{% endif %}</td>
+    <td>{% if conflict.after is none %}<span class="hint">removed</span>{% else %}{{ conflict.after }}{% endif %}</td>
+   </tr>
+  {% endfor %}
+  </tbody>
+ </table>
+</form>
+{% else %}
+<p>No conflicts{% if path %} here{% endif %}.</p>
+{% endif %}
+{% endblock %}

@@ -20,7 +20,14 @@ from typing import NamedTuple
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .models import AudioFile, FieldValue, FileDesire, Operation, OperationValue
+from .models import (
+    AudioFile,
+    FieldConflict,
+    FieldValue,
+    FileDesire,
+    Operation,
+    OperationValue,
+)
 from .provenance import refresh_effective
 
 # What an operation did: user edits (one file, an album, a folder), a rule set on the
@@ -119,6 +126,7 @@ def record(
             changed_any = True
         operation.values.extend(changed)
         touched = {value.file_id for value in changed}
+        _settle_conflicts(session, {(v.file_id, v.field) for v in changed if v.source == "manual"})
         session.flush()
         _expire_values(session, touched)
         refresh_effective(session, sorted(touched))
@@ -173,11 +181,23 @@ def _set_desires(session: Session, desires: Iterable[Desire]) -> list[OperationV
     return changed
 
 
+def _settle_conflicts(session: Session, keys: set[tuple[int, str]]) -> None:
+    """A new decision on a field retagged elsewhere (conflicts.py) settles the conflict:
+    drop those of these (file id, field) pairs."""
+    if not keys:
+        return
+    for conflict in session.scalars(
+        select(FieldConflict).where(FieldConflict.file_id.in_({f for f, _ in keys}))
+    ):
+        if (conflict.file_id, conflict.field) in keys:
+            session.delete(conflict)
+
+
 def _expire_values(session: Session, file_ids: set[int]) -> None:
     """Files already loaded in the session see their new values on next access."""
     for obj in list(session.identity_map.values()):
         if isinstance(obj, AudioFile) and obj.id in file_ids:
-            session.expire(obj, ["values"])
+            session.expire(obj, ["values", "conflicts"])
 
 
 def undo(session: Session, operation: Operation) -> Undone:

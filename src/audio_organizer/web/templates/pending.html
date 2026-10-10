@@ -13,6 +13,7 @@ can be undone; your edits stay, so the files are pending again. Your edits thems
 undone on the <a href="{{ base }}/history">History</a> page.</p>
 <p class="hint">{{ found.total }} file{{ "s" if found.total != 1 }} {{ "have" if found.total != 1 else "has" }} values not yet in {{ "them" if found.total != 1 else "it" }}{% if chosen or path %} here{% endif %}{% if found.waiting %};
 {{ found.waiting }} more have changes waiting for review in <a href="/changes">changesets</a>{% endif %}.
+{% if found.conflicts %}<a href="{{ url(base ~ '/conflicts', path=path) }}">{{ found.conflicts }} field{{ "s" if found.conflicts != 1 }} retagged elsewhere since you edited {{ "them are" if found.conflicts != 1 else "it is" }} held back</a> until you decide.{% endif %}
 {% if unmeasured %}{{ unmeasured }} files have not been measured for ReplayGain yet:
 run <code>aorg scan --deep</code> to measure them (it reads every file, which takes a while).{% endif %}
 {% if chosen %}<a href="{{ url(here, path=path, only=only, prefer_gnudb=prefer_gnudb or none) }}">All pending changes</a>{% endif %}</p>

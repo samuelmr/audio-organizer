@@ -27,6 +27,7 @@ from .models import (
     Change,
     Changeset,
     EffectiveMetadata,
+    FieldConflict,
     FieldValue,
     FileDesire,
     Library,
@@ -88,6 +89,7 @@ class Survey:
     waiting: int = 0  # files with changes waiting for review in a changeset
     # With prefer only (else see groups): the albums of those files, in artist, album order
     groups: list[Group] = field(default_factory=list)
+    conflicts: int = 0  # fields retagged elsewhere, held until the user decides (conflicts.py)
 
 
 def matches(name: str, only: list[str] | None) -> bool:
@@ -175,6 +177,13 @@ def survey(session: Session, library: Library, selection: Selection, limit: int 
     that is not stored every candidate is looked at."""
     result = Survey()
     candidates = _candidates(library, selection).where(AudioFile.id.not_in(_waiting()))
+    result.conflicts = session.scalar(
+        select(func.count())
+        .select_from(FieldConflict)
+        .join(AudioFile, AudioFile.id == FieldConflict.file_id)
+        .join(M, M.file_id == AudioFile.id)
+        .where(*_selected(library, selection))
+    )
     result.waiting = session.scalar(
         select(func.count()).select_from(
             _candidates(library, selection).where(AudioFile.id.in_(_waiting())).subquery()
@@ -212,15 +221,17 @@ def survey(session: Session, library: Library, selection: Selection, limit: int 
         files = session.scalars(
             select(AudioFile)
             .where(AudioFile.id.in_([row.id for row in batch]))
-            .options(selectinload(AudioFile.values))
+            .options(selectinload(AudioFile.values), selectinload(AudioFile.conflicts))
         ).all()
         by_id = {file.id: file for file in files}
         desired = _desired(session, list(by_id), selection.only)
         for row in batch:
             file = by_id[row.id]
+            held = {conflict.field for conflict in file.conflicts}
             fields = {
                 k: v for k, v in unwritten(
-                    file.values, selection.prefer, only_preferred=bool(selection.prefer)
+                    file.values, selection.prefer, only_preferred=bool(selection.prefer),
+                    held=held,
                 ).items()
                 if matches(k, selection.only)
             }  # fmt: skip

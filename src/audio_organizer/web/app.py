@@ -37,6 +37,7 @@ from .. import album_edit as ae
 from .. import album_merge as am
 from .. import artists as art
 from .. import changes as ch
+from .. import conflicts as cf
 from .. import coverart, covers, gnudb, loudness, tags
 from .. import duplicates as du
 from .. import encodings as rec
@@ -417,7 +418,8 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         return render(
             request, "track.html", file=file, resolved=resolved, groups=FIELD_GROUPS,
             extra=extra, manual=manual, copies=copies, snapshot=snapshot,
-            unwritten=wr.unwritten(file.values), on_disk=on_disk, measure_error=measure_error,
+            unwritten=wr.unwritten(file.values, held=[c.field for c in file.conflicts]),
+            conflicts=file.conflicts, on_disk=on_disk, measure_error=measure_error,
             has_cover=on_disk and covers.embedded(path) is not None,
             folder_cover=folder_cover.name if folder_cover else None,
             id3_version=tags.id3_version(path) if on_disk else None,
@@ -1168,6 +1170,46 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             back, f"Set {undone.reverted} values back{kept}.",
             link=(f"/libraries/{lib.name}/pending", "See what is pending"),
         )  # fmt: skip
+
+    @app.get("/libraries/{name}/conflicts", response_class=HTMLResponse)
+    def conflicts_page(request: Request, name: str, path: str = "", session: Session = SessionDep):
+        """Fields retagged elsewhere after the user edited them, held back from writing."""
+        lib = _library(session, name)
+        found = cf.find(session, lib.id, path or None, limit=MAX_BATCH)
+        return render(request, "conflicts.html", library=lib, found=found, path=path)
+
+    @app.post("/libraries/{name}/conflicts", dependencies=[Exclusive])
+    def settle_conflicts(
+        name: str,
+        action: Annotated[str, Form()],
+        keys: Annotated[list[str] | None, Form()] = None,
+        path: Annotated[str, Form()] = "",
+        session: Session = SessionDep,
+    ):
+        """Keep the user's values of the ticked fields (they are pending again), or take
+        the files' tags (the edits are dropped, as a decision that can be undone)."""
+        lib = _library(session, name)
+        if action not in ("keep", "take"):
+            raise HTTPException(400, f"Unknown action {action}")
+        chosen = set(keys or [])
+        file_ids = sorted({int(key.partition(":")[0]) for key in chosen})
+        rows = [
+            (conflict, file)
+            for conflict, file in cf.find(session, lib.id, file_ids=file_ids, limit=MAX_BATCH).rows
+            if f"{file.id}:{conflict.field}" in chosen
+        ]
+        back = _url(f"/libraries/{lib.name}/conflicts", path=path)
+        if not rows:
+            return _redirect(back, "Nothing ticked")
+        if action == "keep":
+            count = cf.keep_edits(session, rows)
+            session.commit()
+            pending = (f"/libraries/{lib.name}/pending", "Write them on the Pending page")
+            return _redirect(back, f"Kept {count} edits.", link=pending)
+        count = cf.take_files(session, lib.id, rows)
+        session.commit()
+        history = (f"/libraries/{lib.name}/history", "Undo on the History page")
+        return _redirect(back, f"Took the tags of {count} fields.", link=history)
 
     # ---- ratings and covers --------------------------------------------------------------
 

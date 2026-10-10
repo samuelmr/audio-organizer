@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import delete, insert, select
 from sqlalchemy.orm import Session
 
-from .models import AudioFile, EffectiveMetadata, FieldValue, PendingField
+from .models import AudioFile, EffectiveMetadata, FieldConflict, FieldValue, PendingField
 from .pathparse import normalize_name
 from .tags import FIELDS, NUMBER_FIELDS, parse_number, parse_year
 
@@ -50,11 +50,15 @@ def resolve(values: Iterable[FieldValue]) -> dict[str, Resolved]:
 
 
 def unwritten(
-    values: Iterable, prefer: Iterable[str] = (), only_preferred: bool = False
+    values: Iterable,
+    prefer: Iterable[str] = (),
+    only_preferred: bool = False,
+    held: Iterable[str] = (),
 ) -> dict[str, str]:
     """The fields whose chosen value is an edit, a measurement or a lookup that differs
     from what the file's tags say: values not yet written into the file. values are the
-    file's FieldValues (or rows with field, source and value).
+    file's FieldValues (or rows with field, source and value). Fields in conflict (held,
+    see FieldConflict) wait for the user and are left out.
 
     A lookup ranks below the tags, so where it differs it is not the chosen value. With
     prefer, naming such sources (e.g. "gnudb"), their values are taken instead of the
@@ -64,10 +68,11 @@ def unwritten(
     values = list(values)
     resolved = resolve(values)
     current = {fv.field: fv.value for fv in values if fv.source == "tag"}
+    held = set(held)
     result = {}
     for name in FIELDS:
         found = resolved.get(name)
-        if found is None:
+        if found is None or name in held:
             continue
         preferred = next((found.candidates[s] for s in prefer if s in found.candidates), None)
         if found.source in WRITTEN_SOURCES:
@@ -127,10 +132,19 @@ def refresh_effective(session: Session, file_ids: list[int]) -> None:
         )
     ):
         rows[row.file_id].append(row)
+    conflicts: dict[int, set[str]] = {}
+    for file_id, name in session.execute(
+        select(FieldConflict.file_id, FieldConflict.field).where(
+            FieldConflict.file_id.in_(file_ids)
+        )
+    ):
+        conflicts.setdefault(file_id, set()).add(name)
     for file_id, values in rows.items():
         resolved = {k: r for k, r in resolve(values).items() if k in FIELDS}
-        # A field the user has decided (a manual value) is no longer disputed
-        disputed = any(
+        held = conflicts.get(file_id, set())
+        # A field the user has decided (a manual value) is no longer disputed, unless the
+        # file was retagged elsewhere since
+        disputed = bool(held) or any(
             r.source != "manual" and len({comparable(name, v) for v in r.candidates.values()}) > 1
             for name, r in resolved.items()
         )
@@ -147,7 +161,7 @@ def refresh_effective(session: Session, file_ids: list[int]) -> None:
         pending_rows.extend(
             {"file_id": file_id, "field": name, "value": value,
              "source": resolved[name].source, "tag": tag.get(name)}
-            for name, value in unwritten(values).items()
+            for name, value in unwritten(values, held=held).items()
         )  # fmt: skip
     if effective_rows:
         session.execute(insert(EffectiveMetadata), effective_rows)
