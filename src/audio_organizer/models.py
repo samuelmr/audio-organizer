@@ -326,6 +326,52 @@ class PlaylistEntry(Base):
     playlist: Mapped[Playlist] = relationship(back_populates="entries")
 
 
+class PlaylistFile(Base):
+    """A playlist file this tool wrote, on the library disk (target_id None) or in a sync
+    target's bucket: its path relative to the library root or the target's prefix, and a
+    hash of the content. A file whose content still has that hash is the tool's own
+    output; one that differs was changed by someone else."""
+
+    __tablename__ = "playlist_file"
+    __table_args__ = (UniqueConstraint("library_id", "target_id", "path"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    library_id: Mapped[int] = mapped_column(
+        ForeignKey("library.id", ondelete="CASCADE"), index=True
+    )
+    target_id: Mapped[int | None] = mapped_column(
+        ForeignKey("sync_target.id", ondelete="CASCADE"), index=True
+    )
+    playlist_id: Mapped[int | None] = mapped_column(
+        ForeignKey("playlist.id", ondelete="SET NULL"), index=True
+    )
+    path: Mapped[str] = mapped_column(Text)
+    format: Mapped[str] = mapped_column(String(10))
+    content_hash: Mapped[str] = mapped_column(String(40))
+    size: Mapped[int]
+    written_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class PlaylistFileBackup(Base):
+    """The content of a playlist file before this tool overwrote it (when it had been
+    changed by someone else) or deleted it, so that the change can be undone."""
+
+    __tablename__ = "playlist_file_backup"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    library_id: Mapped[int] = mapped_column(
+        ForeignKey("library.id", ondelete="CASCADE"), index=True
+    )
+    target_id: Mapped[int | None] = mapped_column(
+        ForeignKey("sync_target.id", ondelete="CASCADE"), index=True
+    )
+    path: Mapped[str] = mapped_column(Text)
+    reason: Mapped[str] = mapped_column(String(20))  # overwritten | deleted
+    content: Mapped[bytes] = mapped_column(LargeBinary)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    restored_at: Mapped[datetime | None]
+
+
 class LibrarySetting(Base):
     """A per-library setting, such as the folder layout ("layout")."""
 

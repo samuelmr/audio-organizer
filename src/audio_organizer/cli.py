@@ -20,6 +20,7 @@ from . import layout as lo
 from . import leftovers as lf
 from . import neighbours as nb
 from . import playlist_files as pf
+from . import playlist_store as ps
 from . import playlists as pl
 from . import ratings as rt
 from . import sync as sy
@@ -1175,6 +1176,99 @@ def playlists_export(
         generated = pl.generate(session, lib, playlists)
         written = pl.export(generated, Path(lib.root), directory, fmts)
     typer.echo(f"Wrote {len(written)} files for {len(generated)} playlists to {directory}")
+
+
+TargetOption = Annotated[
+    str | None,
+    typer.Option("--target", help="Sync target (bucket) instead of the library's disk"),
+]
+
+
+def _place(session: Session, library: str | None, target: str | None) -> ps.Place:
+    lib = _library(session, library)
+    if target is None:
+        return ps.Place(lib)
+    tgt = _target(session, target)
+    if tgt.library_id != lib.id:
+        raise typer.BadParameter(f"Target {target} syncs library {tgt.library.name}")
+    return ps.Place(lib, tgt)
+
+
+@playlists_app.command("write")
+def playlists_write(
+    ctx: typer.Context,
+    names: Annotated[list[str] | None, typer.Argument(help="Playlists [default: all]")] = None,
+    target: TargetOption = None,
+    dry_run: Annotated[bool, typer.Option(help="Only show what would be written")] = False,
+    library: LibraryOption = None,
+) -> None:
+    """Write playlists to the library's disk, or with --target to a bucket, in the place's
+    playlist folder and formats (`aorg library set`, `aorg target set`). A file that
+    someone else has changed is replaced, and its old content kept: `restore-files`."""
+    with _session(ctx) as session:
+        place = _place(session, library, target)
+        playlists = [_playlist(session, n, library) for n in names] if names else None
+        planned = ps.plan_write(session, place, pl.generate(session, place.library, playlists))
+        for item in planned:
+            if item.changes:
+                typer.echo(f"{place.describe(item.path)} {ps.describe_state(item)}")
+        if dry_run:
+            return
+        changed = ps.apply_write(session, place, planned)
+        session.commit()
+    typer.echo(f"Wrote {changed} files ({len(planned) - changed} already up to date)")
+
+
+@playlists_app.command("delete-files")
+def playlists_delete_files(
+    ctx: typer.Context,
+    names: Annotated[list[str], typer.Argument(help="Playlists")],
+    target: TargetOption = None,
+    dry_run: Annotated[bool, typer.Option(help="Only show what would be deleted")] = False,
+    library: LibraryOption = None,
+) -> None:
+    """Delete the files of playlists from the library's disk, or with --target from a
+    bucket. The playlists stay in the catalog, and the files' content is kept for
+    `restore-files`."""
+    with _session(ctx) as session:
+        place = _place(session, library, target)
+        planned = []
+        for name in names:
+            planned += ps.plan_delete(session, place, _playlist(session, name, library))
+        for item in planned:
+            typer.echo(place.describe(item.path))
+        if dry_run:
+            return
+        removed = ps.apply_delete(session, place, planned)
+        session.commit()
+    typer.echo(f"Deleted {removed} files")
+
+
+@playlists_app.command("restore-files")
+def playlists_restore_files(
+    ctx: typer.Context,
+    backup_id: Annotated[int | None, typer.Argument(help="Backup to restore")] = None,
+    target: TargetOption = None,
+    library: LibraryOption = None,
+) -> None:
+    """Without an id, list the playlist files that were deleted or replaced and can be
+    restored; with one, put that file back."""
+    with _session(ctx) as session:
+        place = _place(session, library, target)
+        found = ps.backups(session, place)
+        if backup_id is None:
+            for backup in found:
+                typer.echo(
+                    f"{backup.id}\t{backup.reason}\t{backup.created_at:%Y-%m-%d %H:%M}"
+                    f"\t{place.describe(backup.path)}"
+                )
+            return
+        chosen = next((b for b in found if b.id == backup_id), None)
+        if chosen is None:
+            raise typer.BadParameter(f"No backup {backup_id} to restore at {place.label}")
+        ps.restore(session, place, chosen)
+        session.commit()
+    typer.echo(f"Restored {place.describe(chosen.path)}")
 
 
 # ---- duplicates and trash ----------------------------------------------------------------

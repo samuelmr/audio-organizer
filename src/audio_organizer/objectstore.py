@@ -16,6 +16,9 @@ class ObjectStore(Protocol):
     def copy(self, source: str, key: str, content_type: str, metadata: dict[str, str]) -> None:
         """Server-side copy; with source == key, replaces the object's metadata in place."""
 
+    def get(self, key: str) -> bytes | None:
+        """The object's content, or None when there is no such object."""
+
     def delete(self, key: str) -> None: ...
 
     def list(self, prefix: str) -> Iterator[tuple[str, int]]:
@@ -58,6 +61,12 @@ class S3Store:
             ContentType=content_type,
             Metadata=metadata,
         )
+
+    def get(self, key: str) -> bytes | None:
+        try:
+            return self.client.get_object(Bucket=self.bucket, Key=key)["Body"].read()
+        except self.client.exceptions.NoSuchKey:
+            return None
 
     def delete(self, key: str) -> None:
         self.client.delete_object(Bucket=self.bucket, Key=key)

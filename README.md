@@ -489,6 +489,19 @@ into a folder, with tracks referred to by relative paths:
 
     aorg playlists export ~/Music/Playlists --format m3u,json,html
 
+To write playlists to the library's own disk, or with `--target` to a bucket, in the
+place's playlist folder and formats (see Configuration):
+
+    aorg playlists write "Party" --dry-run       # shows each file's full path and what happens
+    aorg playlists write --target nas
+    aorg playlists delete-files "Party"
+    aorg playlists restore-files                 # lists deleted and replaced files
+    aorg playlists restore-files 3
+
+A file that someone else has edited is replaced too, but its old content is kept; so is
+the content of a deleted file. Deleting a playlist's files leaves the playlist in the
+catalog.
+
 Besides `.m3u`, playlists can be written as schema.org `MusicPlaylist` JSON-LD and as an
 HTML page.
 
