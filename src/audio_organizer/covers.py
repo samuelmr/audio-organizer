@@ -20,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import images, tags
+from . import operations as ops
 from .images import IMAGE_TYPES
 from .models import (
     AudioFile,
@@ -29,6 +30,7 @@ from .models import (
     FieldValue,
     FolderImages,
     Library,
+    Operation,
 )
 from .pathparse import normalize_name
 from .tracks import present
@@ -600,10 +602,14 @@ def _found_online(session: Session, min_pixels: int) -> dict[str, CoverImage]:
     return {key: image for key, image in rows if not small(image.size, min_pixels)}
 
 
-def propose(session: Session, library: Library, folders: list[FolderCovers], description: str):
-    from . import changes as ch
-
-    changeset = ch.new_changeset(session, description, "covers")
+def decide(
+    session: Session, library: Library, folders: list[FolderCovers], description: str
+) -> Operation | None:
+    """Decide on these folders' covers: the folder's image or the one found online is to be
+    in each track that needs it, and a cover found online also saved as the folder's image.
+    Only the catalog changes (as an operation that can be undone); the files are written
+    with the other pending changes (writing.py). None when it was all decided already."""
+    desires = []
     root = Path(library.root)
     for folder in folders:
         label = None
@@ -611,19 +617,18 @@ def propose(session: Session, library: Library, folders: list[FolderCovers], des
             size = images.format_size(folder.fetched.size)
             label = f"the Cover Art Archive's image of {folder.album} ({size})"
         for file in folder.files:
-            replace = file.id in folder.replace
             if folder.fetched is not None:
-                ch.propose_embed_cover(
-                    changeset, file, cover_image=folder.fetched.sha1, label=label,
-                    replace=replace,
-                )  # fmt: skip
+                spec: dict = {"cover_image": folder.fetched.sha1, "label": label}
             else:
-                image = folder.image.relative_to(root).as_posix()
-                ch.propose_embed_cover(changeset, file, image, replace=replace)
+                spec = {"image": folder.image.relative_to(root).as_posix()}
+            if file.id in folder.replace:
+                spec["replace"] = True
+            desires.append(ops.Desire(file.id, "embed", spec))
         if folder.save_as and folder.fetched is not None and folder.first is not None:
-            ch.propose_save_image(
-                changeset, folder.first, folder.fetched.sha1, folder.save_as, label,
-                replace=folder.overwrite,
-            )  # fmt: skip
+            spec = {"cover_image": folder.fetched.sha1, "to": folder.save_as, "label": label}
+            if folder.overwrite:
+                spec["replace"] = True
+            desires.append(ops.Desire(folder.first.id, "image", spec))
+    operation = ops.record(session, library.id, "covers", description, [], desires=desires)
     session.commit()
-    return changeset
+    return operation

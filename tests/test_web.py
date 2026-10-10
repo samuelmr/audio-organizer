@@ -648,14 +648,21 @@ def test_embed_folder_cover(web, Session):
     assert web.get(f"/tracks/{file_id}/cover?folder=1").content.startswith(b"\xff\xd8")
     assert web.get(f"/tracks/{file_id}/cover").status_code == 404
 
-    response = web.post(f"/tracks/{file_id}/cover")
-    assert "will get the cover image" in response.text
-    changeset_path = response.url.path
-    web.post(f"{changeset_path}/status", data={"action": "approve-all"})
-    web.post(f"{changeset_path}/apply", data={})
+    response = web.post(f"/tracks/{file_id}/cover")  # decided, then reviewed on Pending
+    assert response.url.path == "/libraries/music/pending"
+    assert "Cover: Texas/Greatest Hits/Folder.jpg" in response.text
+    assert web.get(f"/tracks/{file_id}/cover").status_code == 404  # not in the file yet
+    page = web.post(
+        "/libraries/music/pending", data={"action": "write", "file_ids": [file_id]}
+    ).text
+    changeset_path = re.search(r'action="(/changes/\d+)/undo"', page).group(1)
     assert web.get(f"/tracks/{file_id}/cover").content == (folder / "Folder.jpg").read_bytes()
     web.post(f"{changeset_path}/undo")
     assert web.get(f"/tracks/{file_id}/cover").status_code == 404
+    assert (
+        "Cover: Texas/Greatest Hits/Folder.jpg"
+        in web.get("/libraries/music/pending", params={"file": file_id}).text
+    )  # the decision stays, so the cover is pending again
 
 
 def test_pending_page_writes_by_selection(web, Session):
@@ -747,17 +754,18 @@ def test_ratings_and_covers_pages(web, Session):
     page = web.get("/libraries/music/covers").text
     assert "Texas/Greatest Hits/" in page and "Folder.jpg" in page
     response = web.post("/libraries/music/covers", data={"folder": "Texas/Greatest Hits"})
-    assert re.fullmatch(r"/changes/\d+", response.url.path)
-    assert "will get the cover image" in response.text
+    assert response.url.path == "/libraries/music/pending"
+    assert "Cover: Texas/Greatest Hits/Folder.jpg" in response.text
 
-    # The ticked folders are proposed; none ticked proposes nothing, not the whole batch
+    # The ticked folders are chosen; none ticked chooses nothing, not the whole batch
     assert 'name="pick" value="Texas/Greatest Hits"' in page
     response = web.post("/libraries/music/covers", data={"picking": "true"})
     assert "No folder selected" in response.text
     response = web.post(
         "/libraries/music/covers", data={"picking": "true", "pick": "Texas/Greatest Hits"}
     )
-    assert re.fullmatch(r"/changes/\d+", response.url.path)
+    assert response.url.path == "/libraries/music/pending"
+    assert "These covers were decided already" in response.text  # by the first one
 
 
 def test_covers_found_online(web, Session, tmp_path):
@@ -779,7 +787,7 @@ def test_covers_found_online(web, Session, tmp_path):
 
     response = web.post("/libraries/music/covers", data={"folder": "Texas/Greatest Hits"})
     assert "Archive&#39;s image of Texas – Greatest Hits (300x300)" in response.text
-    assert "will be saved as" in response.text and "Texas/Greatest Hits/cover.jpg" in response.text
+    assert "Folder image: cover.jpg from" in response.text
 
     page = web.get("/libraries/music/covers", params={"save_images": "false"}).text
     assert "to be saved as" not in page and "Greatest Hits, found online" in page

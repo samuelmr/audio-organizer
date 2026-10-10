@@ -17,7 +17,16 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import covers, pathparse, tags
-from .models import AudioFile, Change, Changeset, CoverImage, Library, PlaylistEntry, utcnow
+from .models import (
+    AudioFile,
+    Change,
+    Changeset,
+    CoverDesire,
+    CoverImage,
+    Library,
+    PlaylistEntry,
+    utcnow,
+)
 from .provenance import set_value, set_values
 
 log = logging.getLogger(__name__)
@@ -25,6 +34,10 @@ log = logging.getLogger(__name__)
 # Trashed files are kept here, inside the library root, until `aorg trash empty`. The
 # scanner skips folders whose names start with a dot.
 TRASH_DIR = ".aorg-trash"
+
+
+# The CoverDesire kind (models.py) that a change of this kind carries out
+COVER_DESIRE_KINDS = {"cover": "embed", "image": "image"}
 
 
 class ChangeError(Exception):
@@ -367,6 +380,10 @@ def undo(session: Session, changeset: Changeset, *, dry_run: bool = False) -> li
             elif change.kind == "image":
                 _unsave_image(session, change)
             change.status = "undone"
+            if kind := COVER_DESIRE_KINDS.get(change.kind):
+                desire = session.get(CoverDesire, (change.file_id, kind))
+                if desire:
+                    desire.written = False  # the decided cover is pending again
             outcomes.append(Outcome(change, True, "undid " + describe(change)))
         except (ChangeError, OSError, ValueError, MutagenError, tags.UnsupportedFormat) as e:
             change.error = f"undo failed: {e}"

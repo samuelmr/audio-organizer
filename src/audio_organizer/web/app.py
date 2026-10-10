@@ -90,7 +90,8 @@ FIELD_LABELS = {
     "mood": "Mood", "rating": "Rating", "tempo": "Tempo", "situation": "Situation",
     "preference": "Preference", "replaygain_track_gain": "Track gain",
     "replaygain_track_peak": "Track peak", "replaygain_album_gain": "Album gain",
-    "replaygain_album_peak": "Album peak", "discid": "gnudb disc ID",
+    "replaygain_album_peak": "Album peak", "discid": "gnudb disc ID", "cover": "Cover",
+    "cover-file": "Folder image",
 }  # fmt: skip
 PAGE_SIZE = 50
 # An album or folder with more tracks than this is not offered for editing at once: it is
@@ -534,17 +535,20 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
 
     @app.post("/tracks/{file_id}/cover", dependencies=[Exclusive])
     def embed_cover(file_id: int, session: Session = SessionDep):
-        """Propose embedding the folder's cover image into the file."""
+        """Decide to embed the folder's cover image into the file."""
         file = _file(session, file_id)
         path = Path(file.library.root) / file.path
         image = sy.find_cover(path.parent)
         if image is None:
             return _redirect(f"/tracks/{file.id}", "There is no cover image in the folder")
-        changeset = ch.new_changeset(session, f"Embed the cover of {file.path}", "covers")
         relative = image.relative_to(file.library.root).as_posix()
-        ch.propose_embed_cover(changeset, file, relative)
+        ops.record(
+            session, file.library_id, "covers", f"Embed the cover of {file.path}", [],
+            desires=[ops.Desire(file.id, "embed", {"image": relative})],
+        )  # fmt: skip
         session.commit()
-        return _redirect(f"/changes/{changeset.id}", "Review the change to the file")
+        pending = _url(f"/libraries/{file.library.name}/pending", file=file.id)
+        return _redirect(pending, "Decided; review the cover and write it into the file")
 
     @app.get("/tracks/{file_id}/audio")
     def track_audio(file_id: int, session: Session = SessionDep):
@@ -1107,12 +1111,20 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
                 f"/libraries/{lib.name}/covers",
                 "No folder selected" if picking and not pick else "Nothing to embed",
             )
-        changeset = covers.propose(
+        operation = covers.decide(
             session, lib, chosen,
             f"Embed the cover of {chosen[0].folder}" if folder
             else f"Embed the covers of {len(chosen)} folders",
         )  # fmt: skip
-        return _redirect(f"/changes/{changeset.id}", "Review the changes to the files")
+        # The covers just chosen are the ones to review: those under the folder, or the batch
+        where = folder + "/" if folder else path
+        return _redirect(
+            _url(f"/libraries/{lib.name}/pending", path=where or None, only="cover"),
+            "Decided on the covers; write them into the files here"
+            if operation
+            else "These covers were decided already",
+            link=(f"/libraries/{lib.name}/history", "Undo on the History page"),
+        )
 
     # ---- layout --------------------------------------------------------------------------
 

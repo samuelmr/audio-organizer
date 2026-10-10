@@ -9,11 +9,13 @@ and their album has a cover: the image in its folder, or one that <code>aorg cov
 --with-covers</code>) found online. Embedding copies the image into every such track, so a
 large image makes every file bigger. A cover found online can also be saved as the
 folder's <code>cover.jpg</code>, for players that read folder images and for sync, when
-the folder holds just that album. Undoing the changeset removes the embedded covers and
-saved images again and puts back the thumbnails they replaced.</p>
+the folder holds just that album. Choosing covers only decides on them (History can undo
+that); you write them into the files on the <a href="{{ base }}/pending">Pending</a> page,
+together with other pending changes, and undoing that write removes the embedded covers
+and saved images again and puts back the thumbnails they replaced.</p>
 <p class="hint">If the catalog was made before cover detection, run <code>aorg scan
 --reread</code> once; until then, files that already have a cover are left as they are
-when the changes are applied.</p>
+when the covers are written.</p>
 
 <form class="search" method="get" action="{{ base }}/covers">
  <input type="search" name="path" value="{{ path }}" placeholder="Only folders under a path" aria-label="Path">
@@ -34,7 +36,7 @@ when the changes are applied.</p>
  <input type="hidden" name="min_pixels" value="{{ min_pixels }}">
  <input type="hidden" name="save_images" value="{{ save_images | lower }}">
  <input type="hidden" name="picking" value="true">
- <button class="primary">Propose a changeset for the selected folders</button>
+ <button class="primary">Choose these covers for the selected folders</button>
 </form>
 <table>
  <thead><tr><th><input type="checkbox" data-select-all="pick" aria-label="Select or deselect all folders" hidden></th><th>Cover</th><th>Folder</th><th class="num">Tracks</th><th></th></tr></thead>
@@ -51,7 +53,7 @@ when the changes are applied.</p>
      <input type="hidden" name="folder" value="{{ f.folder }}">
      <input type="hidden" name="min_pixels" value="{{ min_pixels }}">
      <input type="hidden" name="save_images" value="{{ save_images | lower }}">
-     <button aria-label="Propose the cover of {{ f.folder }}">Propose this folder</button>
+     <button aria-label="Choose the cover of {{ f.folder }}">Choose for this folder</button>
     </form>
    </td>
   </tr>
@@ -62,7 +64,7 @@ when the changes are applied.</p>
 {% endif %}
 {% if found.too_small %}
 <details>
- <summary>{{ found.too_small | length }} folders have only a thumbnail (under {{ min_pixels }} pixels), not proposed</summary>
+ <summary>{{ found.too_small | length }} folders have only a thumbnail (under {{ min_pixels }} pixels), not chosen</summary>
  <ul>{% for f in found.too_small %}<li class="path">{{ f.folder }}/{{ f.image.name }}{% if f.dimensions %} ({{ f.dimensions[0] }}×{{ f.dimensions[1] }}){% endif %}</li>{% endfor %}</ul>
 </details>
 {% endif %}

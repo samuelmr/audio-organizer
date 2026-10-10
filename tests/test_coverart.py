@@ -6,6 +6,7 @@ from typer.testing import CliRunner
 
 from audio_organizer import changes as ch
 from audio_organizer import coverart, covers, images, tags
+from audio_organizer import writing as wr
 from audio_organizer.cli import app
 from audio_organizer.models import AudioFile, CoverLookup, FieldValue, Library
 from audio_organizer.scanner import scan
@@ -86,16 +87,23 @@ def test_min_pixels_decides_what_is_a_thumbnail(library):
     assert [f.path for f in folder.files] == ["Texas/Greatest Hits/11 Halo.mp3"]
 
 
+def write_covers(session, lib, folders, description="Covers"):
+    """Decide on these folders' covers and write them, as the Pending page does."""
+    covers.decide(session, lib, folders, description)
+    found = wr.survey(session, lib, wr.Selection(only=["cover"]), 1000)
+    changeset, outcomes = wr.write(session, found.files, description)
+    assert all(o.ok for o in outcomes), [o.message for o in outcomes]
+    return changeset
+
+
 def test_replace_thumbnail_and_undo(library):
     session, lib, root, tmp_path = library
     image = _image(root / "Texas/Greatest Hits/cover.jpg", "320x240")
     thumbnail = covers.embedded(root / "Texas/Greatest Hits/12 Insane.mp3")
 
     found = covers.survey(session, lib, path_prefix="Texas/")
-    changeset = covers.propose(session, lib, found.folders, "Embed")
+    changeset = write_covers(session, lib, found.folders)
     assert any("replace the cover of" in ch.describe(c) for c in changeset.changes)
-    ch.set_status(changeset.changes, "approved")
-    assert all(o.ok for o in ch.apply(session, changeset))
     for name in ("11 Halo.mp3", "12 Insane.mp3"):
         assert covers.embedded(root / "Texas/Greatest Hits" / name) == (
             "image/jpeg", image.read_bytes(),
@@ -106,6 +114,8 @@ def test_replace_thumbnail_and_undo(library):
     assert all(o.ok for o in ch.undo(session, changeset))
     assert covers.embedded(root / "Texas/Greatest Hits/12 Insane.mp3") == thumbnail
     assert covers.embedded(root / "Texas/Greatest Hits/11 Halo.mp3") is None
+    # Undoing the write leaves the decision: the covers are pending again
+    assert wr.survey(session, lib, wr.Selection(only=["cover"])).total == 2
 
 
 @pytest.mark.parametrize("name", ["mp3", "m4a", "aac"])
@@ -163,12 +173,10 @@ def test_lookup_and_embed_found_covers(library):
 
     [folder] = covers.survey(session, lib).folders
     assert folder.fetched.sha1 == covers.digest(jpeg) and folder.album == "Texas – Greatest Hits"
-    changeset = covers.propose(session, lib, [folder], "Embed")
+    changeset = write_covers(session, lib, [folder])
     assert "Cover Art Archive's image of Texas – Greatest Hits (500x500) as" in ch.describe(
         changeset.changes[0]
     )
-    ch.set_status(changeset.changes, "approved")
-    assert all(o.ok for o in ch.apply(session, changeset))
     for name in ("11 Halo.mp3", "12 Insane.mp3"):
         assert covers.embedded(root / "Texas/Greatest Hits" / name) == ("image/jpeg", jpeg)
 
@@ -269,3 +277,69 @@ def test_survey_leaves_out_tracks_whose_format_cannot_hold_a_cover(library):
         "Texas/Greatest Hits/12 Insane.mp3"
     ]
     assert halo.id not in [f.id for f in folder.files]
+
+
+def test_decided_covers_are_undone_from_the_history(library):
+    from audio_organizer import operations as ops
+    from audio_organizer.models import CoverDesire
+
+    session, lib, root, tmp_path = library
+    _image(root / "Texas/Greatest Hits/cover.jpg", "320x240")
+    found = covers.survey(session, lib, path_prefix="Texas/")
+    operation = covers.decide(session, lib, found.folders, "Embed")
+    assert (operation.kind, len(operation.values)) == ("covers", 2)
+    assert covers.decide(session, lib, found.folders, "Embed") is None  # nothing new
+    assert covers.embedded(root / "Texas/Greatest Hits/11 Halo.mp3") is None  # files untouched
+    assert session.query(CoverDesire).count() == 2
+
+    undone = ops.undo(session, operation)
+    session.commit()
+    assert (undone.reverted, undone.kept) == (2, 0)
+    assert session.query(CoverDesire).count() == 0
+    assert wr.survey(session, lib, wr.Selection(only=["cover"])).total == 0
+
+    ops.undo(session, undone.operation)  # redo
+    session.commit()
+    assert wr.survey(session, lib, wr.Selection(only=["cover"])).total == 2
+
+
+def test_written_covers_are_kept_when_the_decision_is_undone(library):
+    from audio_organizer import operations as ops
+
+    session, lib, root, tmp_path = library
+    _image(root / "Texas/Greatest Hits/cover.jpg", "320x240")
+    found = covers.survey(session, lib, path_prefix="Texas/")
+    operation = covers.decide(session, lib, found.folders, "Embed")
+    changeset, _ = wr.write(
+        session, wr.survey(session, lib, wr.Selection(only=["cover"])).files, "Write"
+    )
+    undone = ops.undo(session, operation)
+    assert (undone.reverted, undone.kept) == (0, 2)  # undo the write first
+    assert covers.embedded(root / "Texas/Greatest Hits/11 Halo.mp3") is not None
+
+
+def test_discard_drops_decided_covers(library):
+    session, lib, root, tmp_path = library
+    _image(root / "Texas/Greatest Hits/cover.jpg", "320x240")
+    covers.decide(session, lib, covers.survey(session, lib, path_prefix="Texas/").folders, "x")
+    found = wr.survey(session, lib, wr.Selection(only=["cover"]))
+    assert wr.discard(session, found.files) == (2, 0)
+    assert wr.survey(session, lib, wr.Selection(only=["cover"])).total == 0
+
+
+def test_cli_decide_then_write(library):
+    session, lib, root, tmp_path = library
+    image = _image(root / "Texas/Greatest Hits/cover.jpg", "320x240")
+    db = str(session.get_bind().url)
+    result = CliRunner().invoke(app, ["--db", db, "covers", "--decide"])
+    assert result.exit_code == 0, result.output
+    assert "Decided on the covers of 1 folders" in result.output
+    assert covers.embedded(root / "Texas/Greatest Hits/11 Halo.mp3") is None
+
+    result = CliRunner().invoke(app, ["--db", db, "pending", "--only", "cover"])
+    assert "(cover 2)" in result.output, result.output
+    result = CliRunner().invoke(app, ["--db", db, "pending", "--only", "cover", "--write"])
+    assert result.exit_code == 0, result.output
+    assert covers.embedded(root / "Texas/Greatest Hits/11 Halo.mp3") == (
+        "image/jpeg", image.read_bytes(),
+    )  # fmt: skip

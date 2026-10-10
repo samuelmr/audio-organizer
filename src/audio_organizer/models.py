@@ -518,6 +518,28 @@ class FolderImages(Base):
     cover_height: Mapped[int | None]
 
 
+class CoverDesire(Base):
+    """A cover the user decided on (covers.decide) that the files do not hold yet: the
+    desired state of a file's embedded cover (kind "embed") or of an image file saved in
+    its folder (kind "image", kept on one of the folder's tracks). It is pending until
+    writing.write has made it so; undoing that write makes it pending again, undoing the
+    decision (an operation) removes it.
+
+    spec: {"cover_image": CoverImage sha1, "label"} or {"image": library path}, with "to"
+    (library path to save as, for "image") and "replace" (a thumbnail goes) when set."""
+
+    __tablename__ = "cover_desire"
+
+    file_id: Mapped[int] = mapped_column(
+        ForeignKey("audio_file.id", ondelete="CASCADE"), primary_key=True
+    )
+    kind: Mapped[str] = mapped_column(String(10), primary_key=True)  # embed | image
+    spec: Mapped[dict[str, Any]]
+    written: Mapped[bool] = mapped_column(default=False, index=True)
+
+    file: Mapped[AudioFile] = relationship()
+
+
 class CoverLookup(Base):
     """The outcome of looking up an album's cover online, so that a scan asks only
     once. Albums are keyed by artist and title (pathparse.normalize_name), not by folder,

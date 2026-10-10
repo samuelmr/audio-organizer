@@ -1,7 +1,7 @@
 """Saving covers found online as the folder's cover.jpg."""
 
 from sqlalchemy import delete
-from test_coverart import _image, library  # noqa: F401 (a fixture)
+from test_coverart import _image, library, write_covers  # noqa: F401 (a fixture)
 
 from audio_organizer import changes as ch
 from audio_organizer import covers, sync, tags
@@ -25,12 +25,6 @@ def _found_texas(session, tmp_path):
     return jpeg
 
 
-def _apply(session, changeset):
-    ch.set_status(changeset.changes, "approved")
-    outcomes = ch.apply(session, changeset)
-    assert all(o.ok for o in outcomes), [o.message for o in outcomes]
-
-
 def test_found_cover_saved_in_folder(library):  # noqa: F811
     session, lib, root, tmp_path = library
     jpeg = _found_texas(session, tmp_path)
@@ -38,13 +32,13 @@ def test_found_cover_saved_in_folder(library):  # noqa: F811
 
     [folder] = covers.survey(session, lib, path_prefix="Texas/").folders
     assert (folder.save_as, folder.overwrite) == ("Texas/Greatest Hits/cover.jpg", False)
-    changeset = covers.propose(session, lib, [folder], "Covers")
-    assert [c.kind for c in changeset.changes] == ["cover", "cover", "image"]
-    assert ch.describe(changeset.changes[-1]) == (
+    changeset = write_covers(session, lib, [folder])
+    assert sorted(c.kind for c in changeset.changes) == ["cover", "cover", "image"]
+    [saving] = [c for c in changeset.changes if c.kind == "image"]
+    assert ch.describe(saving) == (
         "save the Cover Art Archive's image of Texas – Greatest Hits (500x500) as "
         "Texas/Greatest Hits/cover.jpg"
     )
-    _apply(session, changeset)
     assert (root / "Texas/Greatest Hits/cover.jpg").read_bytes() == jpeg
     assert sync.find_cover(root / "Texas/Greatest Hits").name == "cover.jpg"
     assert covers.survey(session, lib, path_prefix="Texas/").folders == []
@@ -59,14 +53,13 @@ def test_save_found_cover_for_tracks_that_have_it_embedded(library):  # noqa: F8
     session, lib, root, tmp_path = library
     jpeg = _found_texas(session, tmp_path)
     embedding = covers.survey(session, lib, path_prefix="Texas/", save_images=False).folders
-    _apply(session, covers.propose(session, lib, embedding, "Embed"))
+    write_covers(session, lib, embedding)
     assert not (root / "Texas/Greatest Hits/cover.jpg").exists()
 
     [folder] = covers.survey(session, lib, path_prefix="Texas/").folders
     assert folder.files == [] and folder.save_as == "Texas/Greatest Hits/cover.jpg"
-    changeset = covers.propose(session, lib, [folder], "Save")
+    changeset = write_covers(session, lib, [folder])
     assert [c.kind for c in changeset.changes] == ["image"]
-    _apply(session, changeset)
     assert (root / "Texas/Greatest Hits/cover.jpg").read_bytes() == jpeg
     assert covers.survey(session, lib, path_prefix="Texas/").folders == []
 
@@ -78,9 +71,9 @@ def test_saving_replaces_a_small_cover_jpg(library):  # noqa: F811
 
     [folder] = covers.survey(session, lib, path_prefix="Texas/").folders
     assert (folder.save_as, folder.overwrite) == ("Texas/Greatest Hits/Cover.JPG", True)
-    changeset = covers.propose(session, lib, [folder], "Covers")
-    assert ch.describe(changeset.changes[-1]).startswith("replace Texas/Greatest Hits/Cover.JPG")
-    _apply(session, changeset)
+    changeset = write_covers(session, lib, [folder])
+    [saving] = [c for c in changeset.changes if c.kind == "image"]
+    assert ch.describe(saving).startswith("replace Texas/Greatest Hits/Cover.JPG")
     assert (root / "Texas/Greatest Hits/Cover.JPG").read_bytes() == jpeg
     assert all(o.ok for o in ch.undo(session, changeset))
     assert (root / "Texas/Greatest Hits/Cover.JPG").read_bytes() == thumbnail
@@ -90,8 +83,7 @@ def test_saved_image_changed_since_is_not_undone(library):  # noqa: F811
     session, lib, root, tmp_path = library
     _found_texas(session, tmp_path)
     folders = covers.survey(session, lib, path_prefix="Texas/").folders
-    changeset = covers.propose(session, lib, folders, "Covers")
-    _apply(session, changeset)
+    changeset = write_covers(session, lib, folders)
     (root / "Texas/Greatest Hits/cover.jpg").write_bytes(b"edited elsewhere")
     outcomes = {o.change.kind: o for o in ch.undo(session, changeset)}
     assert not outcomes["image"].ok

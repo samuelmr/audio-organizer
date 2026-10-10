@@ -11,6 +11,7 @@ undone too. Values that a later operation or scan has changed since are left as 
 are: undoing reverts only what still holds the operation's value.
 """
 
+import json
 from collections.abc import Iterable
 from dataclasses import dataclass
 from itertools import batched
@@ -19,13 +20,17 @@ from typing import NamedTuple
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .models import AudioFile, FieldValue, Operation, OperationValue
+from .models import AudioFile, CoverDesire, FieldValue, Operation, OperationValue
 from .provenance import refresh_effective
 
 # What an operation did: user edits (one file, an album, a folder), a rule set on the
 # library (ratings from preferences), values of a lookup taken as the user's own, the
-# user's edits dropped, and undoing another operation.
-KINDS = ("edit", "ratings", "accept", "discard", "undo")
+# user's edits dropped, covers chosen, and undoing another operation.
+KINDS = ("edit", "ratings", "accept", "discard", "covers", "undo")
+
+# The source of an operation value that is a desired cover (models.CoverDesire), not a
+# FieldValue: its field is the desire's kind, before and after are its spec as JSON.
+DESIRE = "desire"
 
 BATCH = 1000
 
@@ -37,6 +42,14 @@ class Value(NamedTuple):
     source: str
     field: str
     value: str | None
+
+
+class Desire(NamedTuple):
+    """The cover the user wants a file to have; spec None removes the desire."""
+
+    file_id: int
+    kind: str
+    spec: dict | None
 
 
 @dataclass
@@ -54,10 +67,11 @@ def record(
     values: Iterable[Value],
     *,
     reverts: Operation | None = None,
+    desires: Iterable[Desire] = (),
 ) -> Operation | None:
-    """Set the values and record them as one operation. Values that are already so are
-    left out; when none is left, no operation is recorded and None is returned. The
-    caller commits."""
+    """Set the values (and desired covers) and record them as one operation. Values that
+    are already so are left out; when none is left, no operation is recorded and None is
+    returned. The caller commits."""
     if kind not in KINDS:
         raise ValueError(f"Unknown operation kind: {kind}")
     operation = Operation(
@@ -103,12 +117,55 @@ def record(
         session.flush()
         _expire_values(session, touched)
         refresh_effective(session, sorted(touched))
+    changed = _set_desires(session, desires)
+    if changed:
+        if not changed_any:
+            session.add(operation)
+            changed_any = True
+        operation.values.extend(changed)
     if not changed_any:
         return None
     if reverts is not None:
         session.flush()
         reverts.reverted_by = operation.id
     return operation
+
+
+def _set_desires(session: Session, desires: Iterable[Desire]) -> list[OperationValue]:
+    """Set the desired covers; a decided cover is pending again, even if the same one was
+    written before. Returns what changed, as operation values."""
+    wanted = {(d.file_id, d.kind): d.spec for d in desires}
+    if not wanted:
+        return []
+    current = {
+        (row.file_id, row.kind): row
+        for batch in batched(wanted, BATCH, strict=False)
+        for row in session.scalars(
+            select(CoverDesire).where(CoverDesire.file_id.in_({f for f, _ in batch}))
+        )
+    }
+    changed = []
+    for (file_id, kind), spec in wanted.items():
+        row = current.get((file_id, kind))
+        before = row.spec if row and not row.written else None
+        if row and not row.written and row.spec == spec:
+            continue
+        if row is None and spec is None:
+            continue
+        if row is None:
+            session.add(CoverDesire(file_id=file_id, kind=kind, spec=spec))
+        elif spec is None:
+            session.delete(row)
+        else:
+            row.spec, row.written = spec, False
+        changed.append(
+            OperationValue(
+                file_id=file_id, field=kind, source=DESIRE,
+                before=json.dumps(before) if before else None,
+                after=json.dumps(spec) if spec else None,
+            )
+        )  # fmt: skip
+    return changed
 
 
 def _expire_values(session: Session, file_ids: set[int]) -> None:
@@ -123,8 +180,22 @@ def undo(session: Session, operation: Operation) -> Undone:
     the value it set. The caller commits."""
     if operation.reverted_by is not None:
         raise ValueError(f"Operation {operation.id} has already been undone")
-    back, kept = [], 0
+    back, back_desires, kept = [], [], 0
     for batch in batched(operation.values, BATCH, strict=False):
+        for v in batch:
+            if v.source != DESIRE:
+                continue
+            row = session.get(CoverDesire, (v.file_id, v.field))
+            now = None if row is None else "written" if row.written else json.dumps(row.spec)
+            if now == v.after:
+                back_desires.append(
+                    Desire(v.file_id, v.field, json.loads(v.before) if v.before else None)
+                )
+            else:  # changed since, or already written: undo the write first
+                kept += 1
+        batch = [v for v in batch if v.source != DESIRE]
+        if not batch:
+            continue
         current = {
             (fv.file_id, fv.source, fv.field): fv.value
             for fv in session.scalars(
@@ -141,9 +212,9 @@ def undo(session: Session, operation: Operation) -> Undone:
                 kept += 1
     undoing = record(
         session, operation.library_id, "undo", f"Undo: {operation.description}", back,
-        reverts=operation,
+        reverts=operation, desires=back_desires,
     )  # fmt: skip
-    return Undone(undoing, len(back) if undoing else 0, kept)
+    return Undone(undoing, len(back) + len(back_desires) if undoing else 0, kept)
 
 
 @dataclass

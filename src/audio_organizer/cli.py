@@ -1999,12 +1999,15 @@ def covers_command(
         bool,
         typer.Option(help="Also save covers found online as the folder's cover.jpg"),
     ] = True,
-    propose: Annotated[
-        bool, typer.Option("--propose", help="Create a changeset for a batch")
+    decide: Annotated[
+        bool, typer.Option("--decide", help="Decide on the covers of a batch of folders")
     ] = False,
     library: LibraryOption = None,
 ) -> None:
-    """Embed covers into tracks that have none, or only a thumbnail.
+    """Choose covers to embed into tracks that have none, or only a thumbnail.
+
+    Without --decide this lists what would be chosen; with it the choice is kept in the
+    catalog (undo it with `aorg history`) and written by `aorg pending --only cover`.
 
     The cover is the folder's image (cover/folder/front.jpg or .png, or the folder's only
     image), or when the folder has no image of at least --min-pixels, one that `aorg
@@ -2030,14 +2033,15 @@ def covers_command(
             "with such tracks have no image."
         )
         batch = found.folders[:limit]
-        if propose:
+        if decide:
             if batch:
-                changeset = cv.propose(
+                operation = cv.decide(
                     session, lib, batch, f"Embed the covers of {len(batch)} folders"
                 )
                 typer.echo(
-                    f"Changeset {changeset.id}: {len(changeset.changes)} changes. Review with "
-                    f"`aorg changes show {changeset.id}`."
+                    f"Decided on the covers of {len(batch)} folders"
+                    + (f" (operation {operation.id})" if operation else " (already decided)")
+                    + ". Review and write them with `aorg pending --only cover`."
                 )
             return
         for folder in batch:
@@ -2054,7 +2058,7 @@ def covers_command(
                 f"{len(folder.files)} tracks{replace}{save}"
             )
         if batch:
-            typer.echo(f"Run with --propose to create a changeset for {len(batch)} folders.")
+            typer.echo(f"Run with --decide to choose these covers for {len(batch)} folders.")
 
 
 @app.command("artists")

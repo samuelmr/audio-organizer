@@ -419,8 +419,10 @@ On a track's page in the web UI:
 Phones, car stereos and many players only show covers embedded in the files:
 
     aorg covers                               # tracks without a cover, and the cover
-    aorg covers --path "Björk" --propose      # embed it into those tracks
-    aorg covers --min-pixels 500 --propose    # also replace covers under 500 px
+    aorg covers --path "Björk" --decide       # choose it for those tracks
+    aorg covers --min-pixels 500 --decide     # also replace covers under 500 px
+    aorg pending --only cover                 # review, then write the chosen covers
+    aorg pending --only cover --write
 
 The cover is the folder's image, `cover`, `folder` or `front` (`.jpg`, `.jpeg` or
 `.png`), or its only image; when the folder has none at least `--min-pixels` (200 by
@@ -431,12 +433,12 @@ every track, so mind large images. A file whose cover is big enough is never giv
 another one. The web UI's Covers page does the same, also for single folders, and a
 track's page can embed its folder's cover into that one file. Listing folders is slow on a
 network share, so the page remembers what each folder holds and lists a folder again only
-when it is about to be shown and has changed; proposing changes always checks the disk.
+when it is about to be shown and has changed; choosing covers always checks the disk.
 `aorg scan` fills this memory as it walks the library (it sees every folder anyway), so
 the page is fast from the first view. *Check the folders again* lists every folder again,
 if the counts below the table are stale. Every folder on the page is ticked; untick the
 ones you do not want, or use the box in the header to select or deselect all, and
-propose a changeset for the ticked ones.
+choose covers for the ticked ones.
 
 A cover found online is also saved as the folder's `cover.jpg` (`cover.png` for a PNG),
 so that players that read folder images and [sync](#syncing-to-object-storage) have it

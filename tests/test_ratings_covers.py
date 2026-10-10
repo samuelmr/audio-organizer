@@ -2,8 +2,8 @@ import subprocess
 
 import pytest
 from sqlalchemy import delete, select
+from test_coverart import write_covers
 
-from audio_organizer import changes as ch
 from audio_organizer import covers, operations, ratings, tags, writing
 from audio_organizer.models import AudioFile, FieldValue, Library
 from audio_organizer.provenance import resolve
@@ -75,9 +75,7 @@ def test_covers_in_batches(library):
         "Air/Moon Safari/01 La Femme d'Argent.mp3",
         "Air/Moon Safari/02 Sexy Boy.mp3",
     ]  # the m4a already has one
-    changeset = covers.propose(session, lib, [folder], "Embed")
-    ch.set_status(changeset.changes, "approved")
-    assert all(o.ok for o in ch.apply(session, changeset))
+    write_covers(session, lib, [folder])
     for name in ("01 La Femme d'Argent.mp3", "02 Sexy Boy.mp3"):
         assert covers.embedded(root / "Air/Moon Safari" / name) is not None
     assert covers.survey(session, lib).folders == []
@@ -110,8 +108,13 @@ def test_cover_is_not_embedded_twice(library):
     session.commit()
     [folder] = covers.survey(session, lib).folders
     assert len(folder.files) == 3
-    changeset = covers.propose(session, lib, [folder], "Embed")
-    ch.set_status(changeset.changes, "approved")
-    outcomes = {o.change.file.path: o for o in ch.apply(session, changeset)}
+    covers.decide(session, lib, [folder], "Embed")
+    found = writing.survey(session, lib, writing.Selection(only=["cover"]), 1000)
+    _, outcomes = writing.write(session, found.files, "Embed")
+    outcomes = {o.change.file.path: o for o in outcomes}
     refused = outcomes["Air/Moon Safari/03 All I Need.m4a"]
     assert not refused.ok and "already has an embedded cover" in refused.message
+    # What could not be written stays pending
+    assert [
+        p.file.path for p in writing.survey(session, lib, writing.Selection(only=["cover"])).files
+    ] == ["Air/Moon Safari/03 All I Need.m4a"]
