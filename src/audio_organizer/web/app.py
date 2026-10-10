@@ -62,7 +62,7 @@ from ..models import (
 )
 from ..provenance import resolve
 from ..tags import FIELDS
-from ..tracks import present
+from ..tracks import ALBUM_FIELDS, album_files, album_filter, present, shared_values
 
 HERE = Path(__file__).parent
 # The track page's sections, in the order shown; every tag field is in one of them
@@ -77,7 +77,22 @@ FIELD_GROUPS = (
     ("Identification", ("discid",)),
 )  # fmt: skip
 assert sorted(f for _, names in FIELD_GROUPS for f in names) == sorted(FIELDS)
+FIELD_LABELS = {
+    "title": "Title", "artist": "Artist", "album": "Album", "albumartist": "Album artist",
+    "tracknumber": "Track", "tracktotal": "Tracks", "discnumber": "Disc", "disctotal": "Discs",
+    "date": "Year or date", "originaldate": "Original year", "genre": "Genre",
+    "compilation": "Compilation (1)", "albumartistsort": "Album artist sort name",
+    "artistsort": "Artist sort name", "composer": "Composer", "conductor": "Conductor",
+    "grouping": "Grouping", "subtitle": "Subtitle", "language": "Language (e.g. fin, eng)",
+    "mood": "Mood", "rating": "Rating", "tempo": "Tempo", "situation": "Situation",
+    "preference": "Preference", "replaygain_track_gain": "Track gain",
+    "replaygain_track_peak": "Track peak", "replaygain_album_gain": "Album gain",
+    "replaygain_album_peak": "Album peak", "discid": "gnudb disc ID",
+}  # fmt: skip
 PAGE_SIZE = 50
+# An album or folder with more tracks than this is not offered for editing at once: it is
+# more likely a mixed folder or a common album name ("Greatest Hits") than one album
+MAX_ALBUM_EDIT = 200
 # Starlette parses a posted form with at most 1000 fields; each page's batch form posts
 # roughly one field per row, so a batch above this would fail to submit. Clamp every
 # "limit" so a hand-edited URL can't ask for more than the form can post back.
@@ -116,6 +131,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
     templates.env.globals["asset"] = _asset
     templates.env.globals["move_source"] = ch.move_source
     templates.env.globals["retag_fields"] = ch.retag_fields
+    templates.env.globals["field_labels"] = FIELD_LABELS
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 
     def get_session() -> Iterator[Session]:
@@ -251,15 +267,9 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             )
         if FILTERS.get(show) is not None:
             query = query.where(FILTERS[show])
-        for column, value in ((M.album, album), (M.albumartist, albumartist), (M.artist, artist)):
-            if value is not None:
-                query = query.where(func.lower(column) == value.lower())
-        if folder is not None:
-            prefix = folder.strip("/") + "/"
-            query = query.where(
-                AudioFile.path.startswith(prefix, autoescape=True),
-                ~AudioFile.path.like(_like_escape(prefix) + "%/%", escape="\\"),
-            )
+        query = query.where(*album_filter(album, albumartist, folder))
+        if artist is not None:
+            query = query.where(func.lower(M.artist) == artist.lower())
         sort = sort if sort in SORTS else ("album" if album or folder else "artist")
         total = session.scalar(select(func.count()).select_from(query.subquery()))
         pages = max(1, ceil(total / PAGE_SIZE))
@@ -284,9 +294,17 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             else folders.pop() if album is not None and total == len(rows) and len(folders) == 1
             else None
         )  # fmt: skip
+        # An album or folder shown whole can be edited at once: its shared values
+        album_edit = (
+            shared_values(session, album_files(session, lib.id, album, albumartist, folder),
+                          ALBUM_FIELDS)
+            if (album is not None or folder is not None) and artist is None and not q
+            and show == "all" and 0 < total <= MAX_ALBUM_EDIT
+            else None
+        )  # fmt: skip
         return render(
             request, "library.html", library=lib, rows=rows, total=total, sort=sort,
-            album_folder=album_folder, folder_links=folder_links,
+            album_folder=album_folder, folder_links=folder_links, album_edit=album_edit,
             page=page, pages=pages, sorts=list(SORTS), filters=list(FILTERS), params=params,
             **params,
         )  # fmt: skip
@@ -582,6 +600,49 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             return _redirect(f"/tracks/{file.id}", "Saved; the file's tags already match")
         session.commit()
         return _redirect(f"/changes/{changeset.id}", "Edit saved; review the change to the file")
+
+    @app.post("/libraries/{name}/edit-album")
+    async def edit_album(request: Request, name: str, session: Session = SessionDep):
+        """Edit all tracks of an album or folder at once: a field filled in with a new
+        value is saved as a manual value of every track, and proposed in one changeset.
+        An empty field (or one left as it was) is not changed."""
+        lib = _library(session, name)
+        form = await request.form()
+        chosen = {
+            key: (str(form[f"of_{key}"]) if f"of_{key}" in form else None)
+            for key in ("album", "albumartist", "folder")
+        }
+        back = _url(f"/libraries/{lib.name}", **chosen)
+        if chosen["album"] is None and chosen["folder"] is None:
+            raise HTTPException(400, "Choose an album or a folder")
+        files = album_files(session, lib.id, **chosen)
+        if not files:
+            return _redirect(back, "No tracks found")
+        if len(files) > MAX_ALBUM_EDIT:
+            return _redirect(back, f"Too many tracks to edit at once (over {MAX_ALBUM_EDIT})")
+        shared = shared_values(session, files, ALBUM_FIELDS)
+        values: dict[str, str | None] = {}
+        for field in ALBUM_FIELDS:
+            submitted = str(form.get(field, "")).strip()
+            if submitted and submitted != shared[field]:
+                values[field] = submitted
+        if not values:
+            return _redirect(back, "Nothing changed")
+        what = (
+            f"album {chosen['album']}" if chosen["album"] is not None
+            else f"folder {chosen['folder'].strip('/')}/"
+        )  # fmt: skip
+        changeset = ch.new_changeset(session, f"Manual edit of {what}", "manual")
+        changes = ch.propose_manual_edits(session, changeset, files, values)
+        if not changes:
+            session.expunge(changeset)
+            session.commit()
+            return _redirect(back, "Saved; the files' tags already match")
+        session.commit()
+        return _redirect(
+            f"/changes/{changeset.id}",
+            f"Edit saved; review the changes to {len(changes)} files",
+        )
 
     # ---- duplicates ----------------------------------------------------------------------
 
@@ -1667,10 +1728,6 @@ def _asset(name: str) -> str:
 
 def _fold_text(text: str) -> str:
     return unicodedata.normalize("NFC", text).casefold()
-
-
-def _like_escape(text: str) -> str:
-    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _folder_links(library: Library, paths) -> list[tuple[str, str]]:

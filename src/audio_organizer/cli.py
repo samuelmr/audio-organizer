@@ -31,6 +31,7 @@ from .models import AudioFile, Change, Changeset, Library, Playlist, SyncTarget
 from .provenance import resolve
 from .scanner import ScanStats, scan
 from .tags import FIELDS
+from .tracks import album_files, relative_folder
 
 app = typer.Typer(
     no_args_is_help=True, rich_markup_mode="markdown", help="Maintain a music collection."
@@ -569,12 +570,7 @@ def edit(
 ) -> None:
     """Edit metadata manually. The edit is stored in the catalog and proposed as a
     changeset that writes it into the file's tags."""
-    values: dict[str, str | None] = {name: None for name in unset}
-    for item in set_:
-        name, sep, value = item.partition("=")
-        if not sep or name not in FIELDS:
-            raise typer.BadParameter(f"--set takes field=value; fields: {', '.join(FIELDS)}")
-        values[name] = value.strip()
+    values = _edit_values(set_, unset)
     with _session(ctx) as session:
         file = _find_file(session, path)
         changeset = ch.new_changeset(session, f"Manual edit of {file.path}", "manual")
@@ -587,6 +583,83 @@ def edit(
         session.commit()
         typer.echo(f"Changeset {changeset.id}: {ch.describe(change)}")
         typer.echo(f"Review with `aorg changes show {changeset.id}`, then approve and apply.")
+
+
+@app.command("edit-album")
+def edit_album(
+    ctx: typer.Context,
+    library: Annotated[str | None, typer.Argument()] = None,
+    album: Annotated[str | None, typer.Option(help="The album's name (ignoring case)")] = None,
+    albumartist: Annotated[
+        str | None, typer.Option(help="With --album: only the album by this album artist")
+    ] = None,
+    folder: Annotated[
+        str | None,
+        typer.Option(
+            help="The tracks in this folder, not its subfolders (relative to the "
+            "library, or inside it)"
+        ),
+    ] = None,  # fmt: skip
+    set_: Annotated[list[str], typer.Option("--set", help="field=value")] = [],  # noqa: B006
+    unset: Annotated[list[str], typer.Option(help="Field whose manual value to remove")] = [],  # noqa: B006
+) -> None:
+    """Edit all tracks of an album or folder at once, e.g. to fix a typo in the album's
+    name. The edit is stored in the catalog for every track and proposed as one changeset
+    that writes it into their tags:
+
+        aorg edit-album --album "Best of Foriegner" --set album="Best of Foreigner"
+        aorg edit-album --folder "Foreigner/Best of Foriegner" --set date=1992
+    """
+    values = _edit_values(set_, unset)
+    if not values:
+        raise typer.BadParameter("give at least one --set or --unset")
+    if (album is None) == (folder is None):
+        raise typer.BadParameter("give either --album or --folder")
+    with _session(ctx) as session:
+        lib = _library(session, library)
+        if folder is not None:
+            try:
+                folder = relative_folder(lib, folder)
+            except ValueError as e:
+                raise typer.BadParameter(str(e)) from None
+        files = album_files(session, lib.id, album, albumartist, folder)
+        if not files:
+            typer.echo("No tracks found.")
+            raise typer.Exit(1)
+        what = f"album {album}" if album is not None else f"folder {folder}/"
+        changeset = ch.new_changeset(session, f"Manual edit of {what}", "manual")
+        changes = ch.propose_manual_edits(session, changeset, files, values)
+        if not changes:
+            session.expunge(changeset)
+            session.commit()
+            typer.echo(f"Saved for {len(files)} tracks; their tags already match.")
+            return
+        session.commit()
+        folders = sorted({str(PurePosixPath(f.path).parent) for f in files})
+        typer.echo(
+            f"Changeset {changeset.id}: {len(changes)} of {len(files)} tracks, in "
+            + (folders[0] + "/" if len(folders) == 1 else f"{len(folders)} folders:")
+        )
+        if len(folders) > 1:
+            for name in folders:
+                typer.echo(f"  {name}/")
+        for change in changes:
+            typer.echo(f"  {ch.describe(change)}")
+        typer.echo(f"Review with `aorg changes show {changeset.id}`, then approve and apply.")
+
+
+def _edit_values(set_: list[str], unset: list[str]) -> dict[str, str | None]:
+    """The fields given as --set field=value, and as --unset field (None)."""
+    values: dict[str, str | None] = {name: None for name in unset}
+    for item in set_:
+        name, sep, value = item.partition("=")
+        if not sep or name not in FIELDS:
+            raise typer.BadParameter(f"--set takes field=value; fields: {', '.join(FIELDS)}")
+        values[name] = value.strip()
+    unknown = [name for name in unset if name not in FIELDS]
+    if unknown:
+        raise typer.BadParameter(f"Not fields: {', '.join(unknown)}")
+    return values
 
 
 # ---- changesets --------------------------------------------------------------------------

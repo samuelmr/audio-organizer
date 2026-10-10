@@ -5,18 +5,21 @@ library, so it is done in batches and the result streamed, for consumers (sync,
 playlists) that look at each track once.
 """
 
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import PurePosixPath
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .models import AudioFile, FieldValue
+from .models import AudioFile, EffectiveMetadata, FieldValue
 from .provenance import resolve
 
 BATCH = 2000
+# The fields an album's tracks usually share, offered for editing all of them at once
+ALBUM_FIELDS = ("album", "albumartist", "artist", "date", "originaldate", "genre",
+                "compilation", "disctotal", "albumartistsort")  # fmt: skip
 
 
 @dataclass
@@ -66,6 +69,68 @@ def relative_folder(library, path: str) -> str:
 def present(library_id: int):
     """Files that exist and are readable."""
     return (AudioFile.library_id == library_id) & ~AudioFile.missing & AudioFile.error.is_(None)
+
+
+def album_filter(
+    album: str | None = None, albumartist: str | None = None, folder: str | None = None
+) -> list:
+    """Conditions choosing the tracks of an album (by its album and album artist, ignoring
+    case, wherever they lie) or of one folder (not its subfolders). Queries using them
+    join EffectiveMetadata."""
+    conditions = []
+    M = EffectiveMetadata
+    for column, value in ((M.album, album), (M.albumartist, albumartist)):
+        if value is not None:
+            conditions.append(func.lower(column) == value.lower())
+    if folder is not None:
+        prefix = folder.strip("/") + "/"
+        escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        conditions += [
+            AudioFile.path.startswith(prefix, autoescape=True),
+            ~AudioFile.path.like(escaped + "%/%", escape="\\"),
+        ]
+    return conditions
+
+
+def album_files(
+    session: Session,
+    library_id: int,
+    album: str | None = None,
+    albumartist: str | None = None,
+    folder: str | None = None,
+) -> list[AudioFile]:
+    """The present files of an album or folder (see album_filter), in path order."""
+    if album is None and folder is None:
+        raise ValueError("Choose an album or a folder")
+    return list(
+        session.scalars(
+            select(AudioFile)
+            .join(EffectiveMetadata, EffectiveMetadata.file_id == AudioFile.id)
+            .where(present(library_id), *album_filter(album, albumartist, folder))
+            .order_by(AudioFile.path)
+        )
+    )
+
+
+def shared_values(
+    session: Session, files: list[AudioFile], fields: Iterable[str]
+) -> dict[str, str | None]:
+    """The resolved value of each field that all the files agree on ("" when none has
+    one), or None where they differ."""
+    values: dict[int, list] = {}
+    ids = [f.id for f in files]
+    for start in range(0, len(ids), BATCH):
+        for row in session.execute(
+            select(FieldValue.file_id, FieldValue.field, FieldValue.source, FieldValue.value)
+            .where(FieldValue.file_id.in_(ids[start : start + BATCH]))
+        ):  # fmt: skip
+            values.setdefault(row.file_id, []).append(row)
+    resolved = [resolve(values.get(i, [])) for i in ids]
+    shared: dict[str, str | None] = {}
+    for name in fields:
+        found = {r[name].value if name in r else "" for r in resolved}
+        shared[name] = found.pop() if len(found) == 1 else None if found else ""
+    return shared
 
 
 def iter_tracks(session: Session, library_id: int, *, batch: int = BATCH) -> Iterator[Track]:

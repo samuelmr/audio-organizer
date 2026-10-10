@@ -257,6 +257,24 @@ def propose_manual_edit(
     return change
 
 
+def propose_manual_edits(
+    session: Session,
+    changeset: Changeset,
+    files: Iterable[AudioFile],
+    values: dict[str, str | None],
+    id3_version: int | None = None,
+) -> list[Change]:
+    """The same manual edit for several files, such as all tracks of an album (to fix a
+    typo in its name once): one change per file whose tags then differ, all in one
+    changeset, so the edit is reviewed, applied and undone as a whole."""
+    changes = []
+    for file in files:
+        change = propose_manual_edit(session, changeset, file, values, id3_version)
+        if change is not None:
+            changes.append(change)
+    return changes
+
+
 def set_status(changes: list[Change], status: str) -> int:
     """Approve or reject proposed changes (or return approved/rejected ones to proposed)."""
     if status not in ("approved", "rejected", "proposed"):

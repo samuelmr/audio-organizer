@@ -32,6 +32,29 @@
 </form>
 {% endif %}
 
+{% if album_edit is not none %}
+<details class="album-edit">
+ <summary>Edit all {{ total }} tracks</summary>
+ <form method="post" action="{{ base }}/edit-album">
+  {% for key in ("album", "albumartist", "folder") %}{% if params[key] is not none %}<input type="hidden" name="of_{{ key }}" value="{{ params[key] }}">{% endif %}{% endfor %}
+  <table class="fields">
+   <tbody>
+   {% for name, value in album_edit.items() %}
+    <tr>
+     <th scope="row"><label for="a-{{ name }}">{{ field_labels.get(name, name) }}</label></th>
+     <td><input id="a-{{ name }}" name="{{ name }}" value="{{ value or '' }}"{% if value is none %} placeholder="(differs between tracks)"{% endif %}></td>
+    </tr>
+   {% endfor %}
+   </tbody>
+  </table>
+  <p class="hint">A field you change is saved as your edit of every track shown here, and
+  proposed as changes to the files' tags, which you review before they are applied. Empty
+  fields and fields left as they are stay as they are on each track.</p>
+  <p><button class="primary">Save</button></p>
+ </form>
+</details>
+{% endif %}
+
 <form class="search" method="get" action="{{ base }}">
  {% for key in ("album", "albumartist", "artist", "folder") %}{% if params[key] is not none %}<input type="hidden" name="{{ key }}" value="{{ params[key] }}">{% endif %}{% endfor %}
  <input type="search" name="q" value="{{ q }}" placeholder="Artist, album, title or path" aria-label="Search">

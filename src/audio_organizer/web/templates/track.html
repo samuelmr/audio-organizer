@@ -1,18 +1,7 @@
 {% extends "base.html" %}
 {% from "_macros.html" import play %}
 {% set library = file.library %}
-{% set labels = {
-  "title": "Title", "artist": "Artist", "album": "Album", "albumartist": "Album artist",
-  "tracknumber": "Track", "tracktotal": "Tracks", "discnumber": "Disc", "disctotal": "Discs",
-  "date": "Year or date", "originaldate": "Original year", "genre": "Genre",
-  "compilation": "Compilation (1)", "albumartistsort": "Album artist sort name",
-  "artistsort": "Artist sort name", "composer": "Composer", "conductor": "Conductor",
-  "grouping": "Grouping", "subtitle": "Subtitle", "language": "Language (e.g. fin, eng)",
-  "mood": "Mood", "rating": "Rating", "tempo": "Tempo", "situation": "Situation",
-  "preference": "Preference", "replaygain_track_gain": "Track gain",
-  "replaygain_track_peak": "Track peak", "replaygain_album_gain": "Album gain",
-  "replaygain_album_peak": "Album peak", "discid": "gnudb disc ID",
-} %}
+{% set labels = field_labels %}
 {% block title %}{{ resolved.title.value if "title" in resolved else file.path }} – audio-organizer{% endblock %}
 {% block content %}
 <h1>{{ resolved.title.value if "title" in resolved else file.path.rsplit("/", 1)[-1] }}</h1>
