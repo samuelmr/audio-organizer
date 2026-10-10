@@ -112,10 +112,42 @@ def test_no_saving_when_not_wanted_or_ambiguous(library, copy_audio):  # noqa: F
     assert folder.save_as is None and len(folder.files) == 2
 
 
-def test_save_target(tmp_path):
-    assert covers._save_target(tmp_path, "image/jpeg") == ("cover.jpg", False)
-    assert covers._save_target(tmp_path, "image/png") == ("cover.png", False)
-    (tmp_path / "COVER.jpeg").write_bytes(b"x")
-    assert covers._save_target(tmp_path, "image/jpeg") == ("cover.jpg", False)
-    assert covers._save_target(tmp_path, "image/png") is None  # cover.jpeg would win
-    assert covers._save_target(tmp_path / "gone", "image/jpeg") is None
+def test_save_target():
+    assert covers._save_target([], "image/jpeg") == ("cover.jpg", False)
+    assert covers._save_target([], "image/png") == ("cover.png", False)
+    assert covers._save_target(["COVER.jpeg"], "image/jpeg") == ("cover.jpg", False)
+    assert covers._save_target(["COVER.jpeg"], "image/png") is None  # cover.jpeg would win
+    assert covers._save_target(["Cover.JPG"], "image/jpeg") == ("Cover.JPG", True)
+
+
+def test_cached_survey_lists_folders_only_when_needed(library, monkeypatch):  # noqa: F811
+    session, lib, root, tmp_path = library
+    folder = root / "Texas/Greatest Hits"
+    _image(folder / "cover.jpg", "500x500")
+    listed = []
+    real = covers.os.listdir
+    monkeypatch.setattr(covers.os, "listdir", lambda p: listed.append(p) or real(p))
+
+    [shown] = covers.survey(session, lib, path_prefix="Texas/", cached=True).folders
+    assert shown.image.name == "cover.jpg" and len(listed) == 1  # first view lists the folder
+    covers.survey(session, lib, path_prefix="Texas/", cached=True)
+    assert len(listed) == 1  # later views use the catalog; the unchanged folder is not listed
+
+    (folder / "cover.jpg").rename(folder / "folder.png")  # the folder's mtime changes
+    [shown] = covers.survey(session, lib, path_prefix="Texas/", cached=True).folders
+    assert shown.image.name == "folder.png" and len(listed) == 2  # a shown folder is checked
+
+    covers.survey(session, lib, path_prefix="Texas/")  # not cached: listed afresh
+    assert len(listed) == 3
+
+
+def test_cached_survey_trusts_the_catalog_for_folders_not_shown(library):  # noqa: F811
+    session, lib, root, tmp_path = library
+    folder = root / "Texas/Greatest Hits"
+    assert covers.survey(session, lib, path_prefix="Texas/", cached=True).without_image == 1
+    _image(folder / "cover.jpg", "500x500")
+    # Only the counts of folders that are not shown come from the catalog
+    assert covers.survey(session, lib, path_prefix="Texas/", cached=True).without_image == 1
+    [shown] = covers.survey(session, lib, path_prefix="Texas/").folders  # checking again
+    assert shown.image.name == "cover.jpg"
+    assert covers.survey(session, lib, path_prefix="Texas/", cached=True).without_image == 0

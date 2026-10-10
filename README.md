@@ -392,7 +392,10 @@ Windows Media Player's `AlbumArtSmall.jpg`, are thumbnails: listed but not embed
 and an embedded thumbnail is replaced (undo puts it back). The image is copied into
 every track, so mind large images. A file whose cover is big enough is never given
 another one. The web UI's Covers page does the same, also for single folders, and a
-track's page can embed its folder's cover into that one file.
+track's page can embed its folder's cover into that one file. Listing folders is slow on a
+network share, so the page remembers what each folder holds and lists a folder again only
+when it is about to be shown and has changed; proposing changes always checks the disk.
+*Check the folders again* lists every folder again, if the counts below the table are stale.
 
 A cover found online is also saved as the folder's `cover.jpg` (`cover.png` for a PNG),
 so that players that read folder images and [sync](#syncing-to-object-storage) have it

@@ -891,13 +891,14 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         limit: int = 20,
         min_pixels: int = covers.MIN_PIXELS,
         save_images: bool = True,
+        refresh: bool = False,
         session: Session = SessionDep,
     ):
         lib = _library(session, name)
         limit = _clamp_batch(limit)
         found = covers.survey(
             session, lib, path_prefix=path or None, enough=limit,
-            min_pixels=min_pixels, save_images=save_images,
+            min_pixels=min_pixels, save_images=save_images, cached=not refresh,
         )  # fmt: skip
         return render(
             request, "covers.html", library=lib, found=found, path=path, limit=limit,

@@ -431,6 +431,26 @@ class CoverImage(Base):
         return (self.width, self.height) if self.width and self.height else None
 
 
+class FolderImages(Base):
+    """The image files in a library folder and the dimensions of the one that serves as its
+    cover, so that the Covers page need not list folders on a network share on every view.
+    A cache of what the disk says, not of other catalog data: dir_mtime_ns is the folder's
+    modification time when it was listed, and a folder is listed again when that has
+    changed (covers.survey). Safe to delete; it is filled again as pages are viewed."""
+
+    __tablename__ = "folder_images"
+
+    library_id: Mapped[int] = mapped_column(
+        ForeignKey("library.id", ondelete="CASCADE"), primary_key=True
+    )
+    folder: Mapped[str] = mapped_column(Text, primary_key=True)  # relative to the root
+    dir_mtime_ns: Mapped[int] = mapped_column(BigInteger)
+    images: Mapped[list[str]] = mapped_column(JSON)  # names of the image files
+    cover: Mapped[str | None] = mapped_column(Text)  # sync.pick_cover of them
+    cover_width: Mapped[int | None]
+    cover_height: Mapped[int | None]
+
+
 class CoverLookup(Base):
     """The outcome of looking up an album's cover online, so that a scan asks only
     once. Albums are keyed by artist and title (pathparse.normalize_name), not by folder,

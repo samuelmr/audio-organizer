@@ -264,20 +264,31 @@ def track_metadata(
     return metadata
 
 
+def image_names(names: Iterable[str]) -> list[str]:
+    """The image files among a folder's file names."""
+    return [n for n in names if n.casefold().endswith(IMAGE_EXTENSIONS)]
+
+
+def pick_cover(names: Iterable[str]) -> str | None:
+    """cover/folder/front.jpg|jpeg|png (any case), else the only image among the names."""
+    images = {n.casefold(): n for n in image_names(names)}
+    for stem in COVER_NAMES:
+        for ext in IMAGE_EXTENSIONS:
+            if stem + ext in images:
+                return images[stem + ext]
+    if len(images) == 1:
+        return next(iter(images.values()))
+    return None
+
+
 def find_cover(directory: Path) -> Path | None:
-    """cover/folder/front.jpg|jpeg|png (any case), else the only image in the folder."""
+    """The folder's cover image (see pick_cover)."""
     try:
         names = os.listdir(directory)
     except OSError:
         return None
-    images = {n.casefold(): n for n in names if n.casefold().endswith(IMAGE_EXTENSIONS)}
-    for stem in COVER_NAMES:
-        for ext in IMAGE_EXTENSIONS:
-            if stem + ext in images:
-                return directory / images[stem + ext]
-    if len(images) == 1:
-        return directory / next(iter(images.values()))
-    return None
+    cover = pick_cover(names)
+    return directory / cover if cover else None
 
 
 def _digest(content_type: str, metadata: dict[str, str]) -> str:
