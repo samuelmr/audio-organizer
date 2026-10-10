@@ -12,6 +12,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+from mutagen import MutagenError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -361,7 +362,7 @@ def apply(session: Session, changeset: Changeset, *, dry_run: bool = False) -> l
                 raise ChangeError(f"Unknown change kind {change.kind}")
             change.status, change.error, change.applied_at = "applied", None, utcnow()
             outcomes.append(Outcome(change, True, describe(change)))
-        except (ChangeError, OSError, ValueError, tags.UnsupportedFormat) as e:
+        except (ChangeError, OSError, ValueError, MutagenError, tags.UnsupportedFormat) as e:
             change.status, change.error = "failed", str(e)
             outcomes.append(Outcome(change, False, f"{describe(change)}: FAILED: {e}"))
         session.commit()
@@ -399,7 +400,7 @@ def undo(session: Session, changeset: Changeset, *, dry_run: bool = False) -> li
                 _unsave_image(session, change)
             change.status = "undone"
             outcomes.append(Outcome(change, True, "undid " + describe(change)))
-        except (ChangeError, OSError, ValueError, tags.UnsupportedFormat) as e:
+        except (ChangeError, OSError, ValueError, MutagenError, tags.UnsupportedFormat) as e:
             change.error = f"undo failed: {e}"
             outcomes.append(Outcome(change, False, f"undo {describe(change)}: FAILED: {e}"))
         session.commit()

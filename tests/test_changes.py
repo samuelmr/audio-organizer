@@ -129,3 +129,22 @@ def test_delete_changeset_only_without_applied_changes(catalog):
     ch.undo(session, changeset)
     ch.delete_changeset(session, changeset)
     assert session.scalars(select(Changeset)).all() == []
+
+
+def test_unreadable_audio_fails_the_change_instead_of_crashing(catalog, monkeypatch):
+    from mutagen.mp3 import HeaderNotFoundError
+
+    session, root, file = catalog
+    (root / "cover.jpg").write_bytes(b"\xff\xd8\xff\xe0" + b"\0" * 100)
+    changeset = ch.new_changeset(session, "cover", "manual")
+    change = ch.propose_embed_cover(changeset, file, "cover.jpg")
+    session.commit()
+    ch.set_status([change], "approved")
+
+    def unreadable(path):
+        raise HeaderNotFoundError("can't sync to MPEG frame")
+
+    monkeypatch.setattr(tags, "read", unreadable)
+    [outcome] = ch.apply(session, changeset)
+    assert not outcome.ok and "can't sync to MPEG frame" in outcome.message
+    assert change.status == "failed"
