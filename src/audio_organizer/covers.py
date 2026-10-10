@@ -28,6 +28,9 @@ from .tracks import present
 # Images smaller than this on a side are thumbnails (such as Windows Media Player's
 # AlbumArtSmall.jpg); covers that small are not embedded, and embedded ones are replaced.
 MIN_PIXELS = 200
+# Formats whose covers can be written (see _set_pictures): MP4, FLAC and the ID3 ones. Others,
+# such as Ogg Vorbis and WMA, are left out of proposals instead of failing every time.
+EMBEDDABLE = {"mp3", "aac", "mp4", "flac", "aiff", "wave"}
 UNCHECKED = "1"  # the embedded_cover value of catalogs made before sizes were read
 
 
@@ -437,7 +440,8 @@ def _album(folder: str, members: list, min_pixels: int) -> Album:
     needing = [
         (file, value)
         for file, value, _ in members
-        if value is None or small(images.parse_size(value), min_pixels)
+        if file.format in EMBEDDABLE
+        and (value is None or small(images.parse_size(value), min_pixels))
     ]
     return Album(
         folder=folder,

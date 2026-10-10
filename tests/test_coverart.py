@@ -255,3 +255,17 @@ def test_image_sizes():
     assert images.parse_size("500x400") == (500, 400)
     assert images.parse_size("?") is None and images.parse_size("1") is None
     assert images.format_size(None) == "?"
+
+
+def test_survey_leaves_out_tracks_whose_format_cannot_hold_a_cover(library):
+    session, lib, root, _ = library
+    _image(root / "Texas/Greatest Hits/cover.jpg", "320x240")
+    halo = session.scalar(select(AudioFile).where(AudioFile.path.like("%Halo.mp3")))
+    halo.format = "oggvorbis"  # as a scan of an Ogg file would record
+    session.commit()
+
+    [folder] = covers.survey(session, lib, path_prefix="Texas/").folders
+    assert [session.get(AudioFile, i).path for i in folder.replace] == [
+        "Texas/Greatest Hits/12 Insane.mp3"
+    ]
+    assert halo.id not in [f.id for f in folder.files]
