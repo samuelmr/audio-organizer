@@ -22,6 +22,7 @@ file.
   - [Covers](#covers)
   - [Ratings from MusicMatch preferences](#ratings-from-musicmatch-preferences)
   - [Writing tags](#writing-tags)
+  - [Undoing decisions](#undoing-decisions)
   - [Playlists](#playlists)
   - [Syncing to object storage](#syncing-to-object-storage)
   - [Trash](#trash)
@@ -188,7 +189,8 @@ come from, its identical copies and its original tags, and edit them. Click an a
 artist or folder to see just its tracks (an album's in disc and track order), or browse
 the albums list with their covers. Albums are grouped by their tags, so the tracks of an album scattered
 across folders show up together. The Pending page shows, album by album, what your edits
-and measurements would change in the files, and writes the albums you choose. The web UI
+and measurements would change in the files, and writes the albums you choose; the
+History page lists your edits and other decisions, and undoes them. The web UI
 is also where changesets are easiest to review:
 select changes (or all, then deselect some) to approve or reject, try a dry run, apply
 and undo. The ▶ buttons on track, duplicate and changeset pages play the files in the
@@ -357,9 +359,10 @@ image to cover.jpg (or cover.png for a PNG), the name sync and the players look 
 
 ### Editing metadata
 
-Edits are stored in the catalog only. Nothing is written to your files until you write
-them, usually an album or an artist at a time, together with everything else waiting
-for those files (see [Writing tags](#writing-tags)):
+Edits are stored in the catalog only, where they can be undone (see [Undoing
+decisions](#undoing-decisions)). Nothing is written to your files until you write them,
+usually an album or an artist at a time, together with everything else waiting for
+those files (see [Writing tags](#writing-tags)):
 
     aorg edit "Texas/Texas_Halo.mp3" --set album="Greatest Hits" --set tracknumber=11
     aorg pending --path "Texas/Texas_Halo.mp3"            # what would change
@@ -456,7 +459,8 @@ Poor, Bad Taste). They can become 1–5 star ratings that other players read:
 
 The default mapping is Excellent ★★★★★, Very Good ★★★★, Good ★★★, Fair ★★, Poor and Bad
 Taste ★; an empty value gives no rating. A rating already in a file is kept. The web
-UI's Ratings page does the same. Smart playlists can then use rules such as `rating>=4`.
+UI's Ratings page does the same. Applying the mapping is a decision that `aorg history
+undo` reverts. Smart playlists can then use rules such as `rating>=4`.
 
 ### Writing tags
 
@@ -479,7 +483,8 @@ ID3v2.3 or 2.4 (by default each file keeps its own; ID3v2.3 is read by more play
 and devices, and both keep all the fields above). What is listed is what is written:
 `--write` applies it at once, as a changeset that `aorg changes undo` reverts. Undoing
 restores the tags but keeps your edits, so the files are pending again; `--discard`
-drops edits (measurements and lookups are kept). Files that a changeset waiting for
+drops edits (measurements and lookups are kept; `aorg history undo` brings the edits
+back, see [Undoing decisions](#undoing-decisions)). Files that a changeset waiting for
 review would change are left to it.
 
 The web UI's Pending page lists the albums with changes waiting; choose one (or an
@@ -488,18 +493,35 @@ leave, and write the rest or discard your edits in them.
 
 By default only what the tags lack is written, so a gnudb value that differs from a tag
 is left out: the tag is the stronger evidence. To review those, add `--prefer-gnudb`
-(on the Pending page: *Replace tags that differ from gnudb's values*; the *Review what
-gnudb found* link above an album's tracks opens it for that album). The listing then
-shows each tag and the gnudb value that would replace it. Choose the fields you trust
+(on the Pending page: *Tags that differ from gnudb's values*; the *Review what gnudb
+found* link above an album's tracks opens it for that album). The listing then shows
+each tag and the gnudb value that would replace it. Choose the fields you trust
 (`--only genre,album`, or by clicking a field on the page), and the files (`--path` is
-an album's folder, say; on the page, untick files), and write them:
+an album's folder, say; on the page, untick files), and accept them. Accepted values
+become your edits, which are then written like any other:
 
     aorg pending --prefer-gnudb --path "Texas/Greatest Hits"            # what would change
-    aorg pending --prefer-gnudb --only album,genre --path "Texas/Greatest Hits" --write
+    aorg pending --prefer-gnudb --only album,genre --path "Texas/Greatest Hits" --accept
+    aorg pending --path "Texas/Greatest Hits" --write
 
 Your own edits are never replaced, and neither are tag values that gnudb only spells
 differently (case, punctuation, "02" for "2"). Once written, the tag and gnudb agree, and
 the track is no longer disputed.
+
+### Undoing decisions
+
+Every edit, album edit, rating mapping applied, gnudb values accepted and edits
+discarded is a decision kept in the catalog's history. Undoing one sets its values back,
+so its files are pending again (or no longer), and the next write puts the tags right:
+
+    aorg history                              # newest first, with how much each changed
+    aorg history show 12                      # its values: file, field, before -> after
+    aorg history undo 12
+
+A value that a later decision has changed since is left as it is. An undo is itself a
+decision, so it can be undone too. The web UI's History page lists the decisions, each
+with its values and an *Undo* button. To undo what was written into files, undo the
+changeset instead (`aorg changes undo`, or the Changes page).
 
 ### Playlists
 
@@ -658,9 +680,10 @@ Design principles:
   The hash covers the audio's length and three samples of it (`audiohash.py`), and
   each file is read once, in large blocks shared by the tag reader and the hasher
   (`blockfile.py`): network round trips and bytes read, not CPU, limit scanning.
-- **No file changes without review**: edits only change the catalog; writing them shows
-  the diff of a selection first. Every retag or move is applied as a changeset that
-  records how to undo it.
+- **No file changes without review**: edits only change the catalog, as operations that
+  record each value's before and after so they can be undone; writing them shows the
+  diff of a selection first. Every retag or move is applied as a changeset that records
+  how to undo it.
 - **Scale**: scans and syncs are incremental, and anything per-file runs in batches or
   in parallel.
 - **Core first**: the CLI is a thin layer over the `audio_organizer` package, so that
@@ -690,7 +713,8 @@ Design principles:
 | `gnudb.py` | Looking up album folders in gnudb (cddbp, pseudo-TOC from durations), `aorg gnudb`, `scan --with-gnudb` |
 | `coverart.py` | Looking up album covers online (MusicBrainz, Cover Art Archive), `aorg coverart`, `scan --with-covers` |
 | `images.py` | Size and type of JPEG and PNG images from their headers |
-| `writing.py` | Pending changes (values not yet in the files) by artist and album; storing edits, writing a selection |
+| `operations.py` | The decision log: operations that set field values, recording before and after; undo |
+| `writing.py` | Pending changes (values not yet in the files) by artist and album; storing edits, accepting lookups, writing a selection |
 | `album_edit.py` | Editing all tracks of an album or folder, and renaming its folders |
 | `ratings.py` | Star ratings from MusicMatch preferences |
 | `tracks.py` | Streaming tracks with resolved metadata, in batches |

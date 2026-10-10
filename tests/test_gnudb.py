@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import select
 from typer.testing import CliRunner
 
-from audio_organizer import coverart, gnudb, provenance, tags, writing
+from audio_organizer import coverart, gnudb, operations, provenance, tags, writing
 from audio_organizer.cli import app
 from audio_organizer.models import AudioFile, FieldValue, GnudbLookup, Library
 from audio_organizer.scanner import scan
@@ -386,5 +386,32 @@ def test_cli_pending_prefer_gnudb(library, client):
     result = CliRunner().invoke(app, [*args, "--prefer-gnudb"])
     assert "title: 'Halo Remixed' -> 'Halo'" in result.output
     result = CliRunner().invoke(app, [*args, "--prefer-gnudb", "--write"])
+    assert result.exit_code == 2  # gnudb's values are accepted first
+    result = CliRunner().invoke(app, [*args, "--prefer-gnudb", "--accept"])
+    assert "Accepted 1 of gnudb's values" in result.output
+    result = CliRunner().invoke(app, [*args, "--write"])
     assert "Wrote 1 files (changeset" in result.output
     assert tags.read(lib.root + "/Texas/Greatest Hits/01 Halo.mp3").fields["title"] == "Halo"
+
+
+def test_accepting_gnudb_values_is_a_decision_that_can_be_undone(library, client):
+    session, lib = library
+    tags.write(lib.root + "/Texas/Greatest Hits/01 Halo.mp3", {"title": "Halo Remixed"})
+    scan(session, lib)
+    gnudb.lookup_library(session, lib, client=client)
+    halo = session.scalar(select(AudioFile).where(AudioFile.path.contains("01 Halo")))
+    provenance.set_value(session, halo, "manual", "genre", "Rock")  # an edit: not gnudb's
+    session.commit()
+    prefer = writing.Selection(only=["title", "genre"], prefer=("gnudb",))
+    found = writing.survey(session, lib, prefer)
+    # Halo's title, and the genre gnudb fills in for Insane; not the edited genre
+    assert writing.accept(session, found.files, "gnudb", "Accept") == 2
+    pending = writing.survey(session, lib, writing.Selection(only=["title"])).files
+    assert [(p.file.path, p.fields) for p in pending] == [
+        ("Texas/Greatest Hits/01 Halo.mp3", {"title": "Halo"})
+    ]
+    [entry, *_] = operations.history(session, lib.id)
+    assert entry.operation.kind == "accept" and entry.values == 2
+    operations.undo(session, entry.operation)
+    session.commit()
+    assert writing.survey(session, lib, writing.Selection(only=["title"])).files == []

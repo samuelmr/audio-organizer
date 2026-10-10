@@ -41,6 +41,7 @@ from .. import duplicates as du
 from .. import encodings as rec
 from .. import layout as lo
 from .. import neighbours as nb
+from .. import operations as ops
 from .. import playlist_files as pf
 from .. import playlist_store as ps
 from .. import playlists as pl
@@ -55,6 +56,7 @@ from ..models import (
     CoverImage,
     EffectiveMetadata,
     Library,
+    Operation,
     Playlist,
     PlaylistFileBackup,
     SyncJob,
@@ -98,6 +100,7 @@ MAX_ALBUM_EDIT = 200
 # roughly one field per row, so a batch above this would fail to submit. Clamp every
 # "limit" so a hand-edited URL can't ask for more than the form can post back.
 MAX_BATCH = 1000
+HISTORY_PAGE = 50
 M = EffectiveMetadata
 SORTS = {
     "artist": (M.artist, M.album, M.discnumber, M.tracknumber),
@@ -583,7 +586,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
                 values[name] = None
         if not values:
             return _redirect(f"/tracks/{file.id}", "Nothing changed")
-        if not wr.store_edit(session, [file], values):
+        if not wr.store_edit(session, [file], values, f"Edit {file.path}"):
             return _redirect(f"/tracks/{file.id}", "Saved; the file's tags already match")
         pending = _url(f"/libraries/{file.library.name}/pending", file=file.id)
         return _redirect(
@@ -930,12 +933,15 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         id3_version: Annotated[str, Form()] = "",
         session: Session = SessionDep,
     ):
-        """Write the ticked files' pending changes (each file once, with all of them), or
-        drop the user's edits among them. The changes are worked out again here, so a
-        file is written as it is pending now."""
+        """Write the ticked files' pending changes (each file once, with all of them), drop
+        the user's edits among them, or (with prefer_gnudb) accept gnudb's values in them
+        as the user's edits. The changes are worked out again here, so a file is written
+        as it is pending now."""
         lib = _library(session, name)
-        if action not in ("write", "discard"):
+        if action not in ("write", "discard", "accept"):
             raise HTTPException(400, f"Unknown action {action}")
+        if (action == "accept") != prefer_gnudb and action != "discard":
+            raise HTTPException(400, "gnudb's values are accepted first, then written")
         selection = _selection(path, artist, album, file_ids or [], only, prefer_gnudb)
         found = wr.survey(session, lib, selection, MAX_BATCH)
         back = _url(
@@ -944,16 +950,70 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         )  # fmt: skip
         if not found.files:
             return _redirect(back, "Nothing to write: no ticked file has pending changes")
+        history = (f"/libraries/{lib.name}/history", "Undo on the History page")
         if action == "discard":
             dropped, kept = wr.discard(session, found.files)
             kept_note = f"; kept {kept} measured or looked-up values" if kept else ""
-            return _redirect(back, f"Dropped {dropped} edits{kept_note}")
+            return _redirect(back, f"Dropped {dropped} edits{kept_note}.", link=history)
+        if action == "accept":
+            description = wr.description(selection, len(found.files), accept="gnudb")
+            taken = wr.accept(session, found.files, "gnudb", description)
+            pending = _url(
+                f"/libraries/{lib.name}/pending", path=path, artist=artist, album=album,
+                only=only,
+            )  # fmt: skip
+            return _redirect(
+                pending, f"Accepted {taken} of gnudb's values; write them here.", link=history
+            )
         version = int(id3_version) if id3_version in ("3", "4") else None
         description = wr.description(selection, len(found.files))
         changeset, outcomes = wr.write(session, found.files, description, version)
         return render(
             request, "changeset.html", changeset=changeset, describe=ch.describe,
             outcomes=outcomes, outcome_title="Written",
+        )  # fmt: skip
+
+    # ---- decisions -----------------------------------------------------------------------
+
+    @app.get("/libraries/{name}/history", response_class=HTMLResponse)
+    def history_page(request: Request, name: str, start: int = 0, session: Session = SessionDep):
+        """The user's decisions in the catalog, newest first, each of which can be undone."""
+        lib = _library(session, name)
+        entries = ops.history(session, lib.id, HISTORY_PAGE + 1, max(start, 0))
+        return render(
+            request, "history.html", library=lib, entries=entries[:HISTORY_PAGE],
+            start=max(start, 0), more=len(entries) > HISTORY_PAGE, page=HISTORY_PAGE,
+        )  # fmt: skip
+
+    @app.get("/libraries/{name}/history/{operation_id}", response_class=HTMLResponse)
+    def operation_page(
+        request: Request, name: str, operation_id: int, session: Session = SessionDep
+    ):
+        lib = _library(session, name)
+        operation = _operation(session, lib, operation_id)
+        rows = ops.changed_values(session, operation, MAX_BATCH)
+        return render(
+            request, "operation.html", library=lib, operation=operation, rows=rows,
+            total=len(operation.values),
+        )  # fmt: skip
+
+    @app.post("/libraries/{name}/history/{operation_id}/undo", dependencies=[Exclusive])
+    def undo_operation(name: str, operation_id: int, session: Session = SessionDep):
+        """Set the decision's values back where nothing has changed them since."""
+        lib = _library(session, name)
+        operation = _operation(session, lib, operation_id)
+        back = f"/libraries/{lib.name}/history"
+        try:
+            undone = ops.undo(session, operation)
+        except ValueError as e:
+            return _redirect(back, str(e))
+        session.commit()
+        kept = f"; {undone.kept} values changed since were kept" if undone.kept else ""
+        if undone.operation is None:
+            return _redirect(back, f"Nothing to undo{kept}")
+        return _redirect(
+            back, f"Set {undone.reverted} values back{kept}.",
+            link=(f"/libraries/{lib.name}/pending", "See what is pending"),
         )  # fmt: skip
 
     # ---- ratings and covers --------------------------------------------------------------
@@ -1648,6 +1708,13 @@ def _changeset(session: Session, changeset_id: int) -> Changeset:
     if changeset is None:
         raise HTTPException(404, f"No changeset {changeset_id}")
     return changeset
+
+
+def _operation(session: Session, library: Library, operation_id: int) -> Operation:
+    operation = session.get(Operation, operation_id)
+    if operation is None or operation.library_id != library.id:
+        raise HTTPException(404, f"No decision {operation_id} in {library.name}")
+    return operation
 
 
 def _playlist(session: Session, playlist_id: int) -> Playlist:

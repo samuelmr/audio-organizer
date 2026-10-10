@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% set labels = field_labels %}
+{% block title %}{{ operation.description }} – audio-organizer{% endblock %}
+{% block content %}
+{% set base = '/libraries/' ~ library.name %}
+<h1>{{ operation.description }}</h1>
+<p>Decision #{{ operation.id }}, made {{ operation.created_at.strftime("%Y-%m-%d %H:%M") }}.
+{% if operation.reverts %}It undoes <a href="{{ base }}/history/{{ operation.reverts }}">#{{ operation.reverts }}</a>.{% endif %}
+{% if operation.reverted_by %}Undone by <a href="{{ base }}/history/{{ operation.reverted_by }}">#{{ operation.reverted_by }}</a>.{% endif %}
+<a href="{{ base }}/history">All decisions</a></p>
+{% if not operation.reverted_by %}
+<form method="post" action="{{ base }}/history/{{ operation.id }}/undo" data-busy>
+ <button>Undo this decision</button>
+</form>
+{% endif %}
+<table>
+ <thead><tr><th>File</th><th>Field</th><th>Source</th><th>Before</th><th>After</th></tr></thead>
+ <tbody>
+ {% for value, file in rows %}
+  <tr>
+   <td class="path"><a href="/tracks/{{ file.id }}">{{ file.path }}</a></td>
+   <td>{{ labels.get(value.field, value.field) }}</td>
+   <td>{{ value.source }}</td>
+   <td>{% if value.before is none %}<span class="hint">none</span>{% else %}<span class="old">{{ value.before }}</span>{% endif %}</td>
+   <td>{% if value.after is none %}<span class="hint">none</span>{% else %}{{ value.after }}{% endif %}</td>
+  </tr>
+ {% endfor %}
+ </tbody>
+</table>
+{% if total > rows | length %}<p class="hint">… and {{ total - rows | length }} more values.</p>{% endif %}
+{% endblock %}

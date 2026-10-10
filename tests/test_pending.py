@@ -93,8 +93,8 @@ def test_every_change_to_a_file_is_written_at_once(library):
     to the file in one change."""
     session, lib, root = library
     halo = _file(session, "Halo")
-    wr.store_edit(session, [halo], {"album": "The Greatest Hits"})
-    wr.store_edit(session, [halo], {"rating": "5"})
+    wr.store_edit(session, [halo], {"album": "The Greatest Hits"}, "edit")
+    wr.store_edit(session, [halo], {"rating": "5"}, "edit")
     set_value(session, halo, "analysis", "replaygain_track_gain", "-3.00 dB")
     session.commit()
     assert session.scalar(select(Changeset)) is None
@@ -114,7 +114,7 @@ def test_every_change_to_a_file_is_written_at_once(library):
 def test_waiting_files_are_left_to_their_changeset(library):
     session, lib, root = library
     halo = _file(session, "Halo")
-    wr.store_edit(session, [halo], {"genre": "Rock"})
+    wr.store_edit(session, [halo], {"genre": "Rock"}, "edit")
     ch.propose_retag(ch.new_changeset(session, "waiting", "manual"), halo, {"genre": "Rock"})
     session.commit()
     found = wr.survey(session, lib, wr.Selection())
@@ -125,7 +125,7 @@ def test_waiting_files_are_left_to_their_changeset(library):
 def test_discard_drops_edits_and_keeps_measurements(library):
     session, lib, root = library
     halo = _file(session, "Halo")
-    wr.store_edit(session, [halo], {"genre": "Rock"})
+    wr.store_edit(session, [halo], {"genre": "Rock"}, "edit")
     set_value(session, halo, "analysis", "replaygain_track_gain", "-3.00 dB")
     session.commit()
     assert wr.discard(session, wr.survey(session, lib, wr.Selection()).files) == (1, 1)
@@ -137,7 +137,7 @@ def test_discard_drops_edits_and_keeps_measurements(library):
 def test_store_edit_refuses_unknown_fields(library):
     session, lib, root = library
     with pytest.raises(ValueError, match="Not tag fields: colour"):
-        wr.store_edit(session, [_file(session, "Halo")], {"colour": "red"})
+        wr.store_edit(session, [_file(session, "Halo")], {"colour": "red"}, "edit")
 
 
 def test_catalog_without_the_pending_table_is_filled(library, tmp_path):
@@ -182,5 +182,5 @@ def test_cli_edit_and_pending(library):
     assert tags.read(root / "P!nk/Funhouse/01 So What.m4a").fields.get("genre") is None
 
     result = run("pending", "--artist", "P!nk", "--discard")
-    assert "Dropped 1 edits." in result.output
+    assert "Dropped 1 edits (" in result.output
     assert "0 files have values" in run("pending").output

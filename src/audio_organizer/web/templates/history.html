@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}History – audio-organizer{% endblock %}
+{% block content %}
+{% set base = '/libraries/' ~ library.name %}
+<h1>History</h1>
+<p>Your decisions in the catalog, newest first: edits, ratings from preferences, accepted
+lookups, discarded edits. None of them touched a file: the files whose tags differ from
+the catalog are <a href="{{ base }}/pending">pending</a> until written. Undoing a decision
+sets its values back where nothing has changed them since, so its files are pending again
+(or no longer). An undo can be undone too.</p>
+<table>
+ <thead><tr><th class="num">#</th><th>Decision</th><th class="num">Values</th><th class="num">Files</th><th>Made</th><th></th></tr></thead>
+ <tbody>
+ {% for entry in entries %}
+  {% set op = entry.operation %}
+  <tr>
+   <td class="num">{{ op.id }}</td>
+   <td><a href="{{ base }}/history/{{ op.id }}">{{ op.description }}</a>{% if op.reverts %} <span class="hint">(undoes #{{ op.reverts }})</span>{% endif %}</td>
+   <td class="num">{{ entry.values }}</td>
+   <td class="num">{{ entry.files }}</td>
+   <td>{{ op.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+   <td>{% if op.reverted_by %}<span class="hint">undone by #{{ op.reverted_by }}</span>{% else %}<form method="post" action="{{ base }}/history/{{ op.id }}/undo" data-busy><button>Undo</button></form>{% endif %}</td>
+  </tr>
+ {% else %}
+  <tr><td colspan="6">No decisions yet.</td></tr>
+ {% endfor %}
+ </tbody>
+</table>
+<p>
+ {% if start %}<a href="{{ url(base ~ '/history', start=[start - page, 0] | max or none) }}">Newer</a>{% endif %}
+ {% if more %}<a href="{{ url(base ~ '/history', start=start + page) }}">Older</a>{% endif %}
+</p>
+{% endblock %}

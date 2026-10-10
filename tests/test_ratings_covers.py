@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import delete, select
 
 from audio_organizer import changes as ch
-from audio_organizer import covers, ratings, tags, writing
+from audio_organizer import covers, operations, ratings, tags, writing
 from audio_organizer.models import AudioFile, FieldValue, Library
 from audio_organizer.provenance import resolve
 from audio_organizer.scanner import scan
@@ -40,6 +40,10 @@ def test_ratings_from_preferences(library):
     session, lib, root = library
     assert ratings.preferences(session, lib) == {"Good": 2, "Excellent": 1}
     assert ratings.apply(session, lib, ratings.get_map(session, lib)) == 3
+    [entry] = operations.history(session, lib.id)
+    assert (entry.operation.kind, entry.values) == ("ratings", 3)
+    ratings.apply(session, lib, ratings.get_map(session, lib))  # nothing changes: no operation
+    assert len(operations.history(session, lib.id)) == 1
     assert _rating(session, "Air/Moon Safari/01 La Femme d'Argent.mp3").value == "5"
     kept = _rating(session, "Air/Moon Safari/02 Sexy Boy.mp3")
     assert (kept.value, kept.source) == ("2", "tag")  # the file's own rating wins

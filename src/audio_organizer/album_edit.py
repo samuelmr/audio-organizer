@@ -1,7 +1,8 @@
 """Editing all tracks of an album or folder at once, such as fixing a typo in the album's
-name: the same manual values for every track, stored in the catalog and written into the
-files later with their other pending changes (writing.py). Optionally the folders named
-after the old album or artist are renamed, proposed as a changeset of moves."""
+name: the same manual values for every track, stored in the catalog as one operation
+(which can be undone) and written into the files later with their other pending changes
+(writing.py). Optionally the folders named after the old album or artist are renamed,
+proposed as a changeset of moves."""
 
 from dataclasses import dataclass
 
@@ -38,7 +39,7 @@ def edit(
     renaming the folders named after an album or artist being renamed. Moving and
     writing the tags do not depend on each other, so either can be done first."""
     before = [(file, resolve(file.values)) for file in files]
-    pending = wr.store_edit(session, files, values)
+    pending = wr.store_edit(session, files, values, description)
     plan, changeset, moves = None, None, []
     if move_files:
         renames = []

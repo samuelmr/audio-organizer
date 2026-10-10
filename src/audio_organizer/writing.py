@@ -1,11 +1,14 @@
 """Pending changes: values the catalog has decided on (edits, measurements, lookups, rules)
 that the files do not hold yet.
 
-Editing only changes the catalog. The files are written later, for a selection (an
-artist, an album, a folder, chosen files), each file once with all its pending values,
-however many edits led to them. The diff of the selection is the review; writing it
-makes a changeset that is applied at once and can be undone (the edits stay, so the
-files are pending again)."""
+Editing only changes the catalog, as an operation that can be undone (operations.py).
+The files are written later, for a selection (an artist, an album, a folder, chosen
+files), each file once with all its pending values, however many edits led to them. The
+diff of the selection is the review; writing it makes a changeset that is applied at
+once and can be undone (the edits stay, so the files are pending again).
+
+A lookup (gnudb) ranks below the tags, so where they differ it is only evidence; the
+user can accept its values for a selection, which makes them edits."""
 
 from collections import Counter
 from dataclasses import dataclass, field
@@ -14,10 +17,11 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from . import changes as ch
+from . import operations as ops
 from . import tags
 from .models import AudioFile, Change, Changeset, EffectiveMetadata, FieldValue, Library
 from .models import PendingField as P
-from .provenance import resolve, set_value, unwritten
+from .provenance import resolve, unwritten
 from .tracks import present
 
 M = EffectiveMetadata
@@ -201,22 +205,22 @@ def group_of(file: AudioFile) -> tuple[str, str]:
 
 
 def store_edit(
-    session: Session, files: list[AudioFile], values: dict[str, str | None]
+    session: Session, files: list[AudioFile], values: dict[str, str | None], description: str
 ) -> list[AudioFile]:
     """Store the user's values for these files (None removes one, falling back to tags
-    and paths). Nothing is written to the files: the files whose tags now differ are
-    returned, and are pending until written."""
+    and paths), as an operation that can be undone. Nothing is written to the files: the
+    files whose tags now differ are returned, and are pending until written."""
     unknown = set(values) - set(tags.FIELDS)
     if unknown:
         raise ValueError(f"Not tag fields: {', '.join(sorted(unknown))}")
-    differing = []
-    for file in files:
-        for name, value in values.items():
-            set_value(session, file, "manual", name, value)
-        if set(unwritten(file.values)) & set(values):
-            differing.append(file)
+    if files:
+        ops.record(
+            session, files[0].library_id, "edit", description,
+            (ops.Value(file.id, "manual", name, value)
+             for file in files for name, value in values.items()),
+        )  # fmt: skip
     session.commit()
-    return differing
+    return [file for file in files if set(unwritten(file.values)) & set(values)]
 
 
 def write(
@@ -234,23 +238,47 @@ def write(
 
 def discard(session: Session, files: list[Pending]) -> tuple[int, int]:
     """Drop the user's edits among these pending values, so that the tags' values count
-    again. Measurements, lookups and rules are kept (they are not decisions to undo).
-    Returns how many values were dropped and how many kept."""
-    dropped = kept = 0
+    again, as an operation that can be undone. Measurements, lookups and rules are kept
+    (they are not the user's edits). Returns how many values were dropped and how many
+    kept."""
+    dropped, kept = [], 0
     for pending in files:
         resolved = resolve(pending.file.values)
         for name in pending.fields:
             if name in resolved and resolved[name].source == "manual":
-                set_value(session, pending.file, "manual", name, None)
-                dropped += 1
+                dropped.append(ops.Value(pending.file.id, "manual", name, None))
             else:
                 kept += 1
+    if dropped:
+        count = len({value.file_id for value in dropped})
+        ops.record(
+            session, files[0].file.library_id, "discard",
+            f"Discard the edits of {count} file{'s' if count != 1 else ''}", dropped,
+        )  # fmt: skip
     session.commit()
-    return dropped, kept
+    return len(dropped), kept
 
 
-def description(selection: Selection, count: int) -> str:
-    """A changeset description naming what was written."""
+def accept(session: Session, files: list[Pending], source: str, description: str) -> int:
+    """Take a lookup's values among these pending values (surveyed with prefer=(source,))
+    as the user's own, as an operation that can be undone. They are then pending like any
+    edit, whatever the tags say. Returns how many values were taken."""
+    taken = []
+    for pending in files:
+        resolved = resolve(pending.file.values)
+        for name, value in pending.fields.items():
+            found = resolved.get(name)
+            if found and found.source != "manual" and found.candidates.get(source) == value:
+                taken.append(ops.Value(pending.file.id, "manual", name, value))
+    if taken:
+        ops.record(session, files[0].file.library_id, "accept", description, taken)
+    session.commit()
+    return len(taken)
+
+
+def description(selection: Selection, count: int, accept: str | None = None) -> str:
+    """A description naming what was written (a changeset), or with accept, whose values
+    were accepted for what (an operation)."""
     what = []
     if selection.artist is not None:
         what.append(selection.artist or "no artist")
@@ -258,6 +286,8 @@ def description(selection: Selection, count: int) -> str:
         what.append(selection.album or "no album")
     if selection.path:
         what.append(selection.path)
-    gnudb = "gnudb's values to " if "gnudb" in selection.prefer else ""
     files = f"{count} file{'s' if count != 1 else ''}"
-    return f"Write {gnudb}the tags of {files}" + (f" ({' – '.join(what)})" if what else "")
+    where = f" ({' – '.join(what)})" if what else ""
+    if accept:
+        return f"Accept {accept}'s values for {files}{where}"
+    return f"Write the tags of {files}{where}"

@@ -21,6 +21,7 @@ from . import encodings as rec
 from . import layout as lo
 from . import leftovers as lf
 from . import neighbours as nb
+from . import operations as ops
 from . import playlist_files as pf
 from . import playlist_store as ps
 from . import playlists as pl
@@ -29,7 +30,7 @@ from . import sync as sy
 from . import sync_jobs as jobs
 from . import writing as wr
 from .db import make_sessionmaker
-from .models import AudioFile, Change, Changeset, Library, Playlist, SyncTarget
+from .models import AudioFile, Change, Changeset, Library, Operation, Playlist, SyncTarget
 from .provenance import resolve
 from .scanner import ScanStats, scan
 from .tags import FIELDS
@@ -56,6 +57,11 @@ playlists_app = typer.Typer(
 )
 app.add_typer(target_app, name="target")
 app.add_typer(playlists_app, name="playlists")
+history_app = typer.Typer(
+    rich_markup_mode="markdown",
+    help="Your decisions in the catalog (edits, ratings, accepted lookups), and undoing them.",
+)
+app.add_typer(history_app, name="history")
 
 
 def _show_version(value: bool) -> None:
@@ -575,7 +581,7 @@ def edit(
     values = _edit_values(set_, unset)
     with _session(ctx) as session:
         file = _find_file(session, path)
-        if not wr.store_edit(session, [file], values):
+        if not wr.store_edit(session, [file], values, f"Edit {file.path}"):
             typer.echo("Saved; the file's tags already match.")
             return
         fields = ", ".join(wr.unwritten(file.values))
@@ -1752,8 +1758,12 @@ def pending_command(
     prefer_gnudb: Annotated[
         bool,
         typer.Option(
-            "--prefer-gnudb", help="Also replace tag values that differ from gnudb's (see --only)"
+            "--prefer-gnudb", help="Show where gnudb's values differ from the tags (see --only)"
         ),
+    ] = False,
+    accept: Annotated[
+        bool,
+        typer.Option("--accept", help="With --prefer-gnudb: take gnudb's values in the batch"),
     ] = False,
     library: LibraryOption = None,
 ) -> None:
@@ -1766,16 +1776,25 @@ def pending_command(
 
     --write writes the batch (--limit files), each file once with all its changes, as a
     changeset that `aorg changes undo` reverts (your edits stay, so the files are pending
-    again). --discard drops your edits in the batch instead, so the tags count again.
+    again). --discard drops your edits in the batch instead, so the tags count again
+    (`aorg history undo` brings them back).
 
     A gnudb value ranks below the tag, so by default only what the tags lack is written.
-    With --prefer-gnudb, gnudb's value replaces a different tag, for the fields chosen
-    with --only (e.g. --only genre,album).
+    --prefer-gnudb shows where gnudb's values differ from the tags, for the fields chosen
+    with --only (e.g. --only genre,album); --accept takes them as your edits, to be
+    written like any other.
     """
     if id3_version not in (None, 3, 4):
         raise typer.BadParameter("--id3-version is 3 or 4")
-    if write and discard:
-        raise typer.BadParameter("give --write or --discard, not both")
+    if write + discard + accept > 1:
+        raise typer.BadParameter("give one of --write, --discard and --accept")
+    if accept and not prefer_gnudb:
+        raise typer.BadParameter("--accept takes gnudb's values: give --prefer-gnudb too")
+    if write and prefer_gnudb:
+        raise typer.BadParameter(
+            "gnudb's values are written once accepted: --accept them, then --write without "
+            "--prefer-gnudb"
+        )
     fields = [f.strip() for f in only.split(",") if f.strip()] if only else None
     selection = wr.Selection(
         path=path, artist=artist, album=album, only=fields,
@@ -1805,12 +1824,20 @@ def pending_command(
                 + f" (changeset {changeset.id}; undo with `aorg changes undo {changeset.id}`)."
             )
             return
+        if accept and batch:
+            description = wr.description(selection, len(batch), accept="gnudb")
+            taken = wr.accept(session, batch, "gnudb", description)
+            typer.echo(
+                f"Accepted {taken} of gnudb's values; write them with `aorg pending --write` "
+                "(`aorg history` can undo this)."
+            )
+            return
         if discard and batch:
             dropped, kept = wr.discard(session, batch)
             typer.echo(
                 f"Dropped {dropped} edits"
                 + (f"; kept {kept} measured or looked-up values" if kept else "")
-                + "."
+                + " (`aorg history` can undo this)."
             )
             return
         if artist is None and album is None and path is None and not prefer_gnudb:
@@ -1835,8 +1862,89 @@ def pending_command(
                 typer.echo(f"      {name}: {pending.before.get(name)!r} -> {value!r}")
         if found.total > len(batch):
             typer.echo(f"  ... and {found.total - len(batch)} more files")
-        if batch:
+        if batch and prefer_gnudb:
+            typer.echo(f"Run with --accept to take gnudb's values in these {len(batch)} files.")
+        elif batch:
             typer.echo(f"Run with --write to write these {len(batch)} files.")
+
+
+# ---- decisions -----------------------------------------------------------------------------
+
+
+def _operation(session: Session, operation_id: int) -> Operation:
+    operation = session.get(Operation, operation_id)
+    if operation is None:
+        raise typer.BadParameter(f"No operation {operation_id}")
+    return operation
+
+
+@history_app.callback(invoke_without_command=True)
+def history_list(
+    ctx: typer.Context,
+    limit: Annotated[int, typer.Option(help="How many, newest first")] = 30,
+    library: LibraryOption = None,
+) -> None:
+    """Your decisions in the catalog, newest first: edits, ratings from preferences,
+    accepted lookups, discarded edits. None of them touched a file; the files whose tags
+    differ from the catalog are pending (`aorg pending`). `aorg history undo ID` undoes
+    one, so its files are pending again (or no longer)."""
+    if ctx.invoked_subcommand is not None:
+        return
+    with _session(ctx) as session:
+        lib = _library(session, library)
+        entries = ops.history(session, lib.id, limit)
+        if not entries:
+            typer.echo("No decisions yet.")
+        for entry in entries:
+            operation = entry.operation
+            undone = f"  [undone by {operation.reverted_by}]" if operation.reverted_by else ""
+            typer.echo(
+                f"{operation.id:5}  {operation.created_at:%Y-%m-%d %H:%M}  "
+                f"{operation.description} ({entry.values} values in {entry.files} files){undone}"
+            )
+
+
+@history_app.command("show")
+def history_show(
+    ctx: typer.Context,
+    operation_id: int,
+    limit: Annotated[int, typer.Option(help="How many values to list")] = 200,
+) -> None:
+    """The values a decision set: per file and field, before -> after."""
+    with _session(ctx) as session:
+        operation = _operation(session, operation_id)
+        typer.echo(f"{operation.description} ({operation.created_at:%Y-%m-%d %H:%M})")
+        rows = ops.changed_values(session, operation, limit)
+        path = None
+        for value, file in rows:
+            if file.path != path:
+                path = file.path
+                typer.echo(f"  {path}")
+            typer.echo(f"      {value.field} [{value.source}]: {value.before!r} -> {value.after!r}")
+        total = len(operation.values)
+        if total > len(rows):
+            typer.echo(f"  ... and {total - len(rows)} more values")
+
+
+@history_app.command("undo")
+def history_undo(ctx: typer.Context, operation_id: int) -> None:
+    """Undo a decision: its values are set back where nothing has changed them since. The
+    undo is a decision too, which can be undone in turn."""
+    with _session(ctx) as session:
+        operation = _operation(session, operation_id)
+        try:
+            undone = ops.undo(session, operation)
+        except ValueError as e:
+            raise typer.BadParameter(str(e)) from None
+        session.commit()
+        kept = f"; {undone.kept} changed since were kept" if undone.kept else ""
+        if undone.operation is None:
+            typer.echo(f"Nothing to undo{kept}.")
+            return
+        typer.echo(
+            f"Set {undone.reverted} values back{kept} (operation {undone.operation.id}). "
+            "See what to write with `aorg pending`."
+        )
 
 
 @app.command("ratings")

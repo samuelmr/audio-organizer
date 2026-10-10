@@ -153,6 +153,52 @@ class PendingField(Base):
     file: Mapped[AudioFile] = relationship()
 
 
+class Operation(Base):
+    """A decision the user made in the catalog: an edit, a rule applied to the library,
+    lookups accepted, edits discarded. It changes FieldValues only (no file is touched;
+    files with values not yet in their tags are pending, see writing.py), and records each
+    value's before and after, so that it can be undone (operations.py). Undoing is itself
+    an operation, which can be undone in turn."""
+
+    __tablename__ = "operation"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    library_id: Mapped[int] = mapped_column(ForeignKey("library.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    kind: Mapped[str] = mapped_column(String(20))  # one of operations.KINDS
+    description: Mapped[str] = mapped_column(Text, default="")
+    # The operation this one undoes (kind "undo"), and the one that undid this one
+    reverts: Mapped[int | None] = mapped_column(ForeignKey("operation.id"))
+    reverted_by: Mapped[int | None] = mapped_column(ForeignKey("operation.id"))
+
+    values: Mapped[list["OperationValue"]] = relationship(
+        back_populates="operation", cascade="all, delete-orphan", passive_deletes=True,
+        order_by="OperationValue.id",
+    )  # fmt: skip
+
+
+class OperationValue(Base):
+    """One FieldValue an operation set, changed or removed: None before means it had none,
+    None after that the operation removed it."""
+
+    __tablename__ = "operation_value"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    operation_id: Mapped[int] = mapped_column(
+        ForeignKey("operation.id", ondelete="CASCADE"), index=True
+    )
+    file_id: Mapped[int] = mapped_column(
+        ForeignKey("audio_file.id", ondelete="CASCADE"), index=True
+    )
+    field: Mapped[str] = mapped_column(String(40))
+    source: Mapped[str] = mapped_column(String(20))
+    before: Mapped[str | None] = mapped_column(Text)
+    after: Mapped[str | None] = mapped_column(Text)
+
+    operation: Mapped[Operation] = relationship(back_populates="values")
+    file: Mapped[AudioFile] = relationship()
+
+
 class TagSnapshot(Base):
     """The tags of a file as they were at some point, e.g. when the file was first seen."""
 

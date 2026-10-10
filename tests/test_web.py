@@ -906,13 +906,34 @@ def test_review_gnudb_values_on_the_pending_page(web, Session):
     page = web.get(base, params={"path": "P!nk/", "prefer_gnudb": "true"}).text
     assert 'class="old">So What</span> → So What Now' in page
     assert 'name="prefer_gnudb" value="true" checked' in page
+    assert 'value="accept"' in page and 'value="write"' not in page
     file_id = _file_id(Session, "P!nk/Funhouse/01 So What.m4a")
-    page = web.post(
-        base, data={"action": "write", "path": "P!nk/", "prefer_gnudb": "true",
-                    "file_ids": [file_id]},
-    ).text  # fmt: skip
-    assert "Write gnudb&#39;s values to the tags of 1 file (P!nk/)" in page
+    form = {"path": "P!nk/", "prefer_gnudb": "true", "file_ids": [file_id]}
+    assert web.post(base, data={"action": "write", **form}).status_code == 400
+    page = web.post(base, data={"action": "accept", **form}).text
+    assert "Accepted 1 of gnudb&#39;s values" in page
+    assert 'class="old">So What</span> → So What Now' in page  # now pending without prefer
+    page = web.get("/libraries/music/history").text
+    assert "Accept gnudb&#39;s values for 1 file (P!nk/)" in page
+    page = web.post(base, data={"action": "write", "path": "P!nk/", "file_ids": [file_id]}).text
     assert tags.read(web.root / "P!nk/Funhouse/01 So What.m4a").fields["title"] == "So What Now"
+
+
+def test_history_shows_and_undoes_decisions(web, Session):
+    file_id = _file_id(Session, "Texas/Texas_Halo.mp3")
+    web.post(f"/tracks/{file_id}/edit", data={"genre": "Pop-rock"})
+    page = web.get("/libraries/music/history").text
+    assert "Edit Texas/Texas_Halo.mp3" in page and ">Undo</button>" in page
+    operation_id = re.search(r'/history/(\d+)/undo"', page).group(1)
+    page = web.get(f"/libraries/music/history/{operation_id}").text
+    assert "Texas/Texas_Halo.mp3" in page and "Pop-rock" in page
+    page = web.post(f"/libraries/music/history/{operation_id}/undo").text
+    assert "Set 1 values back" in page
+    assert "undone by #" in page and "Undo: Edit Texas/Texas_Halo.mp3" in page
+    assert "Pop-rock" not in web.get(f"/tracks/{file_id}").text
+    page = web.post(f"/libraries/music/history/{operation_id}/undo").text
+    assert "already been undone" in page
+    assert web.get("/libraries/music/history/999").status_code == 404
 
 
 def test_folders_of_albums_and_artists_link_to_disk(web):

@@ -9,7 +9,8 @@
 <p>Your edits, loudness measurements, lookups and ratings are kept in the catalog until
 they are written into the files. Choose an artist or album, check what would change, and
 write it: each file is written once, with all its changes. Writing makes a changeset that
-can be undone; your edits stay, so the files are pending again.</p>
+can be undone; your edits stay, so the files are pending again. Your edits themselves are
+undone on the <a href="{{ base }}/history">History</a> page.</p>
 <p class="hint">{{ found.total }} file{{ "s" if found.total != 1 }} {{ "have" if found.total != 1 else "has" }} values not yet in {{ "them" if found.total != 1 else "it" }}{% if chosen or path %} here{% endif %}{% if found.waiting %};
 {{ found.waiting }} more have changes waiting for review in <a href="/changes">changesets</a>{% endif %}.
 {% if unmeasured %}{{ unmeasured }} files have not been measured for ReplayGain yet:
@@ -33,7 +34,7 @@ run <code>aorg scan --deep</code> to measure them (it reads every file, which ta
  {% if file %}<input type="hidden" name="file" value="{{ file }}">{% endif %}
  <input type="search" name="path" value="{{ path }}" placeholder="Only files under a path" aria-label="Path">
  <input name="only" value="{{ only }}" placeholder="Only fields, e.g. replaygain, rating" aria-label="Only these fields">
- <label title="gnudb's values rank below the tags; this replaces the tags where they differ"><input type="checkbox" name="prefer_gnudb" value="true" {% if prefer_gnudb %}checked{% endif %}> Replace tags that differ from gnudb's values</label>
+ <label title="gnudb's values rank below the tags; this shows where they differ, to accept them"><input type="checkbox" name="prefer_gnudb" value="true" {% if prefer_gnudb %}checked{% endif %}> Tags that differ from gnudb's values</label>
  <label>Batch of <input type="number" name="limit" min="1" max="1000" step="1" size="4" style="width: 6em" value="{{ limit }}"> files</label>
  <button>Show</button>
 </form>
@@ -62,7 +63,11 @@ run <code>aorg scan --deep</code> to measure them (it reads every file, which ta
  {% if artist is not none %}<input type="hidden" name="artist" value="{{ artist }}">{% endif %}
  {% if album is not none %}<input type="hidden" name="album" value="{{ album }}">{% endif %}
  <input type="hidden" name="only" value="{{ only }}">
- {% if prefer_gnudb %}<input type="hidden" name="prefer_gnudb" value="true">{% endif %}
+ {% if prefer_gnudb %}
+ <input type="hidden" name="prefer_gnudb" value="true">
+ <p>Accepting gnudb's values makes them your edits (which <a href="{{ base }}/history">History</a> can undo); they are then written like any other.</p>
+ <p><button class="primary" name="action" value="accept">Accept gnudb's values in the ticked files</button></p>
+ {% else %}
  <label>MP3 tags as
   <select name="id3_version">
    <option value="">each file's own ID3 version</option>
@@ -72,8 +77,9 @@ run <code>aorg scan --deep</code> to measure them (it reads every file, which ta
  </label>
  <p>
   <button class="primary" name="action" value="write">Write the ticked files</button>
-  <button name="action" value="discard" onclick="return confirm('Drop your edits in the ticked files? Measurements and lookups are kept.')">Discard my edits in them</button>
+  <button name="action" value="discard" onclick="return confirm('Drop your edits in the ticked files? Measurements and lookups are kept, and History can bring the edits back.')">Discard my edits in them</button>
  </p>
+ {% endif %}
  <table>
   <thead><tr><th><input type="checkbox" data-select-all="file_ids" aria-label="Select or deselect all files" hidden></th><th>File</th><th>Changes</th></tr></thead>
   <tbody>

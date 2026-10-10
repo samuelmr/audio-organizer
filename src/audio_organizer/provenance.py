@@ -3,7 +3,7 @@
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, insert, select
 from sqlalchemy.orm import Session
 
 from .models import AudioFile, EffectiveMetadata, FieldValue, PendingField
@@ -109,9 +109,12 @@ def set_value(session: Session, file: AudioFile, source: str, name: str, value: 
 
 def refresh_effective(session: Session, file_ids: list[int]) -> None:
     """Recompute the EffectiveMetadata and PendingField rows of the given files from their
-    FieldValues."""
+    FieldValues. The rows are replaced in bulk: merging them one by one costs a query and
+    a flush per file, which dominated operations on thousands of files."""
     session.flush()
     session.execute(delete(PendingField).where(PendingField.file_id.in_(file_ids)))
+    session.execute(delete(EffectiveMetadata).where(EffectiveMetadata.file_id.in_(file_ids)))
+    effective_rows, pending_rows = [], []
     rows: dict[int, list] = {file_id: [] for file_id in file_ids}
     for row in session.execute(
         select(FieldValue.file_id, FieldValue.field, FieldValue.source, FieldValue.value).where(
@@ -134,18 +137,17 @@ def refresh_effective(session: Session, file_ids: list[int]) -> None:
         for name in NUMBER_FIELDS:
             effective[name] = parse_number(effective[name])
         effective["year"] = parse_year(effective["date"])
-        session.merge(EffectiveMetadata(file_id=file_id, disputed=disputed, **effective))
+        effective_rows.append({"file_id": file_id, "disputed": disputed, **effective})
         tag = {row.field: row.value for row in values if row.source == "tag"}
-        session.add_all(
-            PendingField(
-                file_id=file_id,
-                field=name,
-                value=value,
-                source=resolved[name].source,
-                tag=tag.get(name),
-            )  # fmt: skip
+        pending_rows.extend(
+            {"file_id": file_id, "field": name, "value": value,
+             "source": resolved[name].source, "tag": tag.get(name)}
             for name, value in unwritten(values).items()
-        )
+        )  # fmt: skip
+    if effective_rows:
+        session.execute(insert(EffectiveMetadata), effective_rows)
+    if pending_rows:
+        session.execute(insert(PendingField), pending_rows)
 
 
 def comparable(field: str, value: str) -> object:
