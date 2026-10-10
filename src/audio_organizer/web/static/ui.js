@@ -54,8 +54,34 @@
       all.indeterminate = checked > 0 && checked < boxes.length;
     };
     all.addEventListener("change", () => {
-      boxes.forEach((b) => { b.checked = all.checked; });
+      // Dispatching change lets the group checkboxes below follow
+      boxes.forEach((b) => {
+        b.checked = all.checked;
+        b.dispatchEvent(new Event("change"));
+      });
       sync();
+    });
+    boxes.forEach((b) => b.addEventListener("change", sync));
+    sync();
+  });
+
+  // A checkbox with data-select-group="n" (an album's header row) selects or deselects the
+  // file_ids checkboxes in the rows with data-group="n", and shows a partial selection.
+  document.querySelectorAll("input[data-select-group]").forEach((all) => {
+    const boxes = [...document.querySelectorAll(
+      `tr[data-group="${all.dataset.selectGroup}"] input[name="file_ids"]`)];
+    if (!boxes.length) return;
+    all.hidden = false;
+    const sync = () => {
+      const checked = boxes.filter((b) => b.checked).length;
+      all.checked = checked === boxes.length;
+      all.indeterminate = checked > 0 && checked < boxes.length;
+    };
+    all.addEventListener("change", () => {
+      boxes.forEach((b) => {
+        b.checked = all.checked;
+        b.dispatchEvent(new Event("change"));
+      });
     });
     boxes.forEach((b) => b.addEventListener("change", sync));
     sync();

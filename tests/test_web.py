@@ -680,6 +680,11 @@ def test_pending_page_writes_by_selection(web, Session):
     assert "Albums with pending changes" in page
     assert re.search(r'artist=Texas&amp;album=Greatest\+Hits">Greatest Hits</a>', page)
     assert re.search(r'artist=Texas&amp;album=">\(no album\)</a>', page)
+    # Each album's header row has a checkbox for its files (shown by ui.js)
+    groups = set(re.findall(r'data-select-group="(\d+)"', page))
+    assert len(groups) == 2 and groups == set(
+        re.findall(r'<tr data-select-row data-group="(\d+)"', page)
+    )
 
     page = web.get("/libraries/music/pending", params={"only": "replaygain_album"}).text
     assert "Track gain:" not in page and "Album gain:" in page
