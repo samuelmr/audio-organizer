@@ -131,6 +131,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
     templates.env.globals["display_name"] = pl.display_name
     templates.env.globals["asset"] = _asset
     templates.env.globals["move_source"] = ch.move_source
+    templates.env.globals["move_extras"] = ch.move_extras
     templates.env.globals["retag_fields"] = ch.retag_fields
     templates.env.globals["field_labels"] = FIELD_LABELS
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")

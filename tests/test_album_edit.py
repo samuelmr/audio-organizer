@@ -208,6 +208,43 @@ def test_edit_album_moving_files(Session, library):
         assert (fields["album"], fields["genre"]) == ("Best of Foriegner", "AOR")
 
 
+def test_edit_album_takes_the_folders_other_files_along(Session, library):
+    """The .cue, .nfo, booklet and a Scans folder go with the last track, so the old
+    folder disappears; undo brings them back."""
+    others = ["folder.jpg", "Best of Foriegner.cue", "info.nfo", "booklet.pdf",
+              "Scans/back.jpg", "Scans/inlay/1.png", "Bonus/notes.txt"]  # fmt: skip
+    for name in others:
+        (library / ALBUM / name).parent.mkdir(parents=True, exist_ok=True)
+        (library / ALBUM / name).write_bytes(name.encode())
+    with Session() as session:
+        lib = session.scalar(select(Library))
+        files = album_files(session, lib.id, album="Best of Foriegner")
+        edit = ae.propose(
+            session, lib, files, {"album": "Best of Foreigner"}, "edit", move_files=True
+        )
+        described = [ch.describe(c) for c in edit.moves]
+        assert described[-2:] == [
+            f"move {ALBUM}/02 Juke Box Hero.mp3 -> Foreigner/Best of Foreigner/02 Juke Box "
+            "Hero.mp3 with 6 other files: Best of Foriegner.cue, Scans/back.jpg, "
+            "Scans/inlay/1.png, booklet.pdf, folder.jpg, info.nfo",
+            f"move {ALBUM}/Bonus/03 Cold as Ice.mp3 -> Foreigner/Best of Foreigner/Bonus/03 "
+            "Cold as Ice.mp3 with 1 other file: notes.txt",
+        ]
+        page = TestClient(create_app(Session)).get(f"/changes/{edit.changeset.id}").text
+        assert "with 6 other files:" in page and "Scans/inlay/1.png" in page
+        ch.set_status(edit.changeset.changes, "approved")
+        outcomes = ch.apply(session, edit.changeset)
+        assert all(o.ok for o in outcomes), outcomes
+        new = library / "Foreigner/Best of Foreigner"
+        assert all((new / name).read_bytes() == name.encode() for name in others)
+        assert not (library / ALBUM).exists()
+
+        outcomes = ch.undo(session, edit.changeset)
+        assert all(o.ok for o in outcomes), outcomes
+        assert all((library / ALBUM / name).read_bytes() == name.encode() for name in others)
+        assert not new.exists()
+
+
 def test_edit_album_leaves_taken_paths(Session, library, copy_audio):
     copy_audio("mp3b", library / "Foreigner/Best of Foreigner/01 Urgent.mp3")
     with Session() as session:

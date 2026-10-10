@@ -310,7 +310,10 @@ def delete_changeset(session: Session, changeset: Changeset) -> None:
 
 def describe(change: Change) -> str:
     if change.kind == "move":
-        return f"move {move_source(change)} -> {change.payload['to']}"
+        extras = move_extras(change)
+        n = len(extras)
+        along = f" with {n} other file{'s' * (n > 1)}: {', '.join(extras)}" if extras else ""
+        return f"move {move_source(change)} -> {change.payload['to']}{along}"
     if change.kind == "cover":
         image = change.payload.get("image") or change.payload.get("label")
         if change.payload.get("replace"):
@@ -337,6 +340,16 @@ def move_source(change: Change) -> str:
     if change.status == "applied" and change.undo:
         return change.undo.get("from", change.file.path)  # trashed before "from" was kept
     return change.file.path
+
+
+def move_extras(change: Change) -> list[str]:
+    """The other files that go along with a move (the folder's cover, booklet, .cue ...),
+    relative to the folder they come from."""
+    folder, names = PurePosixPath(move_source(change)).parent, []
+    for source, _ in change.payload.get("extras", []):
+        source = PurePosixPath(source)
+        names.append(str(source.relative_to(folder)) if folder in source.parents else str(source))
+    return names
 
 
 def retag_fields(change: Change) -> list[tuple[str, str | None, str | None]]:
@@ -584,12 +597,14 @@ def _move(
 
 
 def _move_extras(root: Path, pairs: list[list[str]]) -> list[list[str]]:
-    """Move the extra files that still exist to free destinations; returns those moved."""
+    """Move the extra files that still exist to free destinations; returns those moved.
+    Subfolders they empty (Scans, Artwork) are removed."""
     moved = []
     for source, target in pairs:
         if (root / source).is_file() and not (root / target).exists():
             (root / target).parent.mkdir(parents=True, exist_ok=True)
             shutil.move(root / source, root / target)
+            _remove_empty_dirs((root / source).parent, root)
             moved.append([source, target])
     return moved
 

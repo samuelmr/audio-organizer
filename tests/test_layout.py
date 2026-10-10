@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from audio_organizer import changes as ch
 from audio_organizer import layout as lo
-from audio_organizer.models import EffectiveMetadata, Library
+from audio_organizer.models import AudioFile, EffectiveMetadata, Library
 from audio_organizer.scanner import scan
 
 
@@ -123,6 +123,43 @@ def test_propose_apply_and_undo_with_cover(library):
     assert (root / "Pan, Rebecca/Rebecca Pan_Quizas.mp3").exists()
     assert not (root / "Rebecca Pan/In the Mood for Love/Folder.jpg").exists()
     assert scan(session, lib).unchanged == 6
+
+
+def test_extras_only_from_folders_the_album_leaves(tmp_path):
+    """Other files stay where tracks stay, in the library's top folder, and in subfolders
+    holding audio, hidden or system ones, or the album's new folder."""
+    root = tmp_path / "music"
+    for name in (
+        "Loose/a.mp3",
+        "Loose/b.mp3",
+        "Loose/x.cue",
+        "c.mp3",
+        "notes.txt",
+        "Artist/d.mp3",
+        "Artist/artist.jpg",
+        "Artist/.DS_Store",
+        "Artist/CD2/e.mp3",
+        "Artist/@eaDir/thumb.jpg",
+        "Artist/Album/cover.jpg",
+        "Artist/Photos/1.jpg",
+    ):
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_bytes(b"x")  # fmt: skip
+    library = Library(name="music", root=str(root))
+
+    def extras(*paths: str, folder: str = "Artist/Album") -> list[tuple[str, str]]:
+        moves = [lo.Move(AudioFile(path=p), f"{folder}/{p.rsplit('/', 1)[-1]}") for p in paths]
+        found = lo.with_extras(lo.AlbumMove(folder, moves), library).extras
+        return [pair for pairs in found.values() for pair in pairs]
+
+    assert extras("Loose/a.mp3") == []  # b.mp3 stays
+    assert extras("Loose/a.mp3", "Loose/b.mp3") == [("Loose/x.cue", "Artist/Album/x.cue")]
+    assert extras("c.mp3") == []
+    assert extras("Artist/d.mp3") == [
+        ("Artist/.DS_Store", "Artist/Album/.DS_Store"),
+        ("Artist/Photos/1.jpg", "Artist/Album/Photos/1.jpg"),
+        ("Artist/artist.jpg", "Artist/Album/artist.jpg"),
+    ]
 
 
 def test_album_without_album_artist_stays_together(Session, tmp_path):

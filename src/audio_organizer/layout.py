@@ -12,10 +12,11 @@ effective metadata, e.g. the default "{albumartist}/{album}/{disc}{track} {title
     disc         "2-" on albums with several discs, otherwise empty
 
 Files lacking a field the template needs are left where they are. Moves are proposed
-per album (the files that get the same folder), with the album's cover image when the
-last of its tracks leaves a folder. Targets that are taken, or that several files would
-get, are conflicts and left alone. Paths that differ only in letter case are left alone
-too: on case-insensitive file systems (macOS, most NAS shares) they are the same path.
+per album (the files that get the same folder), with a folder's other files (cover, .cue,
+booklet, Scans) when the last of its tracks leaves it. Targets that are taken, or that
+several files would get, are conflicts and left alone. Paths that differ only in letter
+case are left alone too: on case-insensitive file systems (macOS, most NAS shares) they
+are the same path.
 """
 
 import os
@@ -24,7 +25,7 @@ import string
 import unicodedata
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -33,6 +34,7 @@ from . import artists
 from . import changes as ch
 from .models import AudioFile, Change, Changeset, EffectiveMetadata, Library, LibrarySetting
 from .pathparse import normalize_name
+from .scanner import AUDIO_EXTENSIONS
 from .tracks import present
 
 DEFAULT_LAYOUT = "{albumartistsort}/{album}/{disc}{track} {title}"
@@ -44,7 +46,6 @@ OPTIONAL_FIELDS = ("disc",)  # may be empty
 VARIOUS_ARTISTS = "Various Artists"
 MAX_COMPONENT = 120
 UNSAFE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
-IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png")
 
 
 class LayoutError(ValueError):
@@ -90,7 +91,8 @@ class Move:
 class AlbumMove:
     folder: str  # the target folder
     moves: list[Move] = field(default_factory=list)
-    extras: list[tuple[str, str]] = field(default_factory=list)  # cover images
+    # Other files (see with_extras) by the folder they leave, as (from, to) library paths
+    extras: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
 
     @property
     def sources(self) -> list[str]:
@@ -270,35 +272,73 @@ def render(
 
 
 def with_extras(album: AlbumMove, library: Library) -> AlbumMove:
-    """Add the cover images of folders that the album's last tracks leave."""
-    root = library.root
+    """Add the other files of the folders that the album's last tracks leave: the cover,
+    a .cue or .nfo, a booklet, and subfolders without audio (Scans, Artwork), so that the
+    old folder empties and disappears. A folder where other tracks stay keeps them all, and
+    so does the library root. Subfolders holding audio, hidden or system ones ('.', '@'
+    prefixes) and those on the way to the album's new folder stay where they are."""
+    root = Path(library.root)
     leaving: dict[str, int] = defaultdict(int)
     for move in album.moves:
         leaving[str(PurePosixPath(move.file.path).parent)] += 1
-    album.extras = []
+    album.extras = {}
     for source, count in leaving.items():
+        if source == ".":
+            continue
         try:
-            names = os.listdir(os.path.join(root, source))
+            entries = list(os.scandir(root / source))
         except OSError:
             continue
-        audio_left = [
-            n for n in names
-            if not n.startswith(".") and n.lower().endswith(
-                (".mp3", ".m4a", ".mp4", ".aac", ".ogg", ".flac", ".wma", ".aif", ".aiff", ".wav")
-            )
-        ]  # fmt: skip
+        audio_left = [e for e in entries if e.is_file() and _is_audio(e.name)]
         if len(audio_left) > count:
-            continue  # other tracks stay in the folder, and so does the cover
-        for name in names:
-            if name.lower().endswith(IMAGE_EXTENSIONS) and not name.startswith("."):
-                album.extras.append((f"{source}/{name}", f"{album.folder}/{name}"))
+            continue  # other tracks stay in the folder, and so do its other files
+        target, extras = PurePosixPath(album.folder), album.extras.setdefault(source, [])
+        for entry in sorted(entries, key=lambda e: e.name):
+            path = PurePosixPath(source, entry.name)
+            if entry.is_dir(follow_symlinks=False):
+                if entry.name.startswith((".", "@")) or path == target or path in target.parents:
+                    continue
+                files = _files_without_audio(Path(entry.path))
+                if files is None:
+                    continue  # another album's or disc's folder
+                for relative in files:
+                    extras.append((f"{path}/{relative}", f"{album.folder}/{entry.name}/{relative}"))
+            elif entry.is_file(follow_symlinks=False) and not _is_audio(entry.name):
+                extras.append((str(path), f"{album.folder}/{entry.name}"))
     return album
+
+
+def _is_audio(name: str) -> bool:
+    return not name.startswith(".") and os.path.splitext(name)[1].lower() in AUDIO_EXTENSIONS
+
+
+def _files_without_audio(directory: Path) -> list[str] | None:
+    """The files below directory, relative to it, or None if any of them is audio (or the
+    folder cannot be read). Hidden and system folders inside are left out."""
+    found = []
+    try:
+        entries = sorted(os.scandir(directory), key=lambda e: e.name)
+    except OSError:
+        return None
+    for entry in entries:
+        if entry.is_dir(follow_symlinks=False):
+            if entry.name.startswith((".", "@")):
+                continue
+            below = _files_without_audio(Path(entry.path))
+            if below is None:
+                return None
+            found.extend(f"{entry.name}/{name}" for name in below)
+        elif _is_audio(entry.name):
+            return None
+        elif entry.is_file(follow_symlinks=False):
+            found.append(entry.name)
+    return found
 
 
 def propose(
     session: Session, library: Library, albums: list[AlbumMove], description: str
 ) -> Changeset:
-    """One changeset moving the albums' files; a folder's cover images go with the last
+    """One changeset moving the albums' files; a folder's other files go with the last
     track that leaves it."""
     changeset = ch.new_changeset(session, description, "layout")
     add_moves(changeset, library, albums)
@@ -307,20 +347,17 @@ def propose(
 
 
 def add_moves(changeset: Changeset, library: Library, albums: list[AlbumMove]) -> list[Change]:
-    """Propose moving the albums' files in a changeset; a folder's cover images go with
-    the last track that leaves it."""
+    """Propose moving the albums' files in a changeset; a folder's other files (see
+    with_extras) go with the last track that leaves it."""
     changes = []
     for album in albums:
         with_extras(album, library)
         last_from: dict[str, Move] = {}
         for move in album.moves:
             last_from[str(PurePosixPath(move.file.path).parent)] = move
-        extras_by_source: dict[str, list[tuple[str, str]]] = defaultdict(list)
-        for source, target in album.extras:
-            extras_by_source[str(PurePosixPath(source).parent)].append((source, target))
         for move in album.moves:
             folder = str(PurePosixPath(move.file.path).parent)
-            extras = extras_by_source.get(folder) if last_from[folder] is move else None
+            extras = album.extras.get(folder) if last_from[folder] is move else None
             changes.append(ch.propose_move(changeset, move.file, move.target, extras))
     return changes
 

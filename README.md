@@ -229,8 +229,11 @@ as it is, set the name as its own sort name (`--set "Yello=Yello"`). The web UI'
 page lists the artists, with their suggestions to accept one by one or all at once, and a
 "Keep as is" button for the same purpose.
 
-Files move album by album, and an album's cover image goes with it when its last track
-leaves a folder. Files lacking a field the template needs stay where they are, and so do
+Files move album by album. When an album's last track leaves a folder, the folder's other
+files go with it: the cover, a `.cue` or `.nfo`, a PDF booklet, and subfolders without
+music such as Scans, so the old folder empties and disappears. A folder where other
+tracks stay keeps all of them, and nothing is taken from the library's top folder. A
+changeset lists the files each move takes along. Files lacking a field the template needs stay where they are, and so do
 conflicts: a path that is taken, or that several files would get. These are mostly
 duplicates, so clean up duplicates and album folders first. Names that differ only in
 letter case are left alone. The web UI's Layout page does the same, and lets you propose
@@ -375,7 +378,7 @@ If the folders have the typo too, `--move-files` adds moves to the same changese
 folder whose name holds the old album name as whole words ("1992 Best of Foriegner")
 gets the new one ("1992 Best of Foreigner"), and a folder named exactly after an artist
 or album artist being renamed gets the new name. File names stay as they are, and the
-folder's cover image goes along with its last track. Moves are applied after the tag
+folder's other files (cover, booklet, `.cue`, Scans) go along with its last track. Moves are applied after the tag
 changes and undone before them. A track stays where it is if its new path is taken, or
 differs only in letter case (the same folder on macOS and most NAS shares). To move
 files into your library's layout instead, use `aorg reorganize` (see above).

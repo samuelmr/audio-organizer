@@ -4,8 +4,9 @@
 {% set base = '/libraries/' ~ library.name %}
 <h1>Layout</h1>
 <p>The layout says where each file belongs, as a template filled in from its metadata.
-Files are moved into it album by album, with the album's cover image, and every move can
-be undone.</p>
+Files are moved into it album by album, and the cover, booklet and other files of a
+folder go along with its last track, so the old folder disappears. Every move can be
+undone.</p>
 
 {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
 <form method="post" action="{{ base }}/layout" class="stacked">
