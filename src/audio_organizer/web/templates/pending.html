@@ -46,8 +46,8 @@ run <code>aorg scan --deep</code> to measure them (it reads every file, which ta
  <tbody>
  {% for g in groups[:300] %}
   <tr>
-   <td><a href="{{ selection_url(here, artist=g.artist, path=path or none, only=only or none) }}">{{ g.artist or "(no artist)" }}</a></td>
-   <td><a href="{{ selection_url(here, artist=g.artist, album=g.album, path=path or none, only=only or none) }}">{{ g.album or "(no album)" }}</a></td>
+   <td><a href="{{ selection_url(here, artist=g.artist, path=path or none, only=only or none, prefer_gnudb=prefer_gnudb or none) }}">{{ g.artist or "(no artist)" }}</a></td>
+   <td><a href="{{ selection_url(here, artist=g.artist, album=g.album, path=path or none, only=only or none, prefer_gnudb=prefer_gnudb or none) }}">{{ g.album or "(no album)" }}</a></td>
    <td class="num">{{ g.files }}</td>
   </tr>
  {% endfor %}

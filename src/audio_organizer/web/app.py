@@ -915,7 +915,10 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         found = wr.survey(session, lib, selection, limit)
         # The list of albums is for choosing; once one is chosen it is in the heading
         chosen = artist is not None or album is not None or file is not None
-        groups = [] if chosen or prefer_gnudb else wr.groups(session, lib, selection)
+        if chosen:
+            groups = []
+        else:
+            groups = found.groups if prefer_gnudb else wr.groups(session, lib, selection)
         unmeasured = len(loudness.unmeasured(session, lib))
         return render(
             request, "pending.html", library=lib, found=found, groups=groups,

@@ -78,6 +78,8 @@ class Survey:
     total: int = 0  # files with pending changes in the selection
     by_field: Counter = field(default_factory=Counter)  # field -> files
     waiting: int = 0  # files with changes waiting for review in a changeset
+    # With prefer only (else see groups): the albums of those files, in artist, album order
+    groups: list[Group] = field(default_factory=list)
 
 
 def matches(name: str, only: list[str] | None) -> bool:
@@ -206,6 +208,14 @@ def survey(session: Session, library: Library, selection: Selection, limit: int 
             if selection.prefer:
                 result.total += 1
                 result.by_field.update(fields.keys())
+                # Rows come in artist, album order, so a group is the last one or a new one
+                last = result.groups[-1] if result.groups else None
+                if last and (last.artist.lower(), last.album.lower()) == (
+                    row[1].lower(), row[2].lower()
+                ):  # fmt: skip
+                    last.files += 1
+                else:
+                    result.groups.append(Group(row[1], row[2], 1))
                 if len(result.files) >= limit:
                     continue
             tags_now = {fv.field: fv.value for fv in file.values if fv.source == "tag"}

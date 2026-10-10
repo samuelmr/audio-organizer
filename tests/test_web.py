@@ -945,6 +945,10 @@ def test_review_gnudb_values_on_the_pending_page(web, Session):
     assert 'class="old">So What</span> → So What Now' in page
     assert 'name="prefer_gnudb" value="true" checked' in page
     assert 'value="accept"' in page and 'value="write"' not in page
+    assert "Albums with pending changes" in page  # its links keep the mode
+    assert re.search(
+        r'artist=P%21nk&amp;album=Funhouse&amp;path=P%21nk%2F&amp;prefer_gnudb=True">', page
+    )
     file_id = _file_id(Session, "P!nk/Funhouse/01 So What.m4a")
     form = {"path": "P!nk/", "prefer_gnudb": "true", "file_ids": [file_id]}
     assert web.post(base, data={"action": "write", **form}).status_code == 400
