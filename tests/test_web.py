@@ -957,6 +957,20 @@ def test_review_gnudb_values_on_the_pending_page(web, Session):
     assert tags.read(web.root / "P!nk/Funhouse/01 So What.m4a").fields["title"] == "So What Now"
 
 
+def test_the_gnudb_view_leaves_out_other_pending_values(web, Session):
+    from audio_organizer import provenance
+
+    with Session() as session:
+        file = session.scalar(select(AudioFile).where(AudioFile.path.contains("So What")))
+        provenance.set_value(session, file, "analysis", "replaygain_track_gain", "-3.00 dB")
+        session.commit()
+    base = "/libraries/music/pending"
+    assert "-3.00 dB" in web.get(base, params={"path": "P!nk/"}).text
+    page = web.get(base, params={"path": "P!nk/", "prefer_gnudb": "true"}).text
+    assert "-3.00 dB" not in page and 'value="accept"' not in page
+    assert "gnudb has no values that differ from the tags here" in page
+
+
 def test_history_shows_and_undoes_decisions(web, Session):
     file_id = _file_id(Session, "Texas/Texas_Halo.mp3")
     web.post(f"/tracks/{file_id}/edit", data={"genre": "Pop-rock"})

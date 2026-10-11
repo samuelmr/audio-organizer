@@ -49,7 +49,9 @@ def resolve(values: Iterable[FieldValue]) -> dict[str, Resolved]:
     return resolved
 
 
-def unwritten(values: Iterable, prefer: Iterable[str] = ()) -> dict[str, str]:
+def unwritten(
+    values: Iterable, prefer: Iterable[str] = (), only_preferred: bool = False
+) -> dict[str, str]:
     """The fields whose chosen value is an edit, a measurement or a lookup that differs
     from what the file's tags say: values not yet written into the file. values are the
     file's FieldValues (or rows with field, source and value).
@@ -57,7 +59,8 @@ def unwritten(values: Iterable, prefer: Iterable[str] = ()) -> dict[str, str]:
     A lookup ranks below the tags, so where it differs it is not the chosen value. With
     prefer, naming such sources (e.g. "gnudb"), their values are taken instead of the
     tags' (not instead of the user's edits, and not where they only spell a number or a
-    date differently)."""
+    date differently). only_preferred leaves out the rest, such as measurements: what is
+    left is what accepting those sources' values would take."""
     values = list(values)
     resolved = resolve(values)
     current = {fv.field: fv.value for fv in values if fv.source == "tag"}
@@ -74,6 +77,8 @@ def unwritten(values: Iterable, prefer: Iterable[str] = ()) -> dict[str, str]:
             if name in current and comparable(name, value) == comparable(name, current[name]):
                 continue
         else:
+            continue
+        if only_preferred and (found.source == "manual" or value != preferred):
             continue
         if value != current.get(name):
             result[name] = value

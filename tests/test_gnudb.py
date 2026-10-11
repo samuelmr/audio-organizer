@@ -380,18 +380,22 @@ def test_review_gnudb_values_that_differ_from_tags(library, client):
     assert writing.survey(session, lib, prefer).files == []
 
 
-def test_preferring_gnudb_keeps_the_users_edits_and_spelling_of_numbers(library, client):
+def test_preferring_gnudb_shows_only_gnudb_values(library, client):
     session, lib = library
     gnudb.lookup_library(session, lib, client=client)
     halo = session.scalar(select(AudioFile).where(AudioFile.path.contains("01 Halo")))
     provenance.set_value(session, halo, "manual", "title", "My Halo")
+    provenance.set_value(session, halo, "analysis", "replaygain_track_gain", "-3.00 dB")
     tags.write(lib.root + "/" + halo.path, {"tracknumber": "01"})  # gnudb says "1"
     scan(session, lib)
     session.expire_all()
-    selection = writing.Selection(only=["title", "tracknumber"], prefer=("gnudb",))
+    # The edit, the measurement and the number spelled differently are not gnudb's to accept
+    selection = writing.Selection(only=["title", "tracknumber", "replaygain"], prefer=("gnudb",))
     found = writing.survey(session, lib, selection)
-    fields = {p.file.path: p.fields for p in found.files}
-    assert fields["Texas/Greatest Hits/01 Halo.mp3"] == {"title": "My Halo"}  # an edit, not gnudb's
+    assert "Texas/Greatest Hits/01 Halo.mp3" not in {p.file.path for p in found.files}
+    plain = writing.survey(session, lib, writing.Selection(only=["title", "replaygain"]))
+    [pending] = [p for p in plain.files if p.file.path.endswith("01 Halo.mp3")]
+    assert pending.fields == {"title": "My Halo", "replaygain_track_gain": "-3.00 dB"}
 
 
 def test_cli_pending_prefer_gnudb(library, client):

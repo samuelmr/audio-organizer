@@ -123,22 +123,24 @@ def _selected(library: Library, selection: Selection) -> list:
 
 def _candidates(library: Library, selection: Selection):
     """The ids of the selection's files that may have pending changes: those with a
-    PendingField of the chosen fields, and with prefer also those with a value from a
-    preferred source (whether it is to replace the tag is decided per file)."""
-    parts = [select(P.file_id).where(_field_condition(selection.only))]
-    if kinds := [DESIRE_FIELDS[n] for n in _desire_fields(selection.only)]:
-        parts.append(
-            select(FileDesire.file_id).where(
-                FileDesire.written.is_(False), FileDesire.kind.in_(kinds)
-            )
-        )
+    PendingField of the chosen fields or a decided cover, trash or move. With prefer, those
+    with a value from a preferred source instead (whether it is to replace the tag is
+    decided per file): the survey then shows just what accepting those values would take."""
     if selection.prefer:
-        parts.append(
+        parts = [
             select(FieldValue.file_id).where(
                 FieldValue.source.in_(selection.prefer),
                 or_(*(FieldValue.field.startswith(o) for o in selection.only or [""])),
             )
-        )
+        ]
+    else:
+        parts = [select(P.file_id).where(_field_condition(selection.only))]
+        if kinds := [DESIRE_FIELDS[n] for n in _desire_fields(selection.only)]:
+            parts.append(
+                select(FileDesire.file_id).where(
+                    FileDesire.written.is_(False), FileDesire.kind.in_(kinds)
+                )
+            )
     ids = union(*parts)
     return (
         select(AudioFile.id)
@@ -151,9 +153,9 @@ def survey(session: Session, library: Library, selection: Selection, limit: int 
     """The selection's files with values not yet in their tags, the first `limit` of them
     in artist, album and path order with what would change in each.
 
-    Without prefer, the counts come from the PendingField table alone. With prefer, every
-    candidate is looked at, as which of its preferred values differ from the tags (beyond
-    spelling) is not stored."""
+    Without prefer, the counts come from the PendingField table alone. With prefer, only the
+    preferred sources' values that differ from the tags are shown (beyond spelling), and as
+    that is not stored every candidate is looked at."""
     result = Survey()
     candidates = _candidates(library, selection).where(AudioFile.id.not_in(_waiting()))
     result.waiting = session.scalar(
@@ -200,10 +202,12 @@ def survey(session: Session, library: Library, selection: Selection, limit: int 
         for row in batch:
             file = by_id[row.id]
             fields = {
-                k: v for k, v in unwritten(file.values, selection.prefer).items()
+                k: v for k, v in unwritten(
+                    file.values, selection.prefer, only_preferred=bool(selection.prefer)
+                ).items()
                 if matches(k, selection.only)
             }  # fmt: skip
-            covers = desired.get(file.id, {})
+            covers = {} if selection.prefer else desired.get(file.id, {})
             fields.update({name: describe_cover(spec, name) for name, spec in covers.items()})
             if not fields:
                 continue

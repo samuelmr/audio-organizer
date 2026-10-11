@@ -111,6 +111,9 @@ run <code>aorg scan --deep</code> to measure them (it reads every file, which ta
  {% endfor %}
  </tbody>
 </table>
+{% elif not groups and prefer_gnudb %}
+<p>gnudb has no values that differ from the tags{% if chosen or path or only %} here{% endif %}.
+<a href="{{ url(here, path=path, only=only) }}">All pending changes</a></p>
 {% elif not groups %}
 <p>Nothing to write{% if chosen or path or only %} here{% endif %}.</p>
 {% endif %}
