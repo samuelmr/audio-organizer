@@ -995,7 +995,7 @@ def test_gnudb_lookups_of_the_library_run_in_the_background(web, monkeypatch):
     from audio_organizer import gnudb
 
     page_url = "/libraries/music/gnudb/lookups"
-    assert "Set <code>AORG_GNUDB_EMAIL</code>" in web.get(page_url).text
+    assert "Set AORG_GNUDB_EMAIL to your email address first, and start" in web.get(page_url).text
     assert "Set AORG_GNUDB_EMAIL" in web.post(page_url).text
     monkeypatch.setenv("AORG_GNUDB_EMAIL", "me@example.org")
     assert 'name="limit"' in web.get(page_url).text
@@ -1050,6 +1050,45 @@ def test_gnudb_lookups_of_the_library_run_in_the_background(web, monkeypatch):
     _wait(lambda: not web.get(page_url, headers={"Accept": "application/json"}).json()["active"])
     state = web.get(page_url, headers={"Accept": "application/json"}).json()
     assert (state["status"], state["message"]) == ("stopped", "Stopped after 1 of 2 albums")
+
+
+def test_cover_lookups_of_the_library_run_in_the_background(web, monkeypatch):
+    from audio_organizer import coverart, gnudb
+
+    page_url = "/libraries/music/coverart/lookups"
+    assert web.get("/libraries/music/other/lookups").status_code == 404
+    assert (
+        'href="/libraries/music/coverart/lookups">Find covers online'
+        in web.get("/libraries/music").text
+    )
+    page = web.get(page_url).text  # needs no email address, unlike gnudb
+    assert "Cover lookups" in page and 'name="limit"' in page
+
+    looked_up, go_on = threading.Event(), threading.Event()
+
+    def lookup(session, lib, *, limit, progress, started, should_stop):
+        started(1, 1)
+        progress(1, 1, "Texas – Greatest Hits", None)
+        looked_up.set()
+        go_on.wait(5)
+        return coverart.LookupStats(albums=1, found=1)
+
+    monkeypatch.setattr(coverart, "lookup_library", lookup)
+    web.post(page_url)
+    looked_up.wait(5)
+    state = web.get(page_url, headers={"Accept": "application/json"}).json()
+    assert (state["active"], state["current"]) == (True, "Texas – Greatest Hits")
+    # a run of one kind leaves the other alone, and holds back its own single-album lookup
+    monkeypatch.setattr(gnudb, "has_email", lambda: True)
+    assert "Look up albums in gnudb" in web.get("/libraries/music/gnudb/lookups").text
+    page = web.post("/libraries/music/coverart", data={"folder": "P!nk/Funhouse"}).text
+    assert "Cover lookups of the whole library are running" in page
+
+    go_on.set()
+    _wait(lambda: not web.get(page_url, headers={"Accept": "application/json"}).json()["active"])
+    page = web.get(page_url).text
+    assert "Looked up 1 albums: 1 found, 0 not found" in page
+    assert 'on the <a href="/libraries/music/covers">Covers</a> page' in page
 
 
 def test_the_gnudb_view_leaves_out_other_pending_values(web, Session):

@@ -14,7 +14,8 @@
  <p class="subtitle">Files in this folder · <a href="{{ base }}">All tracks</a></p>
 {% else %}
  <h1>{{ library.name }}</h1>
- <p class="hint"><a href="{{ base }}/gnudb/lookups">Look up albums in gnudb</a>, in the background (hours for thousands of albums), then <a href="{{ url(base ~ '/pending', prefer_gnudb='true') }}">Review gnudb differences</a>: the albums of the whole library where gnudb's values differ from the tags.</p>
+ <p class="hint"><a href="{{ base }}/gnudb/lookups">Look up albums in gnudb</a>, in the background (hours for thousands of albums), then <a href="{{ url(base ~ '/pending', prefer_gnudb='true') }}">Review gnudb differences</a>: the albums of the whole library where gnudb's values differ from the tags.
+ <a href="{{ base }}/coverart/lookups">Find covers online</a> the same way.</p>
 {% endif %}
 
 {{ folders(folder_links) }}

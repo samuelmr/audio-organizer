@@ -155,6 +155,19 @@ def test_matching_titles():
     assert "audio-organizer/" in coverart.user_agent()
 
 
+def test_lookups_report_their_start_and_can_be_stopped(library):
+    session, lib, root, tmp_path = library
+    client = FakeClient({})
+    counts = []
+    stats = coverart.lookup_library(
+        session, lib, client=client, started=lambda *c: counts.append(c), should_stop=lambda: True
+    )
+    assert counts == [(2, 2)]
+    assert stats.stopped == "stopped after 0 of 2 albums"
+    assert not client.searches and session.scalar(select(CoverLookup)) is None
+    assert coverart.lookup_library(session, lib, client=client).not_found == 2
+
+
 def test_lookup_and_embed_found_covers(library):
     session, lib, root, tmp_path = library
     jpeg = _image(tmp_path / "found.jpg", "500x500").read_bytes()

@@ -1,13 +1,15 @@
 {% extends "base.html" %}
-{% block title %}gnudb lookups – {{ library.name }} – audio-organizer{% endblock %}
+{% set heading = "gnudb lookups" if kind == "gnudb" else "Cover lookups" %}
+{% block title %}{{ heading }} – {{ library.name }} – audio-organizer{% endblock %}
 {% block content %}
 {% set base = '/libraries/' ~ library.name %}
-<h1>gnudb lookups</h1>
-<p class="subtitle"><a href="{{ base }}">{{ library.name }}</a> · <a href="{{ url(base ~ '/pending', prefer_gnudb='true') }}">Review gnudb differences</a></p>
+<h1>{{ heading }}</h1>
+<p class="subtitle"><a href="{{ base }}">{{ library.name }}</a> ·
+ {% if kind == "gnudb" %}<a href="{{ url(base ~ '/pending', prefer_gnudb='true') }}">Review gnudb differences</a>{% else %}<a href="{{ base }}/covers">Covers</a>{% endif %}</p>
 
 {% if state %}
 {# The same fields as a sync's progress page, so that sync.js updates this one too #}
-<section class="sync-job" data-sync-job="{{ base }}/gnudb/lookups" aria-live="polite">
+<section class="sync-job" data-sync-job="{{ base }}/{{ kind }}/lookups" aria-live="polite">
  <p><strong class="status {{ state.status }}" data-field="label">{{ state.label }}</strong>
   <span data-field="message">{{ state.message or "" }}</span></p>
  <progress data-field="progress" max="{{ state.total or 1 }}" value="{{ state.done }}"{% if not state.total %} hidden{% endif %}></progress>
@@ -15,12 +17,14 @@
  <p class="hint" data-field="current">{{ state.current or "" }}</p>
 
  {% if state.active %}
- <form method="post" action="{{ base }}/gnudb/lookups/stop" data-field="stop">
+ <form method="post" action="{{ base }}/{{ kind }}/lookups/stop" data-field="stop">
   <button type="submit" class="danger"{% if job.stop_requested %} disabled{% endif %}>{% if job.stop_requested %}Stopping…{% else %}Stop{% endif %}</button>
-  <a href="{{ base }}/gnudb/lookups" data-field="refresh">Refresh</a>
+  <a href="{{ base }}/{{ kind }}/lookups" data-field="refresh">Refresh</a>
  </form>
- {% elif job.found %}
+ {% elif job.found and kind == "gnudb" %}
  <p><a href="{{ url(base ~ '/pending', prefer_gnudb='true') }}">Review where gnudb's values differ from the tags</a>; what they add where the tags have nothing is on the <a href="{{ base }}/pending">Pending</a> page.</p>
+ {% elif job.found %}
+ <p>Embed the covers found, and save them in their folders, on the <a href="{{ base }}/covers">Covers</a> page.</p>
  {% endif %}
 
  <div data-field="errors"{% if not state.errors %} hidden{% endif %}>
@@ -37,19 +41,28 @@
 {% endif %}
 
 {% if not state or not state.active %}
-{% if not has_email %}
-<p>gnudb asks every client for a contact address. Set <code>AORG_GNUDB_EMAIL</code> to your
-email address and start <code>aorg web</code> again.</p>
+{% if setup %}
+<p>{{ setup }}{% if kind == "gnudb" %}, and start <code>aorg web</code> again: gnudb asks every
+client for a contact address and refuses those that give none.{% else %}.{% endif %}</p>
 {% else %}
-<form method="post" action="{{ base }}/gnudb/lookups" data-busy>
+<form method="post" action="{{ base }}/{{ kind }}/lookups" data-busy>
  <p><label>Albums to look up <input type="number" name="limit" min="1" placeholder="all" size="6"></label>
- <button class="primary">Look up albums in gnudb</button></p>
+ <button class="primary">Look up {{ "albums in gnudb" if kind == "gnudb" else "covers online" }}</button></p>
+ {% if kind == "gnudb" %}
  <p class="hint">Asks gnudb about the complete single-disc album folders not looked up yet,
  one request every three seconds: 6 to 15 seconds an album, so a few hours for thousands.
  It runs in the background while you use the rest of the pages; stop it whenever you like,
  and the next run continues with the rest. Tidy the library first (duplicates, loose
  tracks, misnamed folders), as albums are found by their folder, artist, title and track
  count. Don't run <code>aorg gnudb</code> at the same time.</p>
+ {% else %}
+ <p class="hint">Looks in MusicBrainz and the Cover Art Archive for the front cover of each
+ album that has none big enough, embedded or in its folder, and was not looked up before:
+ a few seconds an album, so hours for thousands. It runs in the background while you use
+ the rest of the pages; stop it whenever you like, and the next run continues with the
+ rest. Tidy the library first, as albums are found by their artist and title. Don't run
+ <code>aorg coverart</code> at the same time.</p>
+ {% endif %}
 </form>
 {% endif %}
 {% endif %}

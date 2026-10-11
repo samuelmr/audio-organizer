@@ -50,7 +50,7 @@ from .. import ratings as rt
 from .. import sync as sy
 from .. import sync_jobs as jobs
 from .. import writing as wr
-from ..lookup_jobs import ERRORS_KEPT, LookupBusy, LookupJob, LookupJobs
+from ..lookup_jobs import ERRORS_KEPT, KINDS, LookupBusy, LookupJob, LookupJobs
 from ..models import (
     AudioFile,
     Change,
@@ -425,7 +425,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         back = _url(f"/libraries/{lib.name}", folder=folder or None)
         if not gnudb.has_email():
             return _redirect(back, "Set AORG_GNUDB_EMAIL to your email address first")
-        if lookups.running(lib):  # gnudb gets one session from us at a time
+        if lookups.running(lib, "gnudb"):  # gnudb gets one session from us at a time
             return _redirect(
                 back, "gnudb lookups of the whole library are running; try again when they end",
                 link=(f"/libraries/{lib.name}/gnudb/lookups", "Their progress"),
@@ -464,42 +464,55 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             link=(_url(f"/libraries/{lib.name}/pending", path=where), "Pending changes"),
         )
 
-    @app.get("/libraries/{name}/gnudb/lookups")
-    def gnudb_lookups(request: Request, name: str, session: Session = SessionDep):
-        """Looking up the library's albums in gnudb in the background: a form to start, and
-        the progress of the run (JSON for the page's script, sync.js)."""
+    def _lookup_kind(kind: str) -> str:
+        if kind not in KINDS:
+            raise HTTPException(404, f"No lookups named {kind}")
+        return kind
+
+    def _needs_setup(kind: str) -> str | None:
+        """Why the lookups of this kind cannot start, if they cannot."""
+        if kind == "gnudb" and not gnudb.has_email():
+            return "Set AORG_GNUDB_EMAIL to your email address first"
+        return None
+
+    @app.get("/libraries/{name}/{kind}/lookups")
+    def library_lookups(request: Request, name: str, kind: str, session: Session = SessionDep):
+        """Looking up the library's albums online (gnudb or cover art) in the background: a
+        form to start, and the progress of the run (JSON for the page's script, sync.js)."""
         lib = _library(session, name)
-        job = lookups.get(lib)
+        job = lookups.get(lib, _lookup_kind(kind))
         state = _lookup_state(job) if job else None
         if state is not None and "application/json" in request.headers.get("accept", ""):
             return JSONResponse(state)
         return render(
-            request, "gnudb_lookups.html", library=lib, job=job, state=state,
-            has_email=gnudb.has_email(), max_errors=ERRORS_KEPT,
+            request, "lookups.html", library=lib, kind=kind, job=job, state=state,
+            setup=_needs_setup(kind), max_errors=ERRORS_KEPT,
         )  # fmt: skip
 
-    @app.post("/libraries/{name}/gnudb/lookups")
-    async def start_gnudb_lookups(request: Request, name: str, session: Session = SessionDep):
+    @app.post("/libraries/{name}/{kind}/lookups")
+    async def start_library_lookups(
+        request: Request, name: str, kind: str, session: Session = SessionDep
+    ):
         """Start looking up the albums not looked up yet, at most "limit" of them."""
         lib = _library(session, name)
-        here = f"/libraries/{lib.name}/gnudb/lookups"
-        if not gnudb.has_email():
-            return _redirect(here, "Set AORG_GNUDB_EMAIL to your email address first")
+        here = f"/libraries/{lib.name}/{_lookup_kind(kind)}/lookups"
+        if problem := _needs_setup(kind):
+            return _redirect(here, problem)
         limit = str((await request.form()).get("limit", "")).strip()
         if limit and not (limit.isdigit() and int(limit) > 0):
             return _redirect(here, "The number of albums is a whole number above 0, or empty")
         try:
-            lookups.start(lib, int(limit) if limit else None)
+            lookups.start(lib, kind, int(limit) if limit else None)
         except LookupBusy as e:
             return _redirect(here, str(e))
         return _redirect(here)
 
-    @app.post("/libraries/{name}/gnudb/lookups/stop")
-    def stop_gnudb_lookups(name: str, session: Session = SessionDep):
+    @app.post("/libraries/{name}/{kind}/lookups/stop")
+    def stop_library_lookups(name: str, kind: str, session: Session = SessionDep):
         lib = _library(session, name)
-        lookups.stop(lib)
+        lookups.stop(lib, _lookup_kind(kind))
         return _redirect(
-            f"/libraries/{lib.name}/gnudb/lookups", "Stopping after the album being looked up"
+            f"/libraries/{lib.name}/{kind}/lookups", "Stopping after the album being looked up"
         )
 
     @app.post("/libraries/{name}/coverart", dependencies=[Exclusive])
@@ -509,6 +522,11 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         form = await request.form()
         folder = str(form.get("folder", "")).strip("/")
         back = _url(f"/libraries/{lib.name}", folder=folder or None)
+        if lookups.running(lib, "coverart"):  # one session at a time here too
+            return _redirect(
+                back, "Cover lookups of the whole library are running; try again when they end",
+                link=(f"/libraries/{lib.name}/coverart/lookups", "Their progress"),
+            )  # fmt: skip
         try:
             results = coverart.lookup_folder(session, lib, folder)
         except coverart.CoverArtError as e:
@@ -1765,7 +1783,7 @@ LOOKUP_LABELS = {
 
 
 def _lookup_state(job: LookupJob) -> dict:
-    """A gnudb lookup run in the shape of a sync job's state, so that sync.js shows it."""
+    """A lookup run in the shape of a sync job's state, so that sync.js shows it."""
     state = job.state()
     state["label"] = "Stopping" if job.active and job.stop_requested else LOOKUP_LABELS[job.status]
     counts = ""

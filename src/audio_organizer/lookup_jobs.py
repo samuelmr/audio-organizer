@@ -1,15 +1,16 @@
-"""gnudb lookups of a whole library as background jobs of the web UI.
+"""Online lookups of a whole library (gnudb, cover art) as background jobs of the web UI.
 
-Looking up thousands of albums takes hours (gnudb is asked politely, a request every few
-seconds), far longer than a request may wait, so the web UI runs `gnudb.lookup_library` in
-a thread of the server and shows its progress. One job runs per library, and while it
-runs the single-album lookup waits for it, so that gnudb never gets two sessions from us
-at once.
+Looking up thousands of albums takes hours (the services are asked politely, a request
+every few seconds), far longer than a request may wait, so the web UI runs
+`gnudb.lookup_library` or `coverart.lookup_library` in a thread of the server and shows
+its progress. One job of each kind runs per library, and while it runs the single-album
+lookup of that kind waits for it, so that a service never gets two sessions from us at
+once.
 
 Jobs are kept in memory, as the sync plans are (sync_jobs.Previews): nothing is lost when
 the server stops, since each album's lookup is committed as it is made and the next run
-continues with the albums not looked up yet. A lookup run by `aorg gnudb` in another
-process is not seen here; don't run both at once.
+continues with the albums not looked up yet. A lookup run by `aorg gnudb` or `aorg coverart`
+in another process is not seen here; don't run both at once.
 """
 
 import threading
@@ -19,21 +20,28 @@ from typing import Any
 
 from sqlalchemy.orm import Session, sessionmaker
 
-from . import gnudb
+from . import coverart, gnudb
 from .models import Library
 
 ERRORS_KEPT = 100
+KINDS = ("gnudb", "coverart")
+
+
+def _lookup_function(kind: str) -> Callable[..., Any]:
+    """The kind's lookup, found when a run starts so that tests can replace it."""
+    return {"gnudb": gnudb, "coverart": coverart}[kind].lookup_library
 
 
 class LookupBusy(Exception):
-    def __init__(self, library: Library):
-        super().__init__(f"gnudb lookups of {library.name} are running already")
+    def __init__(self, library: Library, kind: str):
+        super().__init__(f"{kind} lookups of {library.name} are running already")
 
 
 class LookupJob:
     """A run of gnudb lookups, its progress updated by the thread that runs it."""
 
-    def __init__(self, library_id: int, limit: int | None) -> None:
+    def __init__(self, kind: str, library_id: int, limit: int | None) -> None:
+        self.kind = kind
         self.library_id = library_id
         self.limit = limit
         self.status = "starting"  # starting | running | done | stopped | failed
@@ -65,44 +73,38 @@ class LookupJob:
 
 
 class LookupJobs:
-    """The gnudb lookup runs of this server, the last one per library."""
+    """The lookup runs of this server, the last one of each kind per library."""
 
-    def __init__(
-        self,
-        session_factory: sessionmaker[Session],
-        lookup: Callable[..., gnudb.LookupStats] | None = None,
-    ) -> None:
+    def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._session_factory = session_factory
-        # Looked up when a run starts, so that tests can replace gnudb.lookup_library
-        self._lookup = lookup
-        self._by_library: dict[int, LookupJob] = {}
+        self._jobs: dict[tuple[str, int], LookupJob] = {}
         self._lock = threading.Lock()
 
-    def get(self, library: Library) -> LookupJob | None:
-        """The library's running job, or the last one this server ran."""
+    def get(self, library: Library, kind: str) -> LookupJob | None:
+        """The library's running job of this kind, or the last one this server ran."""
         with self._lock:
-            return self._by_library.get(library.id)
+            return self._jobs.get((kind, library.id))
 
-    def running(self, library: Library) -> bool:
-        job = self.get(library)
+    def running(self, library: Library, kind: str) -> bool:
+        job = self.get(library, kind)
         return job is not None and job.active
 
-    def start(self, library: Library, limit: int | None = None) -> LookupJob:
+    def start(self, library: Library, kind: str, limit: int | None = None) -> LookupJob:
         """Start looking up the library's albums not looked up yet (at most `limit` of
-        them) in a background thread; LookupBusy if a run of this library is under way."""
+        them) in a background thread; LookupBusy if a run of this kind is under way."""
         with self._lock:
-            job = self._by_library.get(library.id)
+            job = self._jobs.get((kind, library.id))
             if job is not None and job.active:
-                raise LookupBusy(library)
-            job = self._by_library[library.id] = LookupJob(library.id, limit)
+                raise LookupBusy(library, kind)
+            job = self._jobs[(kind, library.id)] = LookupJob(kind, library.id, limit)
         threading.Thread(
-            target=self._run, args=(job,), name=f"gnudb-lookups-{library.id}", daemon=True
+            target=self._run, args=(job,), name=f"{kind}-lookups-{library.id}", daemon=True
         ).start()
         return job
 
-    def stop(self, library: Library) -> None:
+    def stop(self, library: Library, kind: str) -> None:
         """Ask the running job to stop; it stops once the album being looked up is done."""
-        job = self.get(library)
+        job = self.get(library, kind)
         if job is not None and job.active:
             job.stop_requested = True
 
@@ -117,7 +119,7 @@ class LookupJobs:
             if error and len(job.errors) < ERRORS_KEPT:
                 job.errors.append((album, error))
 
-        lookup = self._lookup or gnudb.lookup_library
+        lookup = _lookup_function(job.kind)
         try:
             with self._session_factory() as session:
                 library = session.get(Library, job.library_id)

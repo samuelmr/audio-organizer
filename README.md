@@ -155,6 +155,12 @@ A single album is looked up again even if nothing was found before:
     aorg coverart --limit 100         # ask about 100 albums; the next run continues
     aorg coverart --path "Texas/Greatest Hits"
 
+The web UI can ask about all the albums too: *Find covers online* on the library's front
+page runs `aorg coverart`'s lookups in the background of `aorg web`, for all albums not
+looked up yet or a number of them, with progress, and can be stopped at any time (see
+the gnudb lookups below, which work the same way). Embed what is found from the Covers
+page.
+
 **gnudb.** Complete single-disc album folders (all tracks present, numbered 1..n or not
 at all, with a known album artist and title) are looked up in [gnudb](https://gnudb.org),
 the free CDDB database, by a table of contents made from the tracks' durations. A gnudb
@@ -188,7 +194,8 @@ front page asks about all the albums not looked up yet (or a number of them) in 
 background of `aorg web`, showing its progress, while you use the other pages. It can be
 stopped at any time, and so can the server; the next run continues with the rest. While
 it runs, the single-album button waits for it, so that gnudb gets one request at a time.
-Don't run `aorg gnudb` at the same time, which the web UI cannot see.
+Don't run `aorg gnudb` (or `aorg coverart`, for covers) at the same time, which the web UI
+cannot see.
 
 `aorg show` lists each field with where its value comes from: the file's tags (`tag`),
 its folder and file name (`path`) or your edit (`manual`), and the other candidates when
@@ -804,7 +811,7 @@ Design principles:
 | `playlist_formats.py` | M3U, JSON-LD and HTML playlist files |
 | `sync.py` | Planning and carrying out syncs to object storage |
 | `sync_jobs.py` | Sync runs as jobs: progress, one sync per target, background runs for the web UI |
-| `lookup_jobs.py` | gnudb lookups of a whole library in the background of the web UI, one run per library |
+| `lookup_jobs.py` | gnudb and cover lookups of a whole library in the background of the web UI, one run of each kind per library |
 | `objectstore.py` | Object storage backends (S3-compatible) |
 | `cli.py` | The `aorg` command |
 | `web/` | The web UI: FastAPI app (`app.py`), Jinja2 templates, stylesheet |

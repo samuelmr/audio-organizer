@@ -166,10 +166,16 @@ def lookup_library(
     limit: int | None = None,
     client: Client | None = None,
     progress: Callable[[int, int, str, str | None], None] | None = None,
+    started: Callable[[int, int], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> LookupStats:
     """Look up covers for the albums whose tracks have no usable cover, embedded or in
     their folder, and that were not looked up before (or for a smaller size). Each lookup
-    is committed, so an interrupted run continues where it stopped."""
+    is committed, so an interrupted run continues where it stopped.
+
+    `started` is told how many albums will be looked up now, and how many are left in all,
+    before the first request; `should_stop` is asked before each album, so a run in the
+    background can be stopped between them (see gnudb.lookup_library)."""
     client = client or Client()
     stats = LookupStats()
     survey = covers.survey(session, library, min_pixels=min_pixels, save_images=False)
@@ -185,8 +191,13 @@ def lookup_library(
     ]
     stats.albums = len(todo)
     todo = todo[:limit]
+    if started:
+        started(len(todo), stats.albums)
     failures = 0
     for count, album in enumerate(todo, start=1):
+        if should_stop and should_stop():
+            stats.stopped = f"stopped after {count - 1} of {len(todo)} albums"
+            break
         error = None
         try:
             found = find(client, album.artist, album.album, min_pixels)
