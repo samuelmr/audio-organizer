@@ -4,6 +4,7 @@ import shlex
 import shutil
 import sys
 import time
+import unicodedata
 from pathlib import Path, PurePosixPath
 from typing import Annotated
 
@@ -110,7 +111,12 @@ def _library(session: Session, name: str | None) -> Library:
 
 def _find_file(session: Session, path: str) -> AudioFile:
     """Find a file by absolute path, path relative to the working directory, or path
-    relative to a library root."""
+    relative to a library root. Letters with accents match whether they are typed as one
+    character or as a letter and a combining mark (macOS file names are the latter)."""
+
+    def spellings(name: str) -> list[str]:
+        return list({name, unicodedata.normalize("NFC", name), unicodedata.normalize("NFD", name)})
+
     absolute = Path(path).expanduser().resolve()
     for library in session.scalars(select(Library)):
         root = Path(library.root).resolve()
@@ -118,12 +124,12 @@ def _find_file(session: Session, path: str) -> AudioFile:
             relpath = absolute.relative_to(root).as_posix()
             file = session.scalar(
                 select(AudioFile).where(
-                    AudioFile.library_id == library.id, AudioFile.path == relpath
+                    AudioFile.library_id == library.id, AudioFile.path.in_(spellings(relpath))
                 )
             )
             if file:
                 return file
-    matches = session.scalars(select(AudioFile).where(AudioFile.path == path)).all()
+    matches = session.scalars(select(AudioFile).where(AudioFile.path.in_(spellings(path)))).all()
     if len(matches) == 1:
         return matches[0]
     if matches:
