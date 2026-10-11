@@ -329,12 +329,14 @@ and there you can choose another copy to keep for any track, and listen to the c
 
 A track ripped or converted twice is the same recording, but its audio differs, so it is
 not a duplicate: an album as both MP3 and AAC, an iTunes copy at another bitrate, a loose
-MP3 of an album's track. `aorg encodings` finds them and proposes keeping the best
-encoding:
+MP3 of an album's track. `aorg encodings` finds them and chooses to keep the best
+encoding (only the catalog changes, and `aorg history` undoes it; the files are written
+from the Pending page):
 
-    aorg encodings                           # what would be proposed
-    aorg encodings --path "Yello" --propose
-    aorg encodings --propose --limit 100
+    aorg encodings                           # what would be chosen
+    aorg encodings --path "Yello" --decide
+    aorg encodings --decide --limit 100
+    aorg pending --path Yello --write        # review, then trash and move (undoable)
 
 Files count as one recording when they are in one album folder with the same title (and
 track number), or when a loose file has the artist and title of a track in exactly one

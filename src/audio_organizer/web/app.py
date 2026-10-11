@@ -725,8 +725,8 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         )  # fmt: skip
 
     @app.post("/libraries/{name}/encodings", dependencies=[Exclusive])
-    async def propose_encodings(request: Request, name: str, session: Session = SessionDep):
-        """Propose the tracks shown on the page (one "keep-<id kept by default>" field
+    async def decide_encodings(request: Request, name: str, session: Session = SessionDep):
+        """Decide on the tracks shown on the page (one "keep-<id kept by default>" field
         each, the id of the file to keep), so the batch is what the user saw and chose."""
         lib = _library(session, name)
         form = await request.form()
@@ -743,12 +743,14 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         shown = [p for p in found.proposals if str(p.keep.file.id) in keep_ids]
         batch = rec.choose(shown, keep_ids)
         if not batch:
-            return _redirect(f"/libraries/{lib.name}/encodings", "Nothing to propose")
+            return _redirect(f"/libraries/{lib.name}/encodings", "Nothing to choose")
         where = f" in {path}" if path else ""
-        changeset = rec.propose(
-            session, batch, f"Keep the best encoding of {len(batch)} tracks{where}"
+        rec.decide(session, lib, batch, f"Keep the best encoding of {len(batch)} tracks{where}")
+        return _redirect(
+            _url(f"/libraries/{lib.name}/pending", path=path or None),
+            "Decided; review and write the changes here",
+            link=(f"/libraries/{lib.name}/history", "Undo on the History page"),
         )
-        return _redirect(f"/changes/{changeset.id}", "Proposed; review and approve the changes")
 
     # ---- loose tracks into their albums ---------------------------------------------------
 

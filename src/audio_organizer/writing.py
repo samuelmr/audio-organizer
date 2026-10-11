@@ -262,7 +262,8 @@ def describe_cover(spec: dict, name: str = "cover") -> str:
         files = f" (+{extras} folder file{'s' if extras != 1 else ''} with the last track)"
         return spec["to"] + (files if extras else loose_note if loose else "")
     if "replacement_path" in spec:
-        return f"move to the trash (a copy of {spec['replacement_path']})" + (
+        what = "another encoding" if spec.get("same") == "recording" else "a copy"
+        return f"move to the trash ({what} of {spec['replacement_path']})" + (
             loose_note if loose else ""
         )
     source = spec.get("label") or spec.get("image") or "an image"
@@ -337,14 +338,10 @@ def write(
         if tag_fields and "trash" not in pending.covers:  # a trashed file is not retagged
             change = ch.propose_retag(changeset, pending.file, tag_fields, id3_version)
             change.status = "approved"
-        # A file moves last, after its tags and cover are written
-        for name, spec in sorted(pending.covers.items(), key=lambda item: item[0] == "path"):
+        for name, spec in pending.covers.items():
             if name == "path":
-                if "trash" in pending.covers:
-                    continue
-                extras = _extras_to_move(session, pending.file, spec, leaving, carrier)
-                change = ch.propose_move(changeset, pending.file, spec["to"], extras)
-            elif name == "trash":
+                continue  # moves come last, below
+            if name == "trash":
                 change = ch.propose_trash(
                     changeset,
                     pending.file,
@@ -361,6 +358,14 @@ def write(
                     changeset, pending.file, spec["cover_image"], spec["to"], spec["label"],
                     replace=bool(spec.get("replace")),
                 )  # fmt: skip
+            change.status = "approved"
+    # Files move after all tags, covers and trashing are written: a file may take the
+    # place of a copy that is trashed in this write (encodings)
+    for pending in files:
+        if "path" in pending.covers and "trash" not in pending.covers:
+            spec = pending.covers["path"]
+            extras = _extras_to_move(session, pending.file, spec, leaving, carrier)
+            change = ch.propose_move(changeset, pending.file, spec["to"], extras)
             change.status = "approved"
         if last_out.get(_folder(pending.file)) == pending.file.id and _folder_empties(
             session, pending.file, leaving

@@ -10,14 +10,14 @@ copy of an album's track, with durations within two seconds).
 <strong>{{ found.proposals | length }}</strong> can be cleaned up by trashing
 {{ found.trash_count }} files: the best encoding is kept (lossless, then the highest
 bitrate; WMA last) under the name of the album's copy, tags only the others have are copied
-to it, and playlists switch to it. Undoing the changeset brings everything back.</p>
+to it, and playlists switch to it. Choosing only changes the catalog; the files are written from the Pending page, and undoing that write brings everything back.</p>
 <p class="hint">In {{ found.proposals | length - found.batchable | length }} of them a loose
 copy is better than the album's and would take its place: listen first, they are only shown
 when you include them.
 Left alone: {{ found.versions | length }} with different durations (listed below),
 {{ found.several_albums }} loose copies matching tracks in several album folders,
 {{ found.compilations }} whose album copy is only on a compilation besides the artist's own
-folder, {{ found.pending }} with changes waiting for review.</p>
+folder, {{ found.pending }} with changes pending or waiting for review.</p>
 
 <form class="search" method="get" action="{{ base }}/encodings">
  <input type="search" name="path" value="{{ path }}" placeholder="Only under a path, e.g. Yello" aria-label="Path">
@@ -34,7 +34,7 @@ folder, {{ found.pending }} with changes waiting for review.</p>
  {% if compilations %}<input type="hidden" name="compilations" value="true">{% endif %}
  <p class="hint">For each track, the file marked <em>keep</em> stays and the others go to the
  trash. Click another file to keep it instead; ▶ plays a file, ⓘ opens its details.</p>
- <p><button class="primary">Propose a changeset for these {{ batch | length }} tracks</button></p>
+ <p><button class="primary">Choose these {{ batch | length }} tracks</button></p>
  <table class="duplicates">
   <thead><tr><th><span class="visually-hidden">Keep</span></th><th></th><th>File</th><th>Encoding</th><th>As proposed</th></tr></thead>
   {% for p in batch %}

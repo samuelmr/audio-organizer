@@ -5,6 +5,7 @@ from sqlalchemy import select
 from audio_organizer import changes as ch
 from audio_organizer import encodings as rec
 from audio_organizer import tags
+from audio_organizer import writing as wr
 from audio_organizer.models import AudioFile, Library
 from audio_organizer.scanner import scan
 
@@ -108,15 +109,22 @@ def test_choose_another_copy(library):
     assert (chosen.move_to, chosen.replaces) == (None, False)
 
 
-def test_propose_apply_and_undo(library):
+def test_decide_write_and_undo(library):
     session, lib, root = library
     found = rec.survey(session, lib)
-    changeset = rec.propose(session, found.proposals, "Keep the best encodings")
-    assert changeset.source == "recordings"
+    operation = rec.decide(session, lib, found.proposals, "Keep the best encodings")
+    assert operation.kind == "encodings"
+    assert rec.decide(session, lib, found.proposals, "Again") is None  # not decided twice
     assert rec.survey(session, lib).pending == 4
-    ch.set_status(changeset.changes, "approved")
-    outcomes = ch.apply(session, changeset)
+    assert (root / "Linkin Park/Linkin Park_Numb.mp3").exists()  # the files are untouched
+
+    pending = wr.survey(session, lib, wr.Selection())
+    changeset, outcomes = wr.write(session, pending.files, "Write")
     assert all(o.ok for o in outcomes), [o.message for o in outcomes]
+    kinds = [c.kind for c in changeset.changes]
+    assert "move" in kinds and kinds.index("move") > max(
+        i for i, kind in enumerate(kinds) if kind == "trash"
+    )  # trashed before a file takes the place of its copy
 
     numb = root / "Linkin Park/Meteora/13 Numb.mp3"
     assert not (root / "Linkin Park/Linkin Park_Numb.mp3").exists()

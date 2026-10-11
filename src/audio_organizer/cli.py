@@ -1505,7 +1505,9 @@ def encodings(
         str | None, typer.Option(help="Only copies under this path, e.g. an artist folder")
     ] = None,
     limit: Annotated[int, typer.Option(help="Tracks to include")] = 50,
-    propose: Annotated[bool, typer.Option("--propose", help="Create a changeset for them")] = False,
+    decide: Annotated[
+        bool, typer.Option("--decide", help="Choose them, to write from Pending")
+    ] = False,
     replace: Annotated[
         bool,
         typer.Option(
@@ -1521,14 +1523,17 @@ def encodings(
     ] = False,
     library: LibraryOption = None,
 ) -> None:
-    """Find tracks encoded more than once and propose to keep the best encoding.
+    """Find tracks encoded more than once and choose to keep the best encoding.
 
     Files are one track in different encodings when they are in one album folder
     with the same title and number, or lie loose with the artist and title of a track
     in one album folder, and their durations are within two seconds. The lossless or
     highest-bitrate copy is kept (WMA last), in the place of the album's copy; the others
-    are proposed for the trash. Files whose durations differ are listed as versions.
+    are chosen for the trash. Files whose durations differ are listed as versions.
     Where a loose copy is the best, it replaces the album's copy only with --replace.
+
+    Choosing only changes the catalog (`aorg history` undoes it); the files are written
+    with `aorg pending --write`.
     """
     with _session(ctx) as session:
         lib = _library(session, library)
@@ -1542,10 +1547,10 @@ def encodings(
             f"album's). Left alone: {len(found.versions)} with different durations, "
             f"{found.several_albums} loose copies matching several album folders, "
             f"{found.compilations} only on a compilation besides the artist's folder, "
-            f"{found.pending} with changes waiting for review."
+            f"{found.pending} with changes pending or waiting for review."
         )
         batch = rec.batch(found.proposals, limit, replace=replace)
-        for proposal in batch[:20] if not propose else []:
+        for proposal in batch[:20] if not decide else []:
             typer.echo(f"  keep  {proposal.keep.file.path} ({_encoding(proposal.keep.file)})")
             for copy in proposal.trash:
                 typer.echo(f"  trash {copy.file.path} ({_encoding(copy.file)})")
@@ -1553,7 +1558,7 @@ def encodings(
                 typer.echo(f"        moved to {proposal.move_to}")
             if proposal.fill:
                 typer.echo(f"        copying tags: {', '.join(proposal.fill)}")
-        if not propose:
+        if not decide:
             if len(batch) > 20:
                 typer.echo(f"  ... and {len(batch) - 20} more in this batch")
             for files in found.versions[:10]:
@@ -1561,17 +1566,18 @@ def encodings(
                 for file in files:
                     typer.echo(f"        {file.path} ({_encoding(file)})")
             if batch:
-                typer.echo(f"Run with --propose to create a changeset for {len(batch)} tracks.")
+                typer.echo(f"Run with --decide to choose these {len(batch)} tracks.")
             return
         if not batch:
             return
         where = f" in {path}" if path else ""
-        changeset = rec.propose(
-            session, batch, f"Keep the best encoding of {len(batch)} tracks{where}"
+        operation = rec.decide(
+            session, lib, batch, f"Keep the best encoding of {len(batch)} tracks{where}"
         )
         typer.echo(
-            f"Changeset {changeset.id}: {len(changeset.changes)} changes. Review with "
-            f"`aorg changes show {changeset.id}` or in the web UI."
+            f"Decided on {len(batch)} tracks"
+            + (f" (operation {operation.id})" if operation else " (already decided)")
+            + ". Review and write them with `aorg pending`."
         )
 
 

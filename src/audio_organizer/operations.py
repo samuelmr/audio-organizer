@@ -26,9 +26,10 @@ from .provenance import refresh_effective
 # What an operation did: user edits (one file, an album, a folder), a rule set on the
 # library (ratings from preferences), values of a lookup taken as the user's own, the
 # user's edits dropped, covers chosen, duplicates trashed, files moved into the layout, albums
-# merged, and undoing another operation.
+# merged, encodings chosen, and undoing another operation.
 KINDS = (
-    "edit", "ratings", "accept", "discard", "covers", "duplicates", "layout", "merge", "undo",
+    "edit", "ratings", "accept", "discard", "covers", "duplicates", "layout", "merge", "encodings",
+    "undo",
 )  # fmt: skip
 
 # The source of an operation value that is a desired state (models.FileDesire), not a

@@ -534,9 +534,10 @@ def test_encodings(web, Session):
     [(name, (proposed, other))] = _keep_choices(page).items()
     assert proposed == str(_file_id(Session, "P!nk/Funhouse/01 So What.mp3"))
     response = web.post("/libraries/music/encodings", data={name: other})
-    trash = "trash P!nk/Funhouse/01 So What.mp3"
-    assert f"{trash} (same recording as P!nk/Funhouse/01 So What.m4a)" in response.text
-    assert "1 with changes waiting" in web.get("/libraries/music/encodings").text
+    assert response.url.path == "/libraries/music/pending"
+    assert "P!nk/Funhouse/01 So What.mp3" in response.text
+    assert "move to the trash (another encoding of P!nk/Funhouse/01 So What.m4a)" in response.text
+    assert "1 with changes pending" in web.get("/libraries/music/encodings").text
 
 
 def test_neighbours(web, Session):

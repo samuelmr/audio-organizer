@@ -28,7 +28,8 @@ from sqlalchemy.orm import Session
 
 from . import changes as ch
 from . import duplicates as du
-from .models import AudioFile, Changeset, EffectiveMetadata, FieldValue, Library
+from . import operations as ops
+from .models import AudioFile, EffectiveMetadata, FieldValue, Library, Operation
 from .pathparse import normalize_name, unflip
 from .tracks import present
 
@@ -223,19 +224,25 @@ def batch(proposals: list[Proposal], limit: int, *, replace: bool = False) -> li
     return [p for p in proposals if replace or not p.replaces][:limit]
 
 
-def propose(session: Session, proposals: list[Proposal], description: str) -> Changeset:
-    """One changeset: for each recording, copying tags to the kept file, trashing the
-    other encodings, then moving the kept file into the place of the album's copy."""
-    changeset = ch.new_changeset(session, description, "recordings")
+def decide(
+    session: Session, library: Library, proposals: list[Proposal], description: str
+) -> Operation | None:
+    """Decide on the proposals: for each recording, the tags only the other encodings
+    have become the kept file's own values, the other encodings are to be trashed, and the
+    kept file is to move into the place of the album's copy. Only the catalog changes (as
+    an operation that can be undone); the files are written from the Pending page
+    (writing.py), which trashes before it moves. None when it was all decided already."""
+    values, desires = [], []
     for proposal in proposals:
-        if proposal.fill:
-            ch.propose_retag(changeset, proposal.keep.file, proposal.fill)
-        for copy in proposal.trash:
-            ch.propose_trash(changeset, copy.file, replacement=proposal.keep.file, same="recording")
+        keep = proposal.keep.file
+        values += [ops.Value(keep.id, "manual", n, v) for n, v in proposal.fill.items()]
+        spec = {"replacement": keep.id, "replacement_path": keep.path, "same": "recording"}
+        desires += [ops.Desire(copy.file.id, "trash", spec) for copy in proposal.trash]
         if proposal.move_to:
-            ch.propose_move(changeset, proposal.keep.file, proposal.move_to)
+            desires.append(ops.Desire(keep.id, "move", {"to": proposal.move_to}))
+    operation = ops.record(session, library.id, "encodings", description, values, desires=desires)
     session.commit()
-    return changeset
+    return operation
 
 
 def _album_songs(tracks: list[Track]) -> list[list[Track]]:
