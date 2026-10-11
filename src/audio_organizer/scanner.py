@@ -5,9 +5,16 @@ read again, so rescanning a large library on a network share is cheap. New and
 changed files are read in a thread pool. A file that disappears from one path and
 appears at another with the same audio hash is recorded as a move, keeping its
 history and manual edits.
+
+On a case-insensitive share, names that differ only in letter case ("Normaalien
+Maihinnousu" and "Normaalien maihinnousu") can both be listed while both lead to the same
+folder: the server holds two, but this computer reaches one of them under either name.
+Such aliases are skipped and reported, so that the files are not cataloged twice and then
+taken for duplicates of themselves.
 """
 
 import os
+import unicodedata
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -39,6 +46,7 @@ class ScanStats:
     moved: int = 0
     missing: int = 0
     errors: list[tuple[str, str]] = field(default_factory=list)
+    aliases: list[tuple[str, str]] = field(default_factory=list)  # (skipped name, its twin)
     playlists: PlaylistScan = field(default_factory=PlaylistScan)
 
 
@@ -53,14 +61,19 @@ class _Result:
 
 
 def walk(
-    root: str | Path, folders: dict[str, tuple[int, list[str]]] | None = None
+    root: str | Path,
+    folders: dict[str, tuple[int, list[str]]] | None = None,
+    aliases: list[tuple[str, str]] | None = None,
 ) -> Iterator[tuple[str, os.stat_result]]:
     """Yield (relative POSIX path, stat) of the audio files under root, skipping hidden
     and system folders ('.', '@' prefixes) and AppleDouble files ('._').
 
     The folders that hold audio files are also noted in `folders`, as (modification time,
     names of all their entries), for the cover cache (covers.remember_folders): the
-    folder is listed anyway, so this costs one stat."""
+    folder is listed anyway, so this costs one stat. Entries that only reach an earlier
+    entry of the same folder under another letter case are skipped, and noted in
+    `aliases` as (relative path, relative path of the entry reached); see
+    case_aliases."""
     root = os.fspath(root)
     stack = [root]
     while stack:
@@ -70,22 +83,61 @@ def walk(
         except OSError:
             continue
         has_audio = False
+        twins = case_aliases(entries)
         for entry in entries:
             if entry.name.startswith((".", "@")):
+                continue
+            if entry.name in twins:
+                if aliases is not None:
+                    twin = twins[entry.name].name
+                    aliases.append(
+                        (
+                            _relative(os.path.join(current, entry.name), root),
+                            _relative(os.path.join(current, twin), root),
+                        )
+                    )
                 continue
             if entry.is_dir(follow_symlinks=False):
                 stack.append(entry.path)
             elif os.path.splitext(entry.name)[1].lower() in AUDIO_EXTENSIONS:
                 has_audio = True
-                relpath = Path(os.path.relpath(entry.path, root)).as_posix()
-                yield relpath, entry.stat()
+                yield _relative(entry.path, root), entry.stat()
         if has_audio and folders is not None:
             try:
                 mtime = os.stat(current).st_mtime_ns
             except OSError:
                 continue
-            folder = Path(os.path.relpath(current, root)).as_posix()
-            folders[folder] = (mtime, [e.name for e in entries])
+            folders[_relative(current, root)] = (mtime, [e.name for e in entries])
+
+
+def _relative(path: str, root: str) -> str:
+    return Path(os.path.relpath(path, root)).as_posix()
+
+
+def case_aliases(entries: list[os.DirEntry]) -> dict[str, os.DirEntry]:
+    """The entries of one folder that are another name of an earlier entry: the same name
+    ignoring letter case and Unicode composition, and the same file or folder on disk.
+
+    A case-insensitive share may list two folders whose names differ only in case, while
+    this computer opens the same one under both names, so the second cannot be read from
+    here (it is on the server, to be looked at there). Reading both names would catalog
+    each file twice, and trashing one "copy" would trash the only one. Distinct folders of
+    such names on a case-sensitive disk are different files and are kept apart."""
+    first: dict[str, os.DirEntry] = {}
+    result: dict[str, os.DirEntry] = {}
+    for entry in entries:
+        key = unicodedata.normalize("NFC", entry.name).casefold()
+        earlier = first.setdefault(key, entry)
+        if earlier is not entry and _same_file(earlier.path, entry.path):
+            result[entry.name] = earlier
+    return result
+
+
+def _same_file(a: str, b: str) -> bool:
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
 
 
 def _read(root: str, relpath: str, st: os.stat_result, hash_audio: bool) -> _Result:
@@ -170,7 +222,7 @@ def scan(
 
     folders: dict[str, tuple[int, list[str]]] = {}
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        for relpath, st in walk(library.root, folders):
+        for relpath, st in walk(library.root, folders, stats.aliases):
             stats.seen += 1
             seen.add(relpath)
             entry = known.get(relpath)

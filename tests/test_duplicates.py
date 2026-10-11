@@ -1,3 +1,5 @@
+import os
+
 import pytest
 from sqlalchemy import select
 
@@ -144,3 +146,70 @@ def test_trashed_path_is_free_for_another_file(library):
     assert flat.path == "Texas/Texas_Halo.mp3"
     assert "mood" not in tags.read(root / album.path).fields
     assert scan(session, lib).unchanged == 7
+
+
+def _alias_folder(root):
+    """'Texas/greatest hits' as a case-insensitive share shows it: another name of
+    'Texas/Greatest Hits' (a symlink here, so that the test runs on any disk)."""
+    alias = root / "Texas/Hits alias"
+    alias.symlink_to(root / "Texas/Greatest Hits")
+    return alias
+
+
+def _apply(session, changeset):
+    session.commit()
+    ch.set_status(changeset.changes, "approved")
+    return ch.apply(session, changeset)
+
+
+def test_trash_refuses_a_copy_that_is_the_kept_file(library):
+    """Two catalog rows that open one file are not copies: trashing either loses it."""
+    session, lib, root = library
+    _alias_folder(root)
+    album = session.scalar(
+        select(AudioFile).where(AudioFile.path == "Texas/Greatest Hits/11 Halo.mp3")
+    )
+    twin = AudioFile(
+        library=lib, path="Texas/Hits alias/11 Halo.mp3", size=album.size,
+        mtime_ns=album.mtime_ns, audio_hash=album.audio_hash,
+    )  # fmt: skip
+    session.add(twin)
+    session.flush()
+    changeset = ch.new_changeset(session, "Merge", "album_merge")
+    ch.propose_trash(changeset, album, replacement=twin)
+    [outcome] = _apply(session, changeset)
+    assert not outcome.ok and "one file under two names" in outcome.message
+    assert (root / "Texas/Greatest Hits/11 Halo.mp3").exists()
+    assert not album.missing
+
+
+def test_trash_refuses_a_leftover_that_is_the_kept_file(library):
+    session, lib, root = library
+    _alias_folder(root)
+    (root / "Texas/Greatest Hits/cover.jpg").write_bytes(b"image")
+    changeset = ch.new_changeset(session, "Merge", "album_merge")
+    ch.propose_trash_leftover(
+        changeset, lib, "Texas/Hits alias/cover.jpg", same_as="Texas/Greatest Hits/cover.jpg"
+    )
+    [outcome] = _apply(session, changeset)
+    assert not outcome.ok and "one file under two names" in outcome.message
+    assert (root / "Texas/Greatest Hits/cover.jpg").exists()
+
+
+def test_trash_takes_a_hard_link_of_the_kept_file(library):
+    """A hard link is a second link of the file: trashing it leaves the kept one."""
+    session, lib, root = library
+    album_path = root / "Texas/Greatest Hits/11 Halo.mp3"
+    flat_path = root / "Texas/Texas_Halo.mp3"
+    flat_path.unlink()
+    os.link(album_path, flat_path)
+    scan(session, lib)
+    album, flat = (
+        session.scalar(select(AudioFile).where(AudioFile.path == path))
+        for path in ("Texas/Greatest Hits/11 Halo.mp3", "Texas/Texas_Halo.mp3")
+    )
+    changeset = ch.new_changeset(session, "Trash", "duplicates")
+    ch.propose_trash(changeset, flat, replacement=album)
+    [outcome] = _apply(session, changeset)
+    assert outcome.ok, outcome.message
+    assert album_path.exists() and not flat_path.exists()

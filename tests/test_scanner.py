@@ -4,7 +4,7 @@ from sqlalchemy import select
 
 from audio_organizer.models import AudioFile, Library, TagSnapshot
 from audio_organizer.provenance import resolve, set_value
-from audio_organizer.scanner import scan
+from audio_organizer.scanner import case_aliases, scan
 
 
 def _library(session, root):
@@ -132,3 +132,76 @@ def test_scan_remembers_the_images_of_folders(Session, copy_audio, tmp_path):
         (root / "Texas/Other").rmdir()
         scan(session, library)
         assert set(remembered(session)) == {"Texas/Greatest Hits"}  # a gone folder is forgotten
+
+
+class _Entry:
+    """A directory entry as a case-insensitive share lists it: its own name, but a path
+    that opens another entry."""
+
+    def __init__(self, name, path):
+        self.name, self.path = name, str(path)
+
+    def is_dir(self, follow_symlinks=True):
+        return os.path.isdir(self.path)
+
+    def stat(self, follow_symlinks=True):
+        return os.stat(self.path)
+
+
+def test_case_aliases_are_one_folder_under_two_names(tmp_path):
+    (tmp_path / "Album").mkdir()
+    (tmp_path / "Other").mkdir()
+    (tmp_path / "links").mkdir()
+    (tmp_path / "links/album").symlink_to(tmp_path / "Album")
+    first = _Entry("Album", tmp_path / "Album")
+    alias = _Entry("album", tmp_path / "links/album")
+    assert case_aliases([first, alias]) == {"album": first}
+    # Names written with a composed or a decomposed "ä" are one name too
+    assert case_aliases([_Entry("Ä", tmp_path / "Album"), _Entry("ä", alias.path)])
+    # Folders on a case-sensitive disk whose names differ in case are different folders
+    assert case_aliases([first, _Entry("album", tmp_path / "Other")]) == {}
+
+
+def test_scan_skips_and_reports_case_aliases(Session, copy_audio, tmp_path, monkeypatch):
+    """A case-insensitive share lists "Greatest Hits" and "greatest hits", but opens one
+    folder under both names: its files are cataloged once, and rows that an earlier scan
+    made under the other name become missing."""
+    root = tmp_path / "music"
+    copy_audio("mp3", root / "Texas/Greatest Hits/11 Halo.mp3")
+    (tmp_path / "links").mkdir()
+    link = tmp_path / "links/greatest hits"
+    link.symlink_to(root / "Texas/Greatest Hits")
+    real_scandir = os.scandir
+
+    class Listing(list):  # what scandir gives: an iterable that is also a context manager
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def scandir(path="."):
+        if os.fspath(path) != str(root / "Texas"):
+            return real_scandir(path)
+        with real_scandir(path) as entries:
+            return Listing([*entries, _Entry("greatest hits", link)])
+
+    with Session() as session:
+        library = _library(session, root)
+        scan(session, library)
+        halo = _files(session)["Texas/Greatest Hits/11 Halo.mp3"]
+        twin = AudioFile(
+            library=library, path="Texas/greatest hits/11 Halo.mp3", size=halo.size,
+            mtime_ns=halo.mtime_ns, audio_hash=halo.audio_hash,
+        )  # fmt: skip
+        session.add(twin)
+        session.commit()
+
+        monkeypatch.setattr(os, "scandir", scandir)
+        stats = scan(session, library)
+        assert stats.aliases == [("Texas/greatest hits", "Texas/Greatest Hits")]
+        assert (stats.seen, stats.unchanged, stats.missing) == (1, 1, 1)
+        session.expire_all()
+        files = _files(session)
+        assert files["Texas/greatest hits/11 Halo.mp3"].missing
+        assert not files["Texas/Greatest Hits/11 Halo.mp3"].missing

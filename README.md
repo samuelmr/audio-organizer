@@ -85,6 +85,15 @@ The first scan reads every file; later scans only read new and changed ones, so 
 `aorg scan` whenever you have added or changed music. Files moved or renamed outside
 `aorg` are recognized by their audio and keep their history.
 
+**Folders whose names differ only in letter case.** A NAS can hold both "Normaalien
+Maihinnousu" and "Normaalien maihinnousu" and list both, while a Mac (or any computer
+that treats the share as case-insensitive) opens the same one of them under either name.
+The other cannot be read from that computer. `aorg scan` reads such a folder once, under
+the name that sorts first, and lists the other names it skipped; files cataloged under
+them by an earlier version become missing. Look at the skipped folder on the NAS itself:
+if it holds the same files, delete it there; otherwise give it a name of its own, and
+the next scan reads it.
+
 After updating `aorg`, `aorg scan --reread` reads every file again once, so that tags a
 newer version reads (such as ratings, sort names or embedded covers) are in the catalog.
 
@@ -325,6 +334,10 @@ several album folders are left for you to decide, and so are tracks whose only a
 copy is on a compilation while another copy is in the artist's own folder (add
 `--include-compilations` to include them). The web UI's Duplicates page does the same,
 and there you can choose another copy to keep for any track, and listen to the copies.
+
+A file is never trashed as a copy of itself: if two catalog entries open the same file
+(letter case on a case-insensitive share, see [Scanning](#scanning)), writing refuses and
+asks for a rescan. A hard link to the kept file can be trashed, as the kept one stays.
 
 ### Tracks in several encodings
 

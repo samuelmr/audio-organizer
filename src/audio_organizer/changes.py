@@ -583,13 +583,17 @@ def _trash(session: Session, change: Change) -> dict:
     target = root / trash_path
     if target.exists():
         raise ChangeError(f"{trash_path} already exists")
+    replacement = change.payload.get("replacement")
+    if replacement is not None:
+        kept = session.get(AudioFile, replacement)
+        kept_path = kept.path if kept else change.payload["replacement_path"]
+        _check_distinct(_full_path(file), root / kept_path, file.path, kept_path)
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(_full_path(file), target)
     _remove_empty_dirs(_full_path(file).parent, root)
     old_path = file.path
     file.missing, file.path = True, trash_path
     entries = []
-    replacement = change.payload.get("replacement")
     if replacement is not None:
         for entry in session.scalars(select(PlaylistEntry).where(PlaylistEntry.file_id == file.id)):
             entry.file_id = replacement
@@ -612,10 +616,28 @@ def _trash_leftover(session: Session, change: Change) -> dict:
     target = root / trash_path
     if target.exists():
         raise ChangeError(f"{trash_path} already exists")
+    if same_as := change.payload.get("same_as"):
+        _check_distinct(source, root / same_as, path, same_as)
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(source, target)
     _remove_empty_dirs(source.parent, root)
     return {"trash": trash_path}
+
+
+def _check_distinct(path: Path, kept: Path, name: str, kept_name: str) -> None:
+    """Refuse to trash a file as a copy of one that is the same file under another name:
+    on a case-insensitive share "Album/01.mp3" and "album/01.mp3" can both be in the
+    catalog while they open one file, and trashing either loses it. A hard link (a second
+    link of the file) can go, as the other link keeps it."""
+    try:
+        same = os.path.samefile(path, kept) and path.stat().st_nlink < 2
+    except OSError:
+        return  # either is gone, so they are not one file
+    if same:
+        raise ChangeError(
+            f"{name} and {kept_name} are one file under two names (letter case on a "
+            "case-insensitive share?); rescan the library, which reads only one of them"
+        )
 
 
 def _rename_file(session: Session, change: Change) -> dict:

@@ -308,6 +308,14 @@ def scan_command(
         typer.echo(f"  {relpath}: {error}")
     if len(stats.errors) > 20:
         typer.echo(f"  ... and {len(stats.errors) - 20} more")
+    if stats.aliases:
+        typer.echo(
+            f"{len(stats.aliases)} names lead to the same folder or file as another name that "
+            "differs only in letter case, so they were skipped. The share lists both, but this "
+            "computer can read only one of them; look at the other on the server itself:"
+        )
+        for alias, twin in stats.aliases:
+            typer.echo(f"  {alias}  (reads as {twin})")
     if deep:
         _deep_scan(ctx, library, deep_limit, retry_failed)
     if with_gnudb:
