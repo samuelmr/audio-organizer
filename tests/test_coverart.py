@@ -343,3 +343,20 @@ def test_cli_decide_then_write(library):
     assert covers.embedded(root / "Texas/Greatest Hits/11 Halo.mp3") == (
         "image/jpeg", image.read_bytes(),
     )  # fmt: skip
+
+
+@pytest.mark.parametrize("code, tries", [(500, 3), (504, 3), (403, 1)])
+def test_client_retries_server_errors(monkeypatch, code, tries):
+    import urllib.error
+
+    calls = []
+
+    def urlopen(request, timeout):
+        calls.append(request.full_url)
+        raise urllib.error.HTTPError(request.full_url, code, "error", {}, None)
+
+    monkeypatch.setattr(coverart.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(coverart.time, "sleep", lambda seconds: None)
+    with pytest.raises(coverart.CoverArtError, match=f"HTTP {code}"):
+        coverart.Client(pause=0).get("https://example.org/x")
+    assert len(calls) == tries

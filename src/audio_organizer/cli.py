@@ -215,6 +215,12 @@ def scan_command(
         int | None,
         typer.Option(help="Measure at most this many files, and look up this many albums"),
     ] = None,
+    retry_failed: Annotated[
+        bool,
+        typer.Option(
+            "--retry-failed", help="With --deep, try again the files that could not be measured"
+        ),
+    ] = False,
     with_gnudb: Annotated[
         bool,
         typer.Option(
@@ -248,13 +254,14 @@ def scan_command(
 
     With --deep, files are also read in full to measure their loudness: ReplayGain 2.0
     track gain and peak, and album gain and peak once all of an album's tracks are
-    measured. With --with-gnudb, complete single-disc album folders are looked up in
-    gnudb (needs your email address in AORG_GNUDB_EMAIL) for the album's title, year,
-    genre and track titles. With --with-covers, albums whose tracks have no cover, or
-    one smaller than --min-pixels on a side, and no big enough image in their folder,
-    are looked up in MusicBrainz and the Cover Art Archive. The options work with or
-    without each other, in that order. The results are kept in the catalog, not written
-    into the files (see `aorg pending` and `aorg covers`).
+    measured. Files that cannot be measured (DRM-protected, corrupt) are remembered and
+    skipped; --retry-failed tries them again. With --with-gnudb, complete single-disc
+    album folders are looked up in gnudb (needs your email address in AORG_GNUDB_EMAIL)
+    for the album's title, year, genre and track titles. With --with-covers, albums whose
+    tracks have no cover, or one smaller than --min-pixels on a side, and no big enough
+    image in their folder, are looked up in MusicBrainz and the Cover Art Archive. The
+    options work with or without each other, in that order. The results are kept in the
+    catalog, not written into the files (see `aorg pending` and `aorg covers`).
 
     The lookups ask a service about one album at a time, which takes seconds per album,
     so tidy the library first, or use `aorg gnudb` and `aorg coverart` on their own. It
@@ -298,7 +305,7 @@ def scan_command(
     if len(stats.errors) > 20:
         typer.echo(f"  ... and {len(stats.errors) - 20} more")
     if deep:
-        _deep_scan(ctx, library, deep_limit)
+        _deep_scan(ctx, library, deep_limit, retry_failed)
     if with_gnudb:
         if gnudb.has_email():
             _gnudb_lookups(ctx, library, deep_limit)
@@ -308,7 +315,9 @@ def scan_command(
         _cover_lookups(ctx, library, deep_limit, min_pixels)
 
 
-def _deep_scan(ctx: typer.Context, library: str | None, limit: int | None) -> None:
+def _deep_scan(
+    ctx: typer.Context, library: str | None, limit: int | None, retry_failed: bool
+) -> None:
     started = time.monotonic()
     last_report = 0.0
 
@@ -321,17 +330,19 @@ def _deep_scan(ctx: typer.Context, library: str | None, limit: int | None) -> No
             last_report = now
             rate = done / max(now - started, 0.001)
             left = (total - done) / rate if rate else 0
+            where = "" if error else f": {relpath}"  # a failed file is not "measured"
             typer.echo(
-                f"  measured {done}/{total} ({rate:.1f} files/s, ~{left / 60:.0f} min left): "
-                f"{relpath}",
+                f"  done {done}/{total} ({rate:.1f} files/s, ~{left / 60:.0f} min left){where}",
                 err=True,
             )
 
     with _session(ctx) as session:
         lib = _library(session, library)
-        todo = len(loudness.unmeasured(session, lib))
+        todo = len(loudness.unmeasured(session, lib, retry_failed=retry_failed))
         typer.echo(f"Measuring loudness: {min(todo, limit or todo)} of {todo} files not measured")
-        stats = loudness.measure_library(session, lib, limit=limit, progress=progress)
+        stats = loudness.measure_library(
+            session, lib, limit=limit, retry_failed=retry_failed, progress=progress
+        )
     typer.echo(
         f"Measured {stats.measured} files, {len(stats.errors)} errors; album gain for "
         f"{stats.albums} albums ({time.monotonic() - started:.0f} s)"

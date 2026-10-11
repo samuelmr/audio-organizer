@@ -124,7 +124,9 @@ album gain and peak once all of an album's tracks (the files of one folder with 
 album tag) are measured. The album gain is computed from the tracks' loudness rather than
 by measuring the whole album again, which is usually within a few tenths of a dB. The
 results stay in the catalog until you write them into the files (see
-[Writing tags](#writing-tags)); a file whose audio changes is measured again.
+[Writing tags](#writing-tags)); a file whose audio changes is measured again. A file
+that cannot be measured (DRM-protected WMA, a corrupt file) is reported and remembered,
+and skipped by later scans; `aorg scan --deep --retry-failed` tries those again.
 
 **Covers.** Albums whose tracks have no embedded cover, or one smaller than `--min-pixels`
 (200 by default) on a side, and whose folder has no image at least that big, are looked up

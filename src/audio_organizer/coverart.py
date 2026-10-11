@@ -53,6 +53,11 @@ def user_agent() -> str:
     return f"audio-organizer/{__version__}" + (f" ( {contact} )" if contact else "")
 
 
+# The Cover Art Archive answers 500 for images its backing store (archive.org) is slow to
+# serve; they usually work a moment later.
+RETRY_CODES = (500, 502, 503, 504)
+
+
 class Client:
     """HTTP requests to MusicBrainz and the Cover Art Archive, at most one a second to
     MusicBrainz."""
@@ -72,7 +77,7 @@ class Client:
             except urllib.error.HTTPError as e:
                 if e.code == 404:
                     return None
-                if e.code in (502, 503) and attempt < 2:  # MusicBrainz is busy; slow down
+                if e.code in RETRY_CODES and attempt < 2:  # a service is busy; slow down
                     time.sleep(2 * (attempt + 1))
                     continue
                 raise CoverArtError(f"{url}: HTTP {e.code}") from None
@@ -200,7 +205,7 @@ def lookup_library(
         if progress:
             progress(count, len(todo), f"{album.artist} – {album.album}", error)
         if failures >= 3:
-            stats.stopped = "three lookups in a row failed; is the network down?"
+            stats.stopped = "three lookups in a row failed; the services may be busy, try later"
             break
     return stats
 

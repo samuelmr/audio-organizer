@@ -14,6 +14,9 @@ within a few tenths of a dB), which saves decoding every album a second time. Va
 are only written into files through changesets, like any other tag value. A file's
 measurement stays valid as long as its audio does: the scanner drops it when the audio
 hash changes.
+
+A file that cannot be measured (DRM-protected, corrupt) is remembered with the reason in
+"loudness_error", the same way, so that it is not tried again on every deep scan.
 """
 
 import math
@@ -29,6 +32,7 @@ from pathlib import Path, PurePosixPath
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from . import audiohash
 from .models import AudioFile, EffectiveMetadata, FieldValue, Library
 from .pathparse import normalize_name
 from .provenance import set_value
@@ -36,6 +40,7 @@ from .tracks import present
 
 REFERENCE = -18.0  # LUFS, ReplayGain 2.0
 LOUDNESS = "loudness_lufs"
+FAILED = "loudness_error"
 _INTEGRATED = re.compile(r"I:\s+(-?[\d.]+|-inf) LUFS")
 _PEAK = re.compile(r"Peak:\s+(-?[\d.]+|-inf) dBFS")
 
@@ -44,13 +49,31 @@ class LoudnessError(Exception):
     pass
 
 
-def measure(path: str | Path) -> dict[str, str]:
+def _skip_tag(path: str | Path) -> list[str]:
+    """ffmpeg options to start after the ID3 tag when a WAV (RIFF) header follows it.
+
+    Some old MP3s are an MP3 stream in a WAV container with an ID3 tag in front. ffmpeg
+    recognises the container behind the tag but then reads it from the file's start and
+    fails, so we point it at the container."""
+    try:
+        with open(path, "rb") as f:
+            start, _ = audiohash.id3_stream_range(f)
+            f.seek(start)
+            riff = f.read(4) == b"RIFF"
+    except OSError:
+        return []
+    return ["-skip_initial_bytes", str(start)] if start and riff else []
+
+
+def measure(path: str | Path, label: str | None = None) -> dict[str, str]:
     """Loudness, ReplayGain track gain and peak of a file, as stored values
-    ("-14.30", "-3.70 dB", "0.977237"). Reads the whole file."""
+    ("-14.30", "-3.70 dB", "0.977237"). Reads the whole file. Errors name the file by
+    label (default: its file name; a library-relative path tells same-named tracks apart)."""
+    label = label or Path(path).name
     if shutil.which("ffmpeg") is None:
         raise LoudnessError("ffmpeg is needed to measure loudness")
     result = subprocess.run(
-        ["ffmpeg", "-nostats", "-hide_banner", "-i", str(path), "-vn",
+        ["ffmpeg", "-nostats", "-hide_banner", *_skip_tag(path), "-i", str(path), "-vn",
          "-af", "ebur128=peak=true", "-f", "null", "-"],
         capture_output=True, text=True, errors="replace",
     )  # fmt: skip
@@ -58,9 +81,9 @@ def measure(path: str | Path) -> dict[str, str]:
     integrated, peak = _INTEGRATED.search(summary), _PEAK.search(summary)
     if result.returncode != 0 or not integrated or not peak:
         last = result.stderr.strip().splitlines()[-1:] or ["no output"]
-        raise LoudnessError(f"Could not measure {Path(path).name}: {last[0]}")
+        raise LoudnessError(f"Could not measure {label}: {last[0]}")
     if integrated.group(1) == "-inf":
-        raise LoudnessError(f"{Path(path).name} is silent")
+        raise LoudnessError(f"{label} is silent")
     lufs = float(integrated.group(1))
     peak_linear = 0.0 if peak.group(1) == "-inf" else 10 ** (float(peak.group(1)) / 20)
     return {
@@ -76,6 +99,7 @@ def measure_file(session: Session, file: AudioFile) -> dict[str, str]:
     values = measure(Path(file.library.root) / file.path)
     for name, value in values.items():
         set_value(session, file, "analysis", name, value)
+    set_value(session, file, "analysis", FAILED, None)
     update_albums(session, file.library, [file.id])
     return values
 
@@ -87,9 +111,13 @@ class DeepScanStats:
     errors: list[tuple[str, str]] = field(default_factory=list)
 
 
-def unmeasured(session: Session, library: Library) -> list[AudioFile]:
+def unmeasured(
+    session: Session, library: Library, *, retry_failed: bool = False
+) -> list[AudioFile]:
+    """Files without a measurement; those that failed before only with retry_failed."""
+    fields = (LOUDNESS,) if retry_failed else (LOUDNESS, FAILED)
     measured = select(FieldValue.file_id).where(
-        FieldValue.source == "analysis", FieldValue.field == LOUDNESS
+        FieldValue.source == "analysis", FieldValue.field.in_(fields)
     )
     return list(
         session.scalars(
@@ -106,28 +134,32 @@ def measure_library(
     *,
     workers: int = 4,
     limit: int | None = None,
+    retry_failed: bool = False,
     progress: Callable[[int, int, str, str | None], None] | None = None,
 ) -> DeepScanStats:
     """Measure the files not measured yet (all of them, the first time), in parallel,
     committing as it goes so an interrupted run continues where it stopped; then the
-    album gains."""
+    album gains. Files that failed before are skipped unless retry_failed."""
     stats = DeepScanStats()
-    todo = unmeasured(session, library)[:limit]
+    todo = unmeasured(session, library, retry_failed=retry_failed)[:limit]
     root = Path(library.root)
     done = []
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(measure, root / f.path): f for f in todo}
+        futures = {pool.submit(measure, root / f.path, f.path): f for f in todo}
         for count, future in enumerate(as_completed(futures), start=1):
             file = futures[future]
             error = None
             try:
                 for name, value in future.result().items():
                     set_value(session, file, "analysis", name, value)
+                if retry_failed:
+                    set_value(session, file, "analysis", FAILED, None)
                 done.append(file.id)
                 stats.measured += 1
             except LoudnessError as e:
                 error = str(e)
                 stats.errors.append((file.path, error))
+                set_value(session, file, "analysis", FAILED, error)
             if count % 50 == 0:
                 session.commit()
             if progress:
