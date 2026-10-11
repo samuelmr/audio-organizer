@@ -93,7 +93,7 @@ def test_move_apply_and_undo(catalog):
 def test_refuses_to_touch_file_changed_since_scan(catalog):
     session, root, file = catalog
     path = root / file.path
-    os.utime(path, ns=(0, path.stat().st_mtime_ns + 10**9))
+    tags.write(path, {"title": "Changed"})
     changeset = ch.new_changeset(session, "edit", "manual")
     change = ch.propose_retag(changeset, file, {"genre": "Rock"})
     ch.set_status([change], "approved")
@@ -189,7 +189,7 @@ def test_retags_of_many_files_run_side_by_side(catalog, copy_audio, monkeypatch)
     changes = [ch.propose_retag(changeset, f, {"genre": f"Pop {i}"}) for i, f in enumerate(files)]
     ch.set_status(changes, "approved")
     session.commit()
-    os.utime(root / files[1].path, ns=(0, 0))  # changed since the scan
+    tags.write(root / files[1].path, {"title": "Changed"})  # changed since the scan
     genre = tags.read(root / files[0].path).fields.get("genre")
     threads = _recording_threads(monkeypatch)
     applied = []
@@ -205,6 +205,86 @@ def test_retags_of_many_files_run_side_by_side(catalog, copy_audio, monkeypatch)
     assert all(o.ok for o in ch.undo(session, changeset))
     assert tags.read(root / files[0].path).fields.get("genre") == genre
     assert scan(session, files[0].library).unchanged == 3  # the catalog is up to date
+
+
+def _two_files(session, root, copy_audio) -> list[AudioFile]:
+    copy_audio("mp3", root / "Texas/Two.mp3")
+    scan(session, session.scalar(select(Library)))
+    return session.scalars(select(AudioFile).order_by(AudioFile.path)).all()
+
+
+@pytest.mark.parametrize("count", [1, 2])
+def test_a_file_with_only_a_new_mtime_is_compared_with_the_catalog(catalog, copy_audio, count):
+    """Backups, sync tools and network shares change modification times: a file whose
+    tags and audio are as scanned is written, one change at a time or several at once,
+    and the catalog takes its new time."""
+    session, root, _ = catalog
+    files = _two_files(session, root, copy_audio)[:count]
+    changeset = ch.new_changeset(session, "edit", "writing")
+    changes = [ch.propose_retag(changeset, f, {"genre": "Pop"}) for f in files]
+    ch.set_status(changes, "approved")
+    session.commit()
+    for file in files:
+        os.utime(root / file.path, ns=(0, 0))
+    outcomes = ch.apply(session, changeset)
+    assert all(o.ok for o in outcomes), [o.message for o in outcomes]
+    for file in files:
+        assert tags.read(root / file.path).fields["genre"] == "Pop"
+        assert file.mtime_ns == (root / file.path).stat().st_mtime_ns
+    assert scan(session, files[0].library).unchanged == 2
+
+
+@pytest.mark.parametrize("count", [1, 2])
+@pytest.mark.parametrize("difference", ["tags", "audio"])
+def test_a_file_of_the_same_size_with_other_content_is_not_written(
+    catalog, copy_audio, count, difference
+):
+    """A new modification time with tags or audio that differ from the catalog's is a
+    change made elsewhere, even when the size stays (as mp3gain changes the audio)."""
+    session, root, _ = catalog
+    files = _two_files(session, root, copy_audio)[:count]
+    changeset = ch.new_changeset(session, "edit", "writing")
+    changes = [ch.propose_retag(changeset, f, {"genre": "Jazz"}) for f in files]
+    ch.set_status(changes, "approved")
+    session.commit()
+    changed = files[0]
+    os.utime(root / changed.path, ns=(0, 0))
+    if difference == "tags":  # as if the file had another title than the catalog knows
+        set_value(session, changed, "tag", "title", "Something Else")
+    else:
+        changed.audio_hash = "0" * 32
+    session.commit()
+    outcomes = ch.apply(session, changeset)
+    assert not outcomes[0].ok
+    assert "has changed since it was scanned" in outcomes[0].message
+    assert tags.read(root / changed.path).fields["genre"] == "Pop"
+    assert all(o.ok for o in outcomes[1:])
+
+
+def test_the_mtime_stored_after_a_write_is_the_one_the_file_keeps(catalog, monkeypatch):
+    """On a network share the server sets the modification time when the written data
+    reaches it, so a stat straight after writing gave the old time. Flushing first gives
+    the time the file keeps (here, a fake share sets it on fsync)."""
+    session, root, file = catalog
+    path, kept = root / file.path, 1_700_000_000_000_000_000
+    write, fsync = tags.write, os.fsync
+
+    def cached_write(target, *args, **kwargs):
+        before = os.stat(target).st_mtime_ns
+        write(target, *args, **kwargs)
+        os.utime(target, ns=(before, before))  # still in the client's cache
+
+    def flushing(fd):
+        fsync(fd)
+        os.utime(path, ns=(kept, kept))  # arrived at the server
+
+    monkeypatch.setattr(tags, "write", cached_write)
+    monkeypatch.setattr(os, "fsync", flushing)
+    changeset = ch.new_changeset(session, "edit", "writing")
+    ch.set_status([ch.propose_retag(changeset, file, {"genre": "Pop"})], "approved")
+    session.commit()
+    assert all(o.ok for o in ch.apply(session, changeset))
+    assert file.mtime_ns == kept == path.stat().st_mtime_ns
 
 
 def test_changesets_that_do_more_than_retag_apply_in_order(catalog, monkeypatch):

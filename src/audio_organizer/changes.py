@@ -19,6 +19,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import covers, pathparse, tags
+from .audiohash import audio_hash
+from .blockfile import BlockFile
 from .models import (
     AudioFile,
     Change,
@@ -49,6 +51,15 @@ DESIRE_KINDS = {"cover": "embed", "image": "image", "trash": "trash", "move": "m
 
 class ChangeError(Exception):
     pass
+
+
+class _MtimeChanged(ChangeError):
+    """The file has the size it was scanned with but another modification time, which
+    alone does not mean that it changed (see _check_unchanged)."""
+
+    def __init__(self, name: str, mtime_ns: int):
+        super().__init__(f"{name} has changed since it was scanned; rescan the library")
+        self.mtime_ns = mtime_ns
 
 
 @dataclass
@@ -363,8 +374,14 @@ def _retag_ahead(changes: list[Change]) -> tuple[ThreadPoolExecutor | None, dict
 def _apply_one(session: Session, change: Change, retagged: Future | None) -> Outcome:
     """Apply one change, or with retagged, store what retagging its file found."""
     try:
+        result = None
         if retagged is not None:
-            change.undo = _store_retag(session, change.file, retagged.result())
+            try:
+                result = retagged.result()
+            except _MtimeChanged:
+                pass  # checked again below, where the catalog can tell whether it changed
+        if result is not None:
+            change.undo = _store_retag(session, change.file, result)
         else:
             if change.kind not in ("image", "leftover", "rename"):  # which have no track to protect
                 _check_unchanged(change.file)
@@ -471,7 +488,31 @@ def _full_path(file: AudioFile) -> Path:
 
 
 def _check_unchanged(file: AudioFile) -> None:
-    _check_stat(_full_path(file), file.path, file.size, file.mtime_ns)
+    """Raise ChangeError unless the file is as it was scanned. When only its modification
+    time differs, its tags and audio are compared with the catalog's instead, and if they
+    match, the catalog takes the new time: backups, sync tools and network shares change
+    modification times, and the time stored after a write could be stale (_stat_written)."""
+    try:
+        _check_stat(_full_path(file), file.path, file.size, file.mtime_ns)
+    except _MtimeChanged as e:
+        if not _same_content(file):
+            raise
+        log.info("%s has a new modification time but is unchanged", file.path)
+        file.mtime_ns = e.mtime_ns
+
+
+def _same_content(file: AudioFile) -> bool:
+    """Whether the file has the tags and audio the catalog has for it. The audio hash
+    reads samples of the audio, so a change to the audio of the same size is found
+    (as by mp3gain, which rewrites gain fields in the frames)."""
+    if not file.audio_hash:
+        return False
+    stored = {fv.field: fv.value for fv in file.values if fv.source == "tag"}
+    try:
+        with BlockFile(_full_path(file)) as f:
+            return tags.read(f).fields == stored and audio_hash(f) == file.audio_hash
+    except (OSError, MutagenError):
+        return False
 
 
 def _check_stat(path: Path, name: str, size: int, mtime_ns: int) -> None:
@@ -479,8 +520,24 @@ def _check_stat(path: Path, name: str, size: int, mtime_ns: int) -> None:
         st = path.stat()
     except FileNotFoundError:
         raise ChangeError(f"{name} no longer exists; rescan the library") from None
-    if st.st_size != size or st.st_mtime_ns != mtime_ns:
+    if st.st_size != size:
         raise ChangeError(f"{name} has changed since it was scanned; rescan the library")
+    if st.st_mtime_ns != mtime_ns:
+        raise _MtimeChanged(name, st.st_mtime_ns)
+
+
+def _stat_written(path: Path) -> os.stat_result:
+    """The file's size and modification time after writing it. On a network share (macOS
+    smbfs) what was written may still be in the client's cache, and the server sets the
+    modification time when it arrives: a stat straight away gave the time from before the
+    write, and the file then seemed changed since it was scanned. Flushing it first gives
+    the time it keeps."""
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    return path.stat()
 
 
 @dataclass
@@ -507,7 +564,7 @@ def _retag_file(
     _check_stat(path, name, size, mtime_ns)
     before = tags.read(path).fields
     tags.write(path, fields, id3_version=id3_version)
-    st = path.stat()
+    st = _stat_written(path)
     return _Retagged(
         {"fields": {field: before.get(field) for field in fields}},
         st.st_size, st.st_mtime_ns, tags.read(path).fields,
@@ -522,7 +579,7 @@ def _store_retag(session: Session, file: AudioFile, retagged: _Retagged) -> dict
 
 def _refresh(session: Session, file: AudioFile) -> None:
     path = _full_path(file)
-    st = path.stat()
+    st = _stat_written(path)
     _store_refresh(session, file, st.st_size, st.st_mtime_ns, tags.read(path).fields)
 
 
