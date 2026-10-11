@@ -383,8 +383,21 @@ removed. `aorg leftovers` looks at the disk for folders without any music below 
 
 Only known litter is proposed (folder images, playlists, logs, system files); other
 files, such as a PDF booklet, are listed and only proposed with `--all`. A playlist
-(.m3u, .html, .json, ...) that names tracks is a playlist, not litter, and is kept. A
-folder goes when its last file is trashed, and undoing the changeset brings both back.
+(.m3u, .html, .json, ...) that names tracks is a playlist, not litter, and is kept, unless
+it is dead (see below). A folder goes when its last file is trashed, and undoing the
+changeset brings both back.
+
+**Dead playlists.** Old tools left a playlist next to each album, or in the artist's folder,
+naming files that have since been merged, renamed or trashed. Such a playlist is proposed
+for the trash wherever it lies, also in folders that still hold music, when it names at
+least one track and none of them is there (entries are looked for beside the playlist and
+under the library root). `.m3u`, `.m3u8`, `.pls`, `.wpl`, and the JSON and HTML playlists
+`aorg` and its predecessor wrote are read; so are small files without any extension whose
+lines are all audio file names (old tools garbled "Album.m3u" into names such as
+"Albu毭3u"). A playlist with even one track still there, one that names a URL or a Windows
+path, one without tracks, the files in the library root and in the library's playlist
+folder are left alone. Run it after trashing duplicates and merging albums, which make
+more playlists dead.
 
 The same run looks at album folders: one without a cover.jpg or cover.png, but with
 another image (AlbumArtSmall.jpg, Folder.jpg), gets a proposal to rename the biggest
@@ -741,7 +754,7 @@ Design principles:
 | `encodings.py` | One track in several encodings, and which to keep |
 | `album_merge.py` | Album folders holding the same album, and merging them |
 | `neighbours.py` | Loose tracks that belong in an album folder, and moving them there |
-| `leftovers.py` | Litter in folders without music, and trashing it |
+| `leftovers.py` | Litter in folders without music and dead playlists anywhere, and trashing them |
 | `layout.py` | The folder layout template, and choosing the moves into it |
 | `artists.py` | Artists' sort names and suggestions for them |
 | `loudness.py` | ReplayGain 2.0: measuring tracks with ffmpeg, album gains (`scan --deep`) |

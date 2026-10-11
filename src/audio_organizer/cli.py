@@ -1762,6 +1762,9 @@ def leftovers(
     Folder.jpg, playlists that name no tracks, logs, system files); other files are listed,
     and proposed with --all. A folder is removed when its last file is trashed.
 
+    A playlist whose entries are all gone (an old generated .m3u, .json or .html) is
+    litter too, also in folders that still hold music.
+
     An album folder with no cover.jpg or cover.png but another image (AlbumArtSmall.jpg)
     gets a proposal to rename its biggest image to cover.jpg or cover.png.
     """
@@ -1770,8 +1773,9 @@ def leftovers(
         found = lf.survey(lib, path.strip("/") if path else None)
         typer.echo(
             f"{len(found.folders)} folders without music hold {found.litter} litter files "
-            f"and {found.other} other files; {len(found.renames)} album folders have an "
-            f"image to rename to cover."
+            f"and {found.other} other files; {len(found.dead)} dead playlists lie in "
+            f"folders with music; {len(found.renames)} album folders have an image to "
+            f"rename to cover."
         )
         for folder in found.folders:
             typer.echo(f"  {folder.path}/")
@@ -1779,14 +1783,20 @@ def leftovers(
                 typer.echo(f"    litter  {PurePosixPath(name).name}")
             for name in folder.other:
                 typer.echo(f"    other   {PurePosixPath(name).name}")
+        for name in found.dead:
+            typer.echo(f"  dead playlist  {name}")
         for source, target in found.renames:
             typer.echo(f"  rename {source} -> {PurePosixPath(target).name}")
         if not propose:
             return
         changeset = lf.propose(
-            session, lib, found, f"Trash leftover files in {len(found.folders)} folders",
+            session,
+            lib,
+            found,
+            f"Trash leftover files in {len(found.folders)} folders and {len(found.dead)} dead "
+            "playlists",
             everything=everything,
-        )  # fmt: skip
+        )
         if changeset is None:
             typer.echo("Nothing to trash.")
             return

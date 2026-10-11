@@ -14,13 +14,23 @@ only one without any track in it is. The other way round, an album folder that h
 cover.jpg or cover.png but another image (AlbumArtSmall.jpg, Folder.jpg) gets a proposal
 to rename the biggest of them to cover.jpg or cover.png, the name sync and the players
 look for.
+
+A playlist that is dead is litter wherever it lies, also in artist and album folders that
+still hold music: one whose entries all name files that are not there (an old generated
+YUP.m3u after the loose copies it listed were merged into albums). It must name at least
+one track, and an entry that cannot be checked from here (a URL, a Windows path) counts as
+alive.
 """
 
 import fnmatch
+import html
+import json
 import os
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
+from urllib.parse import unquote
 
 from sqlalchemy.orm import Session
 
@@ -43,6 +53,13 @@ _TRACK = re.compile(
     "|".join(re.escape(e) + r"\b" for e in sorted(AUDIO_EXTENSIONS)) + "|MusicRecording",
     re.IGNORECASE,
 )
+_AUDIO_END = tuple(sorted(AUDIO_EXTENSIONS))
+_FOREIGN = re.compile(
+    r"^([a-z][a-z0-9+.-]*://|[a-z]:[\\/]|\\\\)", re.IGNORECASE
+)  # URL, C:\, \\host
+_PLS_ENTRY = re.compile(r"^file\d+=(.*)$", re.IGNORECASE)
+_HREF = re.compile(r"""(?:href|src)\s*=\s*["']([^"']+)["']""", re.IGNORECASE)
+NAMELESS_PLAYLIST_BYTES = 64_000  # a file without extension is a playlist only if small
 
 
 # Files the operating system or file manager makes; they are never worth keeping twice.
@@ -122,6 +139,91 @@ def names_tracks(path: Path) -> bool:
         return True
 
 
+def _read_text(path: Path, limit: int) -> str | None:
+    try:
+        with open(path, "rb") as f:
+            data = f.read(limit)
+    except OSError:
+        return None
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return data.decode("cp1252", "replace")  # old players wrote the system's code page
+
+
+def _json_urls(node: object) -> list[str]:
+    if isinstance(node, dict):
+        found = [v for k, v in node.items() if k == "url" and isinstance(v, str)]
+        return found + [u for v in node.values() for u in _json_urls(v)]
+    if isinstance(node, list):
+        return [u for v in node for u in _json_urls(v)]
+    return []
+
+
+def playlist_entries(path: Path) -> list[str] | None:
+    """The track locations a playlist file names, as written in it, or None when it is not
+    a playlist we can read: .m3u/.m3u8, .pls, .wpl, and the schema.org JSON-LD and HTML
+    that `aorg` writes (only locations of audio files count in those). A file without any
+    extension (old tools garbled names such as "Album.m3u" into "Albu毭3u") is read as an
+    m3u when it is small and every line of it is an audio file name."""
+    suffix = path.suffix.lower()
+    if suffix == "" and not path.name.startswith("."):
+        text = _read_text(path, NAMELESS_PLAYLIST_BYTES + 1)
+        if text is None or len(text) > NAMELESS_PLAYLIST_BYTES:
+            return None
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        entries = [line for line in lines if not line.startswith("#")]
+        return entries if entries and all(e.lower().endswith(_AUDIO_END) for e in entries) else None
+    if suffix not in PLAYLIST_EXTENSIONS:
+        return None
+    text = _read_text(path, PLAYLIST_READ)
+    if text is None:
+        return None
+    if suffix in (".m3u", ".m3u8"):
+        return [s for line in text.splitlines() if (s := line.strip()) and not s.startswith("#")]
+    if suffix == ".pls":
+        return [
+            m.group(1).strip()
+            for line in text.splitlines()
+            if (m := _PLS_ENTRY.match(line.strip()))
+        ]
+    if suffix == ".json":
+        try:
+            urls = _json_urls(json.loads(text))
+        except ValueError:
+            return None
+        return [u for u in urls if u.lower().endswith(_AUDIO_END)]
+    links = [html.unescape(m) for m in _HREF.findall(text)]  # .wpl, .html, .htm
+    entries = [u if suffix == ".wpl" else unquote(u) for u in links]
+    return [e for e in entries if e.lower().endswith(_AUDIO_END)]
+
+
+def _exists(path: str) -> bool:
+    """Whether a file is there, whichever way its name is composed (macOS writes "ä" as
+    "a" and a combining mark, other systems as one character)."""
+    return any(
+        os.path.exists(unicodedata.normalize(form, path)) for form in ("NFC", "NFD")
+    ) or os.path.exists(path)
+
+
+def is_dead_playlist(path: Path, root: Path) -> bool:
+    """Whether a playlist names tracks, and not one of them is there: each entry is looked
+    for beside the playlist and under the library root (or where it says, if absolute).
+    Entries that cannot be checked from here count as alive, so a playlist is never
+    called dead by mistake; so does one with no entries."""
+    entries = playlist_entries(path)
+    if not entries:
+        return False
+    for entry in entries:
+        if _FOREIGN.match(entry):
+            return False
+        entry = entry.replace("\\", "/")
+        places = [entry] if os.path.isabs(entry) else [path.parent / entry, root / entry]
+        if any(_exists(os.fspath(p)) for p in places):
+            return False
+    return True
+
+
 def cover_rename(directory: Path, names: list[str]) -> tuple[str, str] | None:
     """For an album folder's non-audio files: (image, new name) when the folder has no
     cover.jpg/.jpeg/.png but another image. The biggest image becomes cover.jpg or
@@ -149,6 +251,7 @@ class Folder:
 class Survey:
     folders: list[Folder] = field(default_factory=list)
     renames: list[tuple[str, str]] = field(default_factory=list)  # library paths (from, to)
+    dead: list[str] = field(default_factory=list)  # dead playlists in folders that hold music
 
     @property
     def litter(self) -> int:
@@ -168,13 +271,16 @@ def survey(library: Library, path_prefix: str | None = None) -> Survey:
     root = Path(library.root)
     start = root / path_prefix if path_prefix else root
     found = Survey()
-    _walk(root, start, found)
+    # The library's own playlist folder is where `aorg` keeps its playlists: not looked at
+    keep = root / library.playlist_folder if library.playlist_folder else None
+    _walk(root, start, found, keep)
     found.folders.sort(key=lambda f: f.path)
     found.renames.sort()
+    found.dead.sort()
     return found
 
 
-def _walk(root: Path, directory: Path, found: Survey) -> bool:
+def _walk(root: Path, directory: Path, found: Survey, keep: Path | None = None) -> bool:
     """Collect the leftover folders below directory; True if it holds audio somewhere."""
     has_audio = beside = False
     files: list[str] = []
@@ -187,7 +293,7 @@ def _walk(root: Path, directory: Path, found: Survey) -> bool:
         if entry.is_dir(follow_symlinks=False):
             if entry.name.startswith((".", "@")):
                 continue
-            if _walk(root, Path(entry.path), found):
+            if _walk(root, Path(entry.path), found, keep):
                 has_audio = True
         elif entry.name.startswith("._") or (
             os.path.splitext(entry.name)[1].lower() not in AUDIO_EXTENSIONS
@@ -201,12 +307,16 @@ def _walk(root: Path, directory: Path, found: Survey) -> bool:
         rename = cover_rename(directory, files)
         if rename and directory != root:
             found.renames.append((str(relative / rename[0]), str(relative / rename[1])))
+    dead: set[str] = set()
+    if directory != root and not (keep and (directory == keep or keep in directory.parents)):
+        dead = {n for n in files if is_dead_playlist(directory / n, root)}
     if has_audio:
+        found.dead.extend(str(relative / name) for name in files if name in dead)
         return True
     if files and directory != root:
         folder = Folder(str(relative))
         for name in files:
-            litter = is_litter(name) and not names_tracks(directory / name)
+            litter = name in dead or (is_litter(name) and not names_tracks(directory / name))
             (folder.litter if litter else folder.other).append(str(relative / name))
         found.folders.append(folder)
     return False
@@ -222,9 +332,10 @@ def propose(
     covers: bool = True,
 ) -> ch.Changeset | None:
     """Propose trashing the litter of the surveyed folders (all their files with
-    everything) and renaming images to cover images (unless covers is off). None if
-    there is nothing to do."""
+    everything), the dead playlists in folders that hold music, and renaming images to
+    cover images (unless covers is off). None if there is nothing to do."""
     paths = [p for f in found.folders for p in (f.litter + (f.other if everything else []))]
+    paths += found.dead
     renames = found.renames if covers else []
     if not paths and not renames:
         return None
