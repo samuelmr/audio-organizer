@@ -160,7 +160,8 @@ changes.
 
 gnudb asks every client for a contact address, and refuses those that give none. Set
 `AORG_GNUDB_EMAIL` to your own email address (`AORG_CONTACT` is used if it is not set);
-without one the gnudb lookups are skipped. To be kind to gnudb, which may block an
+without one `aorg scan --with-gnudb` says so before it starts and, at a terminal, asks
+whether to scan without the lookups (scripts just skip them). To be kind to gnudb, which may block an
 address that sends too many requests, `aorg` waits three seconds between requests, and
 stops at the first refusal. An album takes one request to find candidates and up to four
 more to read them, so 6 to 15 seconds: about 10 to 25 minutes for 100 albums, and a few

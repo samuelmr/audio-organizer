@@ -273,6 +273,25 @@ def test_cli_gnudb_limit_and_with_gnudb(library, monkeypatch):
     assert "Skipping gnudb" in result.output and asked == [7, 2]
 
 
+def test_scan_with_gnudb_asks_before_starting_when_there_is_no_email(library, monkeypatch):
+    session, lib = library
+    db = str(session.get_bind().url)
+    monkeypatch.delenv("AORG_GNUDB_EMAIL", raising=False)
+    monkeypatch.delenv("AORG_CONTACT", raising=False)
+    monkeypatch.setattr("audio_organizer.cli._interactive", lambda: True)
+    monkeypatch.setattr(
+        "audio_organizer.cli._gnudb_lookups", lambda *a: pytest.fail("asked gnudb without email")
+    )
+
+    result = CliRunner().invoke(app, ["--db", db, "scan", "--with-gnudb"], input="n\n")
+    assert result.exit_code == 1 and "export AORG_GNUDB_EMAIL=" in result.output
+    assert "files:" not in result.output  # asked first, before scanning anything
+
+    result = CliRunner().invoke(app, ["--db", db, "scan", "--with-gnudb"], input="y\n")
+    assert result.exit_code == 0 and "Skipping gnudb" in result.output
+    assert "files:" in result.output
+
+
 def test_lookup_one_folder_again(library, client, server):
     session, lib = library
     gnudb.lookup_library(session, lib, client=client)

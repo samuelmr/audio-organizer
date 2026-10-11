@@ -2,6 +2,7 @@
 
 import shlex
 import shutil
+import sys
 import time
 from pathlib import Path, PurePosixPath
 from typing import Annotated
@@ -268,6 +269,9 @@ def scan_command(
     takes long; it continues where an interrupted run stopped, and --deep-limit splits
     it into parts.
     """
+    if with_gnudb and not gnudb.has_email():
+        # Ask now: the scan and measuring take hours, and gnudb comes after them
+        with_gnudb = _continue_without_gnudb()
     started = time.monotonic()
     last_report = 0.0
 
@@ -307,12 +311,27 @@ def scan_command(
     if deep:
         _deep_scan(ctx, library, deep_limit, retry_failed)
     if with_gnudb:
-        if gnudb.has_email():
-            _gnudb_lookups(ctx, library, deep_limit)
-        else:
-            typer.echo("Skipping gnudb: set AORG_GNUDB_EMAIL to your email address")
+        _gnudb_lookups(ctx, library, deep_limit)
     if with_covers:
         _cover_lookups(ctx, library, deep_limit, min_pixels)
+
+
+def _interactive() -> bool:
+    return sys.stdin.isatty()
+
+
+def _continue_without_gnudb() -> bool:
+    """Explain that gnudb needs the user's email address, and (when a person is at the
+    terminal) ask whether to scan without it. Returns False: gnudb is left out."""
+    typer.echo(
+        "gnudb asks clients for a contact email address, and --with-gnudb has none: set "
+        "AORG_GNUDB_EMAIL to yours, e.g. export AORG_GNUDB_EMAIL=you@example.org",
+        err=True,
+    )
+    if _interactive() and not typer.confirm("Scan without the gnudb lookups?", default=True):
+        raise typer.Exit(1)
+    typer.echo("Skipping gnudb", err=True)
+    return False
 
 
 def _deep_scan(
