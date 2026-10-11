@@ -184,3 +184,34 @@ def test_cli_edit_and_pending(library):
     result = run("pending", "--artist", "P!nk", "--discard")
     assert "Dropped 1 edits (" in result.output
     assert "0 files have values" in run("pending").output
+
+
+def test_write_gaps_reports_each_batch_and_stops_between_them(library):
+    session, lib, root = library
+    for part in ("Halo", "Insane", "Loose"):
+        set_value(session, _file(session, part), "analysis", "replaygain_track_gain", "-3.00 dB")
+    set_value(session, _file(session, "Halo"), "manual", "genre", "Rock")  # left for review
+    session.commit()
+    progress, batches = [], []
+
+    def stop() -> bool:
+        return len(batches) == 2
+
+    ids, written, failed = wr.write_gaps(
+        session, lib, wr.Selection(), batch=1,
+        progress=lambda done, total: progress.append((done, total)),
+        written_batch=lambda *batch: batches.append(batch), should_stop=stop,
+    )  # fmt: skip
+    assert progress == [(0, 3), (1, 3), (2, 3)]
+    assert batches == [(ids[0], 1, []), (ids[1], 1, [])]
+    assert (written, failed) == (2, [])
+    gains = [
+        tags.read(path).fields.get("replaygain_track_gain")
+        for path in sorted(root.rglob("*.mp3"))  # Halo, Loose, Insane
+    ]
+    assert sorted(gains, key=str) == ["-3.00 dB", "-3.00 dB", None]
+    assert tags.read(root / "Texas/Greatest Hits/11 Halo.mp3").fields.get("genre") != "Rock"
+
+    # the next run writes the rest
+    ids, written, failed = wr.write_gaps(session, lib, wr.Selection(), batch=1)
+    assert (len(ids), written) == (1, 1)

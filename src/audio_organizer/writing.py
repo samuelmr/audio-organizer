@@ -413,11 +413,18 @@ def write_gaps(
     id3_version: int | None = None,
     batch: int = 500,
     progress: Callable[[int, int], None] | None = None,
+    written_batch: Callable[[int, int, list[str]], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> tuple[list[int], int, list[str]]:
     """Write every measured or rule-derived value that fills a missing tag (see
     Selection.gaps_only), however many files, a changeset per batch so that none grows
     beyond what can be reviewed or undone. Returns the changesets' ids, how many files were
-    written and the messages of the failures. progress(done, total) is called after each batch."""
+    written and the messages of the failures.
+
+    progress(done, total) is called before the first batch and after each one, and
+    written_batch(changeset id, files written, failures) after each changeset, so that a
+    background job can show what is done while it runs. should_stop is asked before each
+    batch: a stop leaves the changesets written so far, each complete and undoable."""
     selection = replace(selection, gaps_only=True, prefer=(), file_ids=None)
     ids = list(
         session.scalars(_candidates(library, selection).where(AudioFile.id.not_in(_waiting())))
@@ -425,7 +432,11 @@ def write_gaps(
     changesets: list[int] = []
     written = 0
     failed: list[str] = []
+    if progress:
+        progress(0, len(ids))
     for start in range(0, len(ids), batch):
+        if should_stop and should_stop():
+            break
         chunk = replace(selection, file_ids=ids[start : start + batch])
         found = survey(session, library, chunk, batch)
         if found.files:
@@ -433,8 +444,12 @@ def write_gaps(
                 session, found.files, description(chunk, len(found.files), gaps=True), id3_version
             )
             changesets.append(changeset.id)
-            written += sum(o.ok for o in outcomes)
-            failed += [o.message for o in outcomes if not o.ok]
+            ok = sum(o.ok for o in outcomes)
+            failures = [o.message for o in outcomes if not o.ok]
+            written += ok
+            failed += failures
+            if written_batch:
+                written_batch(changeset.id, ok, failures)
         session.expunge_all()  # a library has hundreds of thousands of files
         if progress:
             progress(min(start + batch, len(ids)), len(ids))

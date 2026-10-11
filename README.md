@@ -561,7 +561,15 @@ for values that cannot clash with anything. `--write-gaps` writes them all at on
 Only measured ReplayGain values and ratings from preferences are written, and only into
 files that have no such tag: a differing tag is never overwritten, and your own edits and
 lookups stay pending for review. There is a changeset per 500 files, each of which can be
-undone. The Pending page has the same as the "Write them all" button.
+undone.
+
+The Pending page's *Write all measurements and ratings* button does the same, for the
+files shown there (all of them, or an album, a path or fields you chose). It runs in the
+background of `aorg web` and opens a page with its progress and the changesets written so
+far; a whole library takes hours. Other actions that change files wait until it ends, and
+it can be stopped between changesets. A run that is stopped or fails keeps what it wrote,
+and the next run writes the files still lacking their values. Only the last run since the
+server started is shown.
 
 The web UI's Pending page lists the albums with changes waiting; choose one (or an
 artist) to see the old and new value of every field, untick the files you want to
@@ -811,7 +819,9 @@ Design principles:
 | `playlist_formats.py` | M3U, JSON-LD and HTML playlist files |
 | `sync.py` | Planning and carrying out syncs to object storage |
 | `sync_jobs.py` | Sync runs as jobs: progress, one sync per target, background runs for the web UI |
+| `background.py` | In-memory background jobs of the web UI: progress, stop, one run per library |
 | `lookup_jobs.py` | gnudb and cover lookups of a whole library in the background of the web UI, one run of each kind per library |
+| `write_jobs.py` | Writing all measurements and ratings (`write_gaps`) in the background of the web UI |
 | `objectstore.py` | Object storage backends (S3-compatible) |
 | `cli.py` | The `aorg` command |
 | `web/` | The web UI: FastAPI app (`app.py`), Jinja2 templates, stylesheet |

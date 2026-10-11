@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Writing measurements and ratings – {{ library.name }} – audio-organizer{% endblock %}
+{% block content %}
+{% set base = '/libraries/' ~ library.name %}
+<h1>Writing measurements and ratings</h1>
+<p class="subtitle"><a href="{{ base }}">{{ library.name }}</a> · <a href="{{ base }}/pending">Pending</a> · <a href="/changes">Changes</a></p>
+
+{% if not state %}
+<p>Nothing has been written in the background since the server started. Start it with
+<em>Write all measurements and ratings</em> on the <a href="{{ base }}/pending">Pending</a> page.</p>
+{% else %}
+{# The same fields as a sync's progress page, so that sync.js updates this one too #}
+<section class="sync-job" data-sync-job="{{ base }}/pending/write-gaps" aria-live="polite">
+ <p><strong class="status {{ state.status }}" data-field="label">{{ state.label }}</strong>
+  <span data-field="message">{{ state.message or "" }}</span></p>
+ <progress data-field="progress" max="{{ state.total or 1 }}" value="{{ state.done }}"{% if not state.total %} hidden{% endif %}></progress>
+ <p data-field="counts">{{ state.counts }}</p>
+ <p class="hint" data-field="current">{{ state.current or "" }}</p>
+
+ {% if state.active %}
+ <form method="post" action="{{ base }}/pending/write-gaps/stop" data-field="stop">
+  <button type="submit" class="danger"{% if job.stop_requested %} disabled{% endif %}>{% if job.stop_requested %}Stopping…{% else %}Stop{% endif %}</button>
+  <a href="{{ base }}/pending/write-gaps" data-field="refresh">Refresh</a>
+ </form>
+ <p class="hint">Other actions that change files wait until this ends. Stopping keeps the
+ changesets written so far; writing again later carries on with the files still lacking
+ their values.</p>
+ {% endif %}
+
+ {% if job.changesets %}
+ <h2>Changesets written</h2>
+ <p class="hint">Each can be undone on its page.</p>
+ <ul>
+  {% for id in job.changesets %}<li><a href="/changes/{{ id }}">Changeset {{ id }}</a></li>{% endfor %}
+ </ul>
+ {% endif %}
+
+ <div data-field="errors"{% if not state.errors %} hidden{% endif %}>
+  <h2>Errors</h2>
+  <p class="hint">Files that failed are left pending. Only the first {{ max_errors }} are listed.</p>
+  <table>
+   <thead><tr><th>Changeset</th><th>Error</th></tr></thead>
+   <tbody>
+   {% for where, error in state.errors %}<tr><td class="path">{{ where }}</td><td class="error">{{ error }}</td></tr>{% endfor %}
+   </tbody>
+  </table>
+ </div>
+</section>
+{% endif %}
+<script src="{{ asset('sync.js') }}" defer></script>
+{% endblock %}

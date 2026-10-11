@@ -1176,3 +1176,99 @@ def test_unmeasurable_files_are_listed_on_pending_and_track_pages(web, Session, 
     [(file, reason)] = failed
     assert reason == "DRM-protected"
     assert "Batch measuring skips this track" in web.get(f"/tracks/{file.id}").text
+
+
+def _measure_all(Session):
+    from audio_organizer.provenance import set_value
+
+    with Session() as session:
+        for file in session.scalars(select(AudioFile)):
+            set_value(session, file, "analysis", "replaygain_track_gain", "-3.00 dB")
+        session.commit()
+
+
+def _write_gaps_state(web):
+    return web.get("/libraries/music/pending/write-gaps", headers={"Accept": "application/json"})
+
+
+def test_write_all_measurements_runs_in_the_background(web, Session, monkeypatch):
+    from audio_organizer import write_jobs
+    from audio_organizer import writing as wr
+
+    _measure_all(Session)
+    monkeypatch.setattr(write_jobs, "BATCH", 1)
+    write, wrote_one, go_on = wr.write, threading.Event(), threading.Event()
+
+    def slow_write(*args, **kwargs):
+        result = write(*args, **kwargs)
+        wrote_one.set()
+        assert go_on.wait(5)
+        return result
+
+    monkeypatch.setattr(wr, "write", slow_write)
+    page_url = "/libraries/music/pending/write-gaps"
+    assert "Nothing has been written in the background" in web.get(page_url).text
+    assert f'action="{page_url}"' in web.get("/libraries/music/pending").text
+
+    page = web.post(page_url).text  # redirected to the progress page
+    assert f'data-sync-job="{page_url}"' in page
+    assert wrote_one.wait(5)
+    state = _write_gaps_state(web).json()
+    assert (state["active"], state["label"], state["total"], state["done"]) == (
+        True, "Writing", 3, 0
+    )  # fmt: skip
+    assert (state["changesets"], state["written"]) == ([], 0)  # the first batch is under way
+    assert "its progress" in web.get("/libraries/music/pending").text
+    # one long-running action at a time: a second start, and any other, gets the busy page
+    for busy in (
+        web.post(page_url),
+        web.post("/libraries/music/pending", data={"action": "write"}),
+    ):
+        assert busy.status_code == 409 and "Another long-running action" in busy.text
+
+    # stopping waits for the batch being written, then keeps what was written
+    assert "Stopping after the batch" in web.post(f"{page_url}/stop").text
+    go_on.set()
+    _wait(lambda: not _write_gaps_state(web).json()["active"])
+    state = _write_gaps_state(web).json()
+    assert (state["status"], state["done"]) == ("stopped", 1)
+    assert state["message"] == "Stopped after 1 of 3 files. Wrote 1 files in 1 changesets"
+    page = web.get(page_url).text
+    assert f'href="/changes/{state["changesets"][0]}"' in page and "Stop</button>" not in page
+    with Session() as session:
+        changes = session.get(Changeset, state["changesets"][0]).changes
+        assert [c.status for c in changes] == ["applied"]
+
+    # the job let go of its turn: a new run writes the rest
+    wrote_one.clear()
+    web.post(page_url)
+    _wait(lambda: not _write_gaps_state(web).json()["active"])
+    state = _write_gaps_state(web).json()
+    assert (state["status"], state["message"]) == ("done", "Wrote 2 files in 2 changesets.")
+    assert {tags.read(p).fields.get("replaygain_track_gain") for p in web.root.rglob("*.m*")} == {
+        "-3.00 dB"
+    }
+
+
+def test_write_all_measurements_that_fails_keeps_what_was_written(web, Session, monkeypatch):
+    from audio_organizer import write_jobs
+    from audio_organizer import writing as wr
+
+    _measure_all(Session)
+    monkeypatch.setattr(write_jobs, "BATCH", 2)
+    write, calls = wr.write, []
+
+    def failing_write(*args, **kwargs):
+        calls.append(1)
+        if len(calls) > 1:
+            raise OSError("disk gone")
+        return write(*args, **kwargs)
+
+    monkeypatch.setattr(wr, "write", failing_write)
+    web.post("/libraries/music/pending/write-gaps")
+    _wait(lambda: not _write_gaps_state(web).json()["active"])
+    state = _write_gaps_state(web).json()
+    assert (state["status"], state["message"]) == ("failed", "OSError: disk gone")
+    assert len(state["changesets"]) == 1 and state["written"] == 2
+    # and it let go of its turn
+    assert web.post("/libraries/music/pending", data={"action": "write"}).status_code == 200

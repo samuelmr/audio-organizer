@@ -68,6 +68,7 @@ from ..models import (
 from ..provenance import resolve
 from ..tags import FIELDS
 from ..tracks import ALBUM_FIELDS, album_files, album_filter, present, shared_values
+from ..write_jobs import WriteGapsJob, WriteGapsJobs
 
 HERE = Path(__file__).parent
 # The track page's sections, in the order shown; every tag field is in one of them
@@ -130,6 +131,7 @@ class ActionRunning(Exception):
 def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
     previews = jobs.Previews(session_factory)
     lookups = LookupJobs(session_factory)
+    gap_writes = WriteGapsJobs(session_factory)
     app = FastAPI(title="audio-organizer", docs_url=None, redoc_url=None)
     templates = Jinja2Templates(directory=HERE / "templates")
     templates.env.filters["duration"] = _duration
@@ -158,12 +160,17 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         so that a second click, another tab or another page cannot start a parallel run
         that works on the same files and catalog. The pages disable their buttons while
         one runs (ui.js); this is the check that holds when they could not."""
-        if not running.acquire(blocking=False):
-            raise ActionRunning
+        claim_exclusive()
         try:
             yield
         finally:
             running.release()
+
+    def claim_exclusive() -> None:
+        """Take the one long-running action's turn, for a request (exclusive) or for a
+        background job that releases it when it ends; ActionRunning if it is taken."""
+        if not running.acquire(blocking=False):
+            raise ActionRunning
 
     Exclusive = Depends(exclusive)
 
@@ -1011,6 +1018,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             request, "pending.html", library=lib, found=found, groups=groups,
             path=path, artist=artist, album=album, file=file, only=only, limit=limit,
             prefer_gnudb=prefer_gnudb, unmeasured=unmeasured, unmeasurable=unmeasurable,
+            gap_job=gap_writes.get(lib),
         )  # fmt: skip
 
     @app.post("/libraries/{name}/pending", response_class=HTMLResponse, dependencies=[Exclusive])
@@ -1036,19 +1044,8 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         while artist="" chooses the tracks without an artist; a list keeps the empty value."""
         lib = _library(session, name)
         artist, album = (values[0] if values else None for values in (artist, album))
-        if action not in ("write", "discard", "accept", "write_gaps"):
+        if action not in ("write", "discard", "accept"):
             raise HTTPException(400, f"Unknown action {action}")
-        if action == "write_gaps":
-            ids, written, failed = wr.write_gaps(
-                session, lib, _selection(path, artist, album, None, only, False),
-                int(id3_version) if id3_version in ("3", "4") else None,
-            )  # fmt: skip
-            note = f"; {len(failed)} failed (see the changesets)" if failed else ""
-            return _redirect(
-                f"/libraries/{lib.name}/pending",
-                f"Wrote {written} files into empty tags in {len(ids)} changesets{note}.",
-                link=("/changes", "Undo on the Changes page"),
-            )
         if (action == "accept") != prefer_gnudb and action != "discard":
             raise HTTPException(400, "gnudb's values are accepted first, then written")
         selection = _selection(path, artist, album, file_ids or [], only, prefer_gnudb)
@@ -1081,6 +1078,53 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             request, "changeset.html", changeset=changeset, describe=ch.describe,
             outcomes=outcomes, outcome_title="Written",
         )  # fmt: skip
+
+    @app.post("/libraries/{name}/pending/write-gaps")
+    def start_write_gaps(
+        name: str,
+        path: Annotated[str, Form()] = "",
+        artist: Annotated[list[str] | None, Form()] = None,
+        album: Annotated[list[str] | None, Form()] = None,
+        only: Annotated[str, Form()] = "",
+        id3_version: Annotated[str, Form()] = "",
+        session: Session = SessionDep,
+    ):
+        """Write all measurements and derived ratings into the files that lack them, in the
+        background (write_jobs), and go to its progress page. The job holds the one
+        long-running action's turn until it ends, so nothing else writes files meanwhile."""
+        lib = _library(session, name)
+        artist, album = (values[0] if values else None for values in (artist, album))
+        selection = _selection(path, artist, album, None, only, False)
+        version = int(id3_version) if id3_version in ("3", "4") else None
+        claim_exclusive()
+        try:
+            gap_writes.start(lib, selection, version, finished=running.release)
+        except BaseException:
+            running.release()
+            raise
+        return _redirect(f"/libraries/{lib.name}/pending/write-gaps")
+
+    @app.get("/libraries/{name}/pending/write-gaps")
+    def write_gaps_job(request: Request, name: str, session: Session = SessionDep):
+        """The progress of writing all measurements and ratings: a page, or JSON for its
+        script (sync.js)."""
+        lib = _library(session, name)
+        job = gap_writes.get(lib)
+        state = _write_gaps_state(job) if job else None
+        if state is not None and "application/json" in request.headers.get("accept", ""):
+            return JSONResponse(state)
+        return render(
+            request, "write_gaps_job.html", library=lib, job=job, state=state,
+            max_errors=ERRORS_KEPT,
+        )  # fmt: skip
+
+    @app.post("/libraries/{name}/pending/write-gaps/stop")
+    def stop_write_gaps(name: str, session: Session = SessionDep):
+        lib = _library(session, name)
+        gap_writes.stop(lib)
+        return _redirect(
+            f"/libraries/{lib.name}/pending/write-gaps", "Stopping after the batch being written"
+        )
 
     # ---- decisions -----------------------------------------------------------------------
 
@@ -1798,6 +1842,34 @@ def _lookup_state(job: LookupJob) -> dict:
             counts += f"; {job.failed} failed"
     elif not job.active and job.failed:
         counts = f"{job.failed} lookups failed; those albums are asked about again next time"
+    state["counts"] = counts
+    return state
+
+
+WRITE_LABELS = {
+    "starting": "Finding the files to write",
+    "running": "Writing",
+    "done": "Done",
+    "stopped": "Stopped",
+    "failed": "Failed",
+}
+
+
+def _write_gaps_state(job: WriteGapsJob) -> dict:
+    """A write_gaps run in the shape of a sync job's state, so that sync.js shows it."""
+    state = job.state()
+    state["label"] = "Stopping" if job.active and job.stop_requested else WRITE_LABELS[job.status]
+    counts = ""
+    if job.total:
+        counts = (
+            f"Looked at {job.done:,} of {job.total:,} files; wrote {job.written:,} "
+            f"in {len(job.changesets)} changesets"
+        )
+        if job.active and job.done:
+            seconds = (time.time() - job.started) / job.done * (job.total - job.done)
+            counts += f", about {max(1, round(seconds / 60)):,} min left"
+        if job.failed:
+            counts += f"; {job.failed} failed"
     state["counts"] = counts
     return state
 
