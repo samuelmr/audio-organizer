@@ -197,6 +197,19 @@ def test_no_match_is_remembered(library, client, server):
     assert gnudb.lookup_library(session, lib, client=client).albums == 0
 
 
+def test_lookups_report_their_start_and_can_be_stopped(library, client, server):
+    session, lib = library
+    counts = []
+    stats = gnudb.lookup_library(
+        session, lib, client=client, started=lambda *c: counts.append(c), should_stop=lambda: True
+    )
+    assert counts == [(1, 1)]
+    assert stats.stopped == "stopped after 0 of 1 albums"
+    assert not [c for c in server.commands if c.startswith("cddb query")]
+    assert session.scalar(select(GnudbLookup)) is None  # left for the next run
+    assert gnudb.lookup_library(session, lib, client=client, should_stop=lambda: False).found == 1
+
+
 def test_entry_with_other_titles_is_not_accepted(library, client):
     session, lib = library
     for path in ("01 Halo", "02 Insane"):

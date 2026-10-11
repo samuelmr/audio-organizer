@@ -7,6 +7,7 @@ create_app() takes the session factory, so the same app can serve a local catalo
 """
 
 import threading
+import time
 import unicodedata
 from collections.abc import Iterator
 from math import ceil
@@ -49,6 +50,7 @@ from .. import ratings as rt
 from .. import sync as sy
 from .. import sync_jobs as jobs
 from .. import writing as wr
+from ..lookup_jobs import ERRORS_KEPT, LookupBusy, LookupJob, LookupJobs
 from ..models import (
     AudioFile,
     Change,
@@ -127,6 +129,7 @@ class ActionRunning(Exception):
 
 def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
     previews = jobs.Previews(session_factory)
+    lookups = LookupJobs(session_factory)
     app = FastAPI(title="audio-organizer", docs_url=None, redoc_url=None)
     templates = Jinja2Templates(directory=HERE / "templates")
     templates.env.filters["duration"] = _duration
@@ -422,6 +425,11 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         back = _url(f"/libraries/{lib.name}", folder=folder or None)
         if not gnudb.has_email():
             return _redirect(back, "Set AORG_GNUDB_EMAIL to your email address first")
+        if lookups.running(lib):  # gnudb gets one session from us at a time
+            return _redirect(
+                back, "gnudb lookups of the whole library are running; try again when they end",
+                link=(f"/libraries/{lib.name}/gnudb/lookups", "Their progress"),
+            )  # fmt: skip
         try:
             results = gnudb.lookup_folder(session, lib, folder)
         except gnudb.GnudbError as e:
@@ -454,6 +462,44 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             back,
             f"Found in gnudb: {titles}; it agrees with the tags, and what it adds is pending.",
             link=(_url(f"/libraries/{lib.name}/pending", path=where), "Pending changes"),
+        )
+
+    @app.get("/libraries/{name}/gnudb/lookups")
+    def gnudb_lookups(request: Request, name: str, session: Session = SessionDep):
+        """Looking up the library's albums in gnudb in the background: a form to start, and
+        the progress of the run (JSON for the page's script, sync.js)."""
+        lib = _library(session, name)
+        job = lookups.get(lib)
+        state = _lookup_state(job) if job else None
+        if state is not None and "application/json" in request.headers.get("accept", ""):
+            return JSONResponse(state)
+        return render(
+            request, "gnudb_lookups.html", library=lib, job=job, state=state,
+            has_email=gnudb.has_email(), max_errors=ERRORS_KEPT,
+        )  # fmt: skip
+
+    @app.post("/libraries/{name}/gnudb/lookups")
+    async def start_gnudb_lookups(request: Request, name: str, session: Session = SessionDep):
+        """Start looking up the albums not looked up yet, at most "limit" of them."""
+        lib = _library(session, name)
+        here = f"/libraries/{lib.name}/gnudb/lookups"
+        if not gnudb.has_email():
+            return _redirect(here, "Set AORG_GNUDB_EMAIL to your email address first")
+        limit = str((await request.form()).get("limit", "")).strip()
+        if limit and not (limit.isdigit() and int(limit) > 0):
+            return _redirect(here, "The number of albums is a whole number above 0, or empty")
+        try:
+            lookups.start(lib, int(limit) if limit else None)
+        except LookupBusy as e:
+            return _redirect(here, str(e))
+        return _redirect(here)
+
+    @app.post("/libraries/{name}/gnudb/lookups/stop")
+    def stop_gnudb_lookups(name: str, session: Session = SessionDep):
+        lib = _library(session, name)
+        lookups.stop(lib)
+        return _redirect(
+            f"/libraries/{lib.name}/gnudb/lookups", "Stopping after the album being looked up"
         )
 
     @app.post("/libraries/{name}/coverart", dependencies=[Exclusive])
@@ -1696,6 +1742,35 @@ JOB_LABELS = {
     "changed": "Not started",
     "interrupted": "Interrupted",
 }
+
+
+LOOKUP_LABELS = {
+    "starting": "Finding the albums to look up",
+    "running": "Looking up",
+    "done": "Done",
+    "stopped": "Stopped",
+    "failed": "Failed",
+}
+
+
+def _lookup_state(job: LookupJob) -> dict:
+    """A gnudb lookup run in the shape of a sync job's state, so that sync.js shows it."""
+    state = job.state()
+    state["label"] = "Stopping" if job.active and job.stop_requested else LOOKUP_LABELS[job.status]
+    counts = ""
+    if job.status == "running":
+        counts = f"Looked up {job.done:,} of {job.total:,} albums"
+        if job.left > job.total:
+            counts += f" ({job.left:,} not looked up yet in all)"
+        if job.done:
+            seconds = (time.time() - job.started) / job.done * (job.total - job.done)
+            counts += f", about {max(1, round(seconds / 60)):,} min left"
+        if job.failed:
+            counts += f"; {job.failed} failed"
+    elif not job.active and job.failed:
+        counts = f"{job.failed} lookups failed; those albums are asked about again next time"
+    state["counts"] = counts
+    return state
 
 
 def _preview_state(preview: jobs.Preview) -> dict:

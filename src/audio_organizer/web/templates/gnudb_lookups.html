@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}gnudb lookups – {{ library.name }} – audio-organizer{% endblock %}
+{% block content %}
+{% set base = '/libraries/' ~ library.name %}
+<h1>gnudb lookups</h1>
+<p class="subtitle"><a href="{{ base }}">{{ library.name }}</a> · <a href="{{ url(base ~ '/pending', prefer_gnudb='true') }}">Review gnudb differences</a></p>
+
+{% if state %}
+{# The same fields as a sync's progress page, so that sync.js updates this one too #}
+<section class="sync-job" data-sync-job="{{ base }}/gnudb/lookups" aria-live="polite">
+ <p><strong class="status {{ state.status }}" data-field="label">{{ state.label }}</strong>
+  <span data-field="message">{{ state.message or "" }}</span></p>
+ <progress data-field="progress" max="{{ state.total or 1 }}" value="{{ state.done }}"{% if not state.total %} hidden{% endif %}></progress>
+ <p data-field="counts">{{ state.counts }}</p>
+ <p class="hint" data-field="current">{{ state.current or "" }}</p>
+
+ {% if state.active %}
+ <form method="post" action="{{ base }}/gnudb/lookups/stop" data-field="stop">
+  <button type="submit" class="danger"{% if job.stop_requested %} disabled{% endif %}>{% if job.stop_requested %}Stopping…{% else %}Stop{% endif %}</button>
+  <a href="{{ base }}/gnudb/lookups" data-field="refresh">Refresh</a>
+ </form>
+ {% elif job.found %}
+ <p><a href="{{ url(base ~ '/pending', prefer_gnudb='true') }}">Review where gnudb's values differ from the tags</a>; what they add where the tags have nothing is on the <a href="{{ base }}/pending">Pending</a> page.</p>
+ {% endif %}
+
+ <div data-field="errors"{% if not state.errors %} hidden{% endif %}>
+  <h2>Errors</h2>
+  <p class="hint">Albums whose lookup failed are asked about again next time. Only the first {{ max_errors }} are listed.</p>
+  <table>
+   <thead><tr><th>Album</th><th>Error</th></tr></thead>
+   <tbody>
+   {% for album, error in state.errors %}<tr><td class="path">{{ album }}</td><td class="error">{{ error }}</td></tr>{% endfor %}
+   </tbody>
+  </table>
+ </div>
+</section>
+{% endif %}
+
+{% if not state or not state.active %}
+{% if not has_email %}
+<p>gnudb asks every client for a contact address. Set <code>AORG_GNUDB_EMAIL</code> to your
+email address and start <code>aorg web</code> again.</p>
+{% else %}
+<form method="post" action="{{ base }}/gnudb/lookups" data-busy>
+ <p><label>Albums to look up <input type="number" name="limit" min="1" placeholder="all" size="6"></label>
+ <button class="primary">Look up albums in gnudb</button></p>
+ <p class="hint">Asks gnudb about the complete single-disc album folders not looked up yet,
+ one request every three seconds: 6 to 15 seconds an album, so a few hours for thousands.
+ It runs in the background while you use the rest of the pages; stop it whenever you like,
+ and the next run continues with the rest. Tidy the library first (duplicates, loose
+ tracks, misnamed folders), as albums are found by their folder, artist, title and track
+ count. Don't run <code>aorg gnudb</code> at the same time.</p>
+</form>
+{% endif %}
+{% endif %}
+<script src="{{ asset('sync.js') }}" defer></script>
+{% endblock %}

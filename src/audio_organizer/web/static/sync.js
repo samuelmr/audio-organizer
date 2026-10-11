@@ -1,5 +1,6 @@
 // Live progress of a sync: polls the job's JSON and updates the page in place. Without
-// this script the page shows the state when it was loaded, with a Refresh link.
+// this script the page shows the state when it was loaded, with a Refresh link. The gnudb
+// lookups page has the same fields and JSON, so this shows its progress too.
 (() => {
   const root = document.querySelector("[data-sync-job]");
   if (!root) return;

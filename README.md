@@ -183,6 +183,13 @@ and the entry found is listed:
     aorg gnudb --limit 100            # ask about 100 albums; the next run continues
     aorg gnudb --path "Texas/Greatest Hits"
 
+The web UI can do the same as `aorg gnudb`: *Look up albums in gnudb* on the library's
+front page asks about all the albums not looked up yet (or a number of them) in the
+background of `aorg web`, showing its progress, while you use the other pages. It can be
+stopped at any time, and so can the server; the next run continues with the rest. While
+it runs, the single-album button waits for it, so that gnudb gets one request at a time.
+Don't run `aorg gnudb` at the same time, which the web UI cannot see.
+
 `aorg show` lists each field with where its value comes from: the file's tags (`tag`),
 its folder and file name (`path`) or your edit (`manual`), and the other candidates when
 they disagree.
@@ -784,6 +791,7 @@ Design principles:
 | `playlist_formats.py` | M3U, JSON-LD and HTML playlist files |
 | `sync.py` | Planning and carrying out syncs to object storage |
 | `sync_jobs.py` | Sync runs as jobs: progress, one sync per target, background runs for the web UI |
+| `lookup_jobs.py` | gnudb lookups of a whole library in the background of the web UI, one run per library |
 | `objectstore.py` | Object storage backends (S3-compatible) |
 | `cli.py` | The `aorg` command |
 | `web/` | The web UI: FastAPI app (`app.py`), Jinja2 templates, stylesheet |

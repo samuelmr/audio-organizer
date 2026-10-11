@@ -483,9 +483,15 @@ def lookup_library(
     limit: int | None = None,
     client: Client | None = None,
     progress: Callable[[int, int, str, str | None], None] | None = None,
+    started: Callable[[int, int], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> LookupStats:
     """Look up the album folders not looked up before (or whose track count changed).
-    Each lookup is committed, so an interrupted run continues where it stopped."""
+    Each lookup is committed, so an interrupted run continues where it stopped.
+
+    `started` is told how many albums will be looked up now, and how many are left in all,
+    before the first request (finding the folders reads the whole catalog). `should_stop`
+    is asked before each album, so a run in the background can be stopped between them."""
     stats = LookupStats()
     done = {
         (row.folder, row.key): row.tracks
@@ -494,6 +500,8 @@ def lookup_library(
     todo = [f for f in folders(session, library) if done.get((f.folder, f.key)) != len(f.files)]
     stats.albums = len(todo)
     todo = todo[:limit]
+    if started:
+        started(len(todo), stats.albums)
     if not todo:
         return stats
     owned = client is None
@@ -501,6 +509,9 @@ def lookup_library(
     failures = 0
     try:
         for count, folder in enumerate(todo, start=1):
+            if should_stop and should_stop():
+                stats.stopped = f"stopped after {count - 1} of {len(todo)} albums"
+                break
             error = None
             try:
                 entry = match(client, folder)

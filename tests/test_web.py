@@ -978,6 +978,78 @@ def test_library_page_links_to_the_library_wide_gnudb_review(web, Session):
     assert "Review gnudb differences" not in scoped
     review = web.get(link).text  # no path: the albums of the whole library
     assert "Albums with pending changes" in review and "Funhouse" in review
+    assert (
+        'href="/libraries/music/gnudb/lookups">Look up albums in gnudb'
+        in web.get("/libraries/music").text
+    )
+
+
+def _wait(condition, seconds=5.0):
+    deadline = time.monotonic() + seconds
+    while not condition():
+        assert time.monotonic() < deadline, "timed out"
+        time.sleep(0.01)
+
+
+def test_gnudb_lookups_of_the_library_run_in_the_background(web, monkeypatch):
+    from audio_organizer import gnudb
+
+    page_url = "/libraries/music/gnudb/lookups"
+    assert "Set <code>AORG_GNUDB_EMAIL</code>" in web.get(page_url).text
+    assert "Set AORG_GNUDB_EMAIL" in web.post(page_url).text
+    monkeypatch.setenv("AORG_GNUDB_EMAIL", "me@example.org")
+    assert 'name="limit"' in web.get(page_url).text
+
+    looked_up, go_on, calls = threading.Event(), threading.Event(), []
+
+    def lookup(session, lib, *, limit, progress, started, should_stop):
+        calls.append(limit)
+        started(2, 5)
+        progress(1, 2, "P!nk – Funhouse", None)
+        looked_up.set()
+        go_on.wait(5)
+        if should_stop():
+            return gnudb.LookupStats(albums=5, found=1, stopped="stopped after 1 of 2 albums")
+        progress(2, 2, "Texas – Greatest Hits", "timed out")
+        return gnudb.LookupStats(albums=5, found=1, errors=[("Texas/Greatest Hits", "timed out")])
+
+    monkeypatch.setattr(gnudb, "lookup_library", lookup)
+    assert "whole number" in web.post(page_url, data={"limit": "-1"}).text
+    page = web.post(page_url, data={"limit": "2"}).text
+    looked_up.wait(5)
+    assert calls == [2]
+    state = web.get(page_url, headers={"Accept": "application/json"}).json()
+    assert (state["active"], state["label"], state["done"], state["total"]) == (
+        True, "Looking up", 1, 2
+    )  # fmt: skip
+    assert state["counts"].startswith("Looked up 1 of 2 albums (5 not looked up yet in all)")
+    assert state["current"] == "P!nk – Funhouse"
+    page = web.get(page_url).text
+    assert 'data-sync-job="/libraries/music/gnudb/lookups"' in page and "Stop" in page
+    assert "already" in web.post(page_url).text and calls == [2]  # one run at a time
+    # while it runs, the single-album lookup waits, so gnudb gets one session from us
+    page = web.post("/libraries/music/gnudb", data={"folder": "P!nk/Funhouse"}).text
+    assert "gnudb lookups of the whole library are running" in page
+
+    go_on.set()
+    _wait(lambda: not web.get(page_url, headers={"Accept": "application/json"}).json()["active"])
+    state = web.get(page_url, headers={"Accept": "application/json"}).json()
+    assert state["message"] == "Looked up 2 albums: 1 found, 0 not found"
+    assert state["errors"] == [["Texas – Greatest Hits", "timed out"]]
+    page = web.get(page_url).text
+    assert "Review where gnudb's values differ from the tags" in page
+    assert 'name="limit"' in page  # and it can be started again
+
+    looked_up.clear()
+    go_on.clear()
+    web.post(page_url)
+    looked_up.wait(5)
+    assert calls == [2, None]
+    assert "Stopping" in web.post(f"{page_url}/stop").text
+    go_on.set()
+    _wait(lambda: not web.get(page_url, headers={"Accept": "application/json"}).json()["active"])
+    state = web.get(page_url, headers={"Accept": "application/json"}).json()
+    assert (state["status"], state["message"]) == ("stopped", "Stopped after 1 of 2 albums")
 
 
 def test_the_gnudb_view_leaves_out_other_pending_values(web, Session):
