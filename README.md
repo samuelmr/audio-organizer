@@ -543,7 +543,8 @@ leave, and write the rest or discard your edits in them.
 By default only what the tags lack is written, so a gnudb value that differs from a tag
 is left out: the tag is the stronger evidence. To review those, add `--prefer-gnudb`
 (on the Pending page: *Tags that differ from gnudb's values*; the *Review what gnudb
-found* link above an album's tracks opens it for that album). The listing then shows
+found* link above an album's tracks opens it for that album, and the *Review gnudb
+differences* link on the library's front page for all albums looked up so far). The listing then shows
 each tag and the gnudb value that would replace it. Choose the fields you trust
 (`--only genre,album`, or by clicking a field on the page), and the files (`--path` is
 an album's folder, say; on the page, untick files), and accept them. Accepted values

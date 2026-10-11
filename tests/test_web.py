@@ -965,6 +965,21 @@ def test_review_gnudb_values_on_the_pending_page(web, Session):
     assert tags.read(web.root / "P!nk/Funhouse/01 So What.m4a").fields["title"] == "So What Now"
 
 
+def test_library_page_links_to_the_library_wide_gnudb_review(web, Session):
+    from audio_organizer import provenance
+
+    with Session() as session:
+        file = session.scalar(select(AudioFile).where(AudioFile.path.contains("So What")))
+        provenance.set_value(session, file, "gnudb", "title", "So What Now")
+        session.commit()
+    link = "/libraries/music/pending?prefer_gnudb=true"
+    assert f'href="{link}">Review gnudb differences' in web.get("/libraries/music").text
+    scoped = web.get("/libraries/music", params={"folder": "P!nk/Funhouse"}).text
+    assert "Review gnudb differences" not in scoped
+    review = web.get(link).text  # no path: the albums of the whole library
+    assert "Albums with pending changes" in review and "Funhouse" in review
+
+
 def test_the_gnudb_view_leaves_out_other_pending_values(web, Session):
     from audio_organizer import provenance
 
