@@ -1,4 +1,5 @@
 import os
+import threading
 
 import pytest
 from sqlalchemy import select
@@ -161,3 +162,62 @@ def test_unreadable_audio_fails_the_change_instead_of_crashing(catalog, monkeypa
     [outcome] = ch.apply(session, changeset)
     assert not outcome.ok and "can't sync to MPEG frame" in outcome.message
     assert change.status == "failed"
+
+
+def _recording_threads(monkeypatch) -> set[str]:
+    """The names of the threads that retag files from now on."""
+    threads, retag_file = set(), ch._retag_file
+
+    def recording(*args):
+        threads.add(threading.current_thread().name)
+        return retag_file(*args)
+
+    monkeypatch.setattr(ch, "_retag_file", recording)
+    return threads
+
+
+def test_retags_of_many_files_run_side_by_side(catalog, copy_audio, monkeypatch):
+    """On a network share each file's first access waits on round trips, so a changeset
+    that only retags files writes several at once; the catalog is updated in order, a
+    failure stays the failed file's own, and undo works as for any retag."""
+    session, root, _ = catalog
+    for name in ("One", "Two", "Three"):
+        copy_audio("mp3", root / f"Texas/{name}.mp3")
+    scan(session, session.scalar(select(Library)))
+    files = session.scalars(select(AudioFile).order_by(AudioFile.path)).all()
+    changeset = ch.new_changeset(session, "edit", "writing")
+    changes = [ch.propose_retag(changeset, f, {"genre": f"Pop {i}"}) for i, f in enumerate(files)]
+    ch.set_status(changes, "approved")
+    session.commit()
+    os.utime(root / files[1].path, ns=(0, 0))  # changed since the scan
+    genre = tags.read(root / files[0].path).fields.get("genre")
+    threads = _recording_threads(monkeypatch)
+    applied = []
+    outcomes = ch.apply(session, changeset, applied=lambda o: applied.append(o.change))
+    assert threads and all(name.startswith("retag") for name in threads)
+    assert applied == [o.change for o in outcomes] == changes
+    assert [o.ok for o in outcomes] == [True, False, True, True]
+    assert "has changed since it was scanned" in outcomes[1].message
+    for i in (0, 2, 3):
+        assert tags.read(root / files[i].path).fields["genre"] == f"Pop {i}"
+        assert resolve(files[i].values)["genre"].candidates["tag"] == f"Pop {i}"
+
+    assert all(o.ok for o in ch.undo(session, changeset))
+    assert tags.read(root / files[0].path).fields.get("genre") == genre
+    assert scan(session, files[0].library).unchanged == 3  # the catalog is up to date
+
+
+def test_changesets_that_do_more_than_retag_apply_in_order(catalog, monkeypatch):
+    """A move or trash may depend on the changes before it: no change runs ahead."""
+    session, root, file = catalog
+    changeset = ch.new_changeset(session, "edit", "writing")
+    changes = [
+        ch.propose_retag(changeset, file, {"genre": "Pop"}),
+        ch.propose_move(changeset, file, "Texas/Halo.mp3"),
+    ]
+    ch.set_status(changes, "approved")
+    session.commit()
+    threads = _recording_threads(monkeypatch)
+    assert all(o.ok for o in ch.apply(session, changeset))
+    assert threads == {threading.current_thread().name}
+    assert tags.read(root / "Texas/Halo.mp3").fields["genre"] == "Pop"

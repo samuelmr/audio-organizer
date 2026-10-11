@@ -10,6 +10,7 @@ import logging
 import os
 import shutil
 from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -36,6 +37,11 @@ log = logging.getLogger(__name__)
 # scanner skips folders whose names start with a dot.
 TRASH_DIR = ".aorg-trash"
 
+
+# Files retagged at once when a changeset only retags (see _retag_ahead). On a network share
+# each file's first access waits on round trips (some 0.4 s a file over SMB), which
+# overlap; four at a time read files more than four times as fast there.
+RETAG_WORKERS = 4
 
 # The FileDesire kind (models.py) that a change of this kind carries out
 DESIRE_KINDS = {"cover": "embed", "image": "image", "trash": "trash", "move": "move"}
@@ -311,13 +317,55 @@ def apply(
     so a failure leaves the earlier ones applied (and undoable). applied(outcome) is called
     after each change is committed, so that a long changeset can show its progress."""
     outcomes = []
-    for change in changeset.changes:
-        if change.status != "approved":
-            continue
-        if dry_run:
-            outcomes.append(Outcome(change, True, "would " + describe(change)))
-            continue
-        try:
+    approved = [change for change in changeset.changes if change.status == "approved"]
+    pool, ahead = (None, {}) if dry_run else _retag_ahead(approved)
+    try:
+        for change in approved:
+            if dry_run:
+                outcomes.append(Outcome(change, True, "would " + describe(change)))
+                continue
+            outcomes.append(_apply_one(session, change, ahead.get(change.id)))
+            session.commit()
+            if applied:
+                applied(outcomes[-1])
+    finally:
+        if pool:
+            pool.shutdown(cancel_futures=True)
+    return outcomes
+
+
+def _retag_ahead(changes: list[Change]) -> tuple[ThreadPoolExecutor | None, dict[int, Future]]:
+    """When the changes only retag files, each file once (writing measurements to a whole
+    library), start retagging them RETAG_WORKERS at a time: the files' part of each change,
+    which on a network share is nearly all of its time. The catalog is updated in order by
+    apply, on its own thread. Other changesets are applied one change after another, as a
+    move or trash may depend on the changes before it."""
+    if len(changes) < 2 or any(change.kind != "retag" for change in changes):
+        return None, {}
+    if len({change.file_id for change in changes}) < len(changes):
+        return None, {}
+    pool = ThreadPoolExecutor(RETAG_WORKERS, thread_name_prefix="retag")
+    ahead = {
+        change.id: pool.submit(
+            _retag_file,
+            _full_path(change.file),
+            change.file.path,
+            change.file.size,
+            change.file.mtime_ns,
+            change.payload["fields"],
+            change.payload.get("id3_version"),
+        )
+        for change in changes
+    }
+    return pool, ahead
+
+
+def _apply_one(session: Session, change: Change, retagged: Future | None) -> Outcome:
+    """Apply one change, or with retagged, store what retagging its file found."""
+    try:
+        if retagged is not None:
+            change.undo = _store_retag(session, change.file, retagged.result())
+        else:
             if change.kind not in ("image", "leftover", "rename"):  # which have no track to protect
                 _check_unchanged(change.file)
             if change.kind == "retag":
@@ -341,16 +389,12 @@ def apply(
                 change.undo = _save_image(session, change)
             else:
                 raise ChangeError(f"Unknown change kind {change.kind}")
-            change.status, change.error, change.applied_at = "applied", None, utcnow()
-            outcomes.append(Outcome(change, True, describe(change)))
-        except (ChangeError, OSError, ValueError, MutagenError, tags.UnsupportedFormat) as e:
-            change.status, change.error = "failed", str(e)
-            log.warning("%s failed: %s", describe(change), e, exc_info=not _expected(e))
-            outcomes.append(Outcome(change, False, f"{describe(change)}: FAILED: {e}"))
-        session.commit()
-        if applied:
-            applied(outcomes[-1])
-    return outcomes
+        change.status, change.error, change.applied_at = "applied", None, utcnow()
+        return Outcome(change, True, describe(change))
+    except (ChangeError, OSError, ValueError, MutagenError, tags.UnsupportedFormat) as e:
+        change.status, change.error = "failed", str(e)
+        log.warning("%s failed: %s", describe(change), e, exc_info=not _expected(e))
+        return Outcome(change, False, f"{describe(change)}: FAILED: {e}")
 
 
 def _expected(e: Exception) -> bool:
@@ -427,31 +471,76 @@ def _full_path(file: AudioFile) -> Path:
 
 
 def _check_unchanged(file: AudioFile) -> None:
-    path = _full_path(file)
+    _check_stat(_full_path(file), file.path, file.size, file.mtime_ns)
+
+
+def _check_stat(path: Path, name: str, size: int, mtime_ns: int) -> None:
     try:
         st = path.stat()
     except FileNotFoundError:
-        raise ChangeError(f"{file.path} no longer exists; rescan the library") from None
-    if st.st_size != file.size or st.st_mtime_ns != file.mtime_ns:
-        raise ChangeError(f"{file.path} has changed since it was scanned; rescan the library")
+        raise ChangeError(f"{name} no longer exists; rescan the library") from None
+    if st.st_size != size or st.st_mtime_ns != mtime_ns:
+        raise ChangeError(f"{name} has changed since it was scanned; rescan the library")
+
+
+@dataclass
+class _Retagged:
+    """What retagging a file did, for the catalog: the values to undo it, and the file's
+    size, mtime and tags afterwards."""
+
+    undo: dict
+    size: int
+    mtime_ns: int
+    fields: dict[str, str]
+
+
+def _retag_file(
+    path: Path,
+    name: str,
+    size: int,
+    mtime_ns: int,
+    fields: dict[str, str | None],
+    id3_version: int | None,
+) -> _Retagged:
+    """Check that the file is unchanged since it was scanned and retag it, touching nothing
+    in the catalog, so that several files can be retagged at once (_retag_ahead)."""
+    _check_stat(path, name, size, mtime_ns)
+    before = tags.read(path).fields
+    tags.write(path, fields, id3_version=id3_version)
+    st = path.stat()
+    return _Retagged(
+        {"fields": {field: before.get(field) for field in fields}},
+        st.st_size, st.st_mtime_ns, tags.read(path).fields,
+    )  # fmt: skip
+
+
+def _store_retag(session: Session, file: AudioFile, retagged: _Retagged) -> dict:
+    """Update the catalog with a retag's outcome; returns the change's undo."""
+    _store_refresh(session, file, retagged.size, retagged.mtime_ns, retagged.fields)
+    return retagged.undo
 
 
 def _refresh(session: Session, file: AudioFile) -> None:
     path = _full_path(file)
     st = path.stat()
-    file.size, file.mtime_ns, file.scanned_at = st.st_size, st.st_mtime_ns, utcnow()
-    set_values(session, file, "tag", tags.read(path).fields)
+    _store_refresh(session, file, st.st_size, st.st_mtime_ns, tags.read(path).fields)
+
+
+def _store_refresh(
+    session: Session, file: AudioFile, size: int, mtime_ns: int, fields: dict[str, str]
+) -> None:
+    file.size, file.mtime_ns, file.scanned_at = size, mtime_ns, utcnow()
+    set_values(session, file, "tag", fields)
     set_values(session, file, "path", pathparse.parse(file.path))
 
 
 def _retag(
     session: Session, file: AudioFile, fields: dict[str, str | None], id3_version: int | None = None
 ) -> dict:
-    path = _full_path(file)
-    before = tags.read(path).fields
-    tags.write(path, fields, id3_version=id3_version)
-    _refresh(session, file)
-    return {"fields": {name: before.get(name) for name in fields}}
+    path, size, mtime_ns = _full_path(file), file.size, file.mtime_ns
+    return _store_retag(
+        session, file, _retag_file(path, file.path, size, mtime_ns, fields, id3_version)
+    )
 
 
 def _embed_cover(session: Session, change: Change) -> dict:
