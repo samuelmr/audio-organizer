@@ -13,6 +13,14 @@
 </nav>
 {% endif %}
 
+{% if repeated %}
+<form method="post" action="/playlists/{{ playlist.id }}/dedupe" class="notice">
+ <p>{{ repeated }} {{ "entry" if repeated == 1 else "entries" }} name a track that is already in this playlist (the same file, or one with identical audio).
+ <button>Remove the repeats</button>
+ <small>The first entry of each track stays. Files already written change when you write them again.</small></p>
+</form>
+{% endif %}
+
 {% if shown %}
 <h2>{{ shown.name }}: {{ shown.tracks | length }} tracks{% if shown.unresolved %}, {{ shown.unresolved }} not found{% endif %}</h2>
 {{ folders(folder_links) }}

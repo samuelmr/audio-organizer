@@ -609,7 +609,19 @@ file. When a path does not match exactly, a loose match that ignores a leading "
 punctuation and accents is accepted if only one file fits. Entries that are playlists
 themselves, such as an album's playlist, are replaced by their tracks.
 
-Tracks stay in static playlists when files are moved or renamed. To write playlists
+Tracks stay in static playlists when files are moved or renamed. When a duplicate copy is
+trashed, its entries switch to the copy that is kept, so a playlist that had both now
+names that track twice. `aorg playlists dedupe` finds these repeats (the same file, or
+files with identical audio, also in an imported playlist that listed a song under two
+names) and removes them, keeping the first entry of each track and the order of the rest:
+
+    aorg playlists dedupe                        # list the repeats in every static playlist
+    aorg playlists dedupe --name "Party" --apply # remove them from one playlist
+
+Other recordings of a song (a live take, another edition) are left alone, and so are smart
+playlists, which hold one copy of each song anyway. Only the catalog changes; a playlist
+file already written changes when you write it again. A playlist's page in the web UI
+offers the same when it has repeats. To write playlists
 into a folder, with tracks referred to by relative paths:
 
     aorg playlists export ~/Music/Playlists --format m3u,json,html

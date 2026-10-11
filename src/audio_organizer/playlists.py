@@ -444,6 +444,73 @@ def set_entries(playlist: Playlist, entries: list[tuple[str, int | None]]) -> No
     ]
 
 
+@dataclass
+class Repeats:
+    """The entries of a static playlist that name a track again."""
+
+    playlist: Playlist
+    # (entry to drop, the earlier entry it repeats)
+    dropped: list[tuple[PlaylistEntry, PlaylistEntry]] = field(default_factory=list)
+
+
+def find_repeats(session: Session, playlists: Iterable[Playlist]) -> list[Repeats]:
+    """The static playlists that name one track more than once, and which entries repeat.
+
+    Entries count as the same track when they refer to the same file or to files with
+    identical audio, which is what a trash of duplicate copies leaves behind (both copies
+    were in the playlist, and both entries now point at the kept file), or an import of an
+    old playlist that listed a song under two names. An entry that matched no file is the
+    same when its path is. Of each track the first entry stays, so the order the playlist
+    was given is kept. Smart playlists hold one copy of each song anyway. Different
+    recordings of one song (a live take, another edition) are not touched."""
+    playlists = [p for p in playlists if not p.is_smart]
+    ids = {e.file_id for p in playlists for e in p.entries if e.file_id is not None}
+    hashes: dict[int, str | None] = {}
+    wanted = sorted(ids)
+    for start in range(0, len(wanted), 500):
+        rows = session.execute(
+            select(AudioFile.id, AudioFile.audio_hash).where(
+                AudioFile.id.in_(wanted[start : start + 500])
+            )
+        )
+        hashes.update(rows.all())
+    found = []
+    for playlist in playlists:
+        seen: dict[tuple[str, str | int], PlaylistEntry] = {}
+        repeats = Repeats(playlist)
+        for entry in sorted(playlist.entries, key=lambda e: e.position):
+            if entry.file_id is None:
+                key = ("path", entry.path)
+            elif hashes.get(entry.file_id):
+                key = ("audio", hashes[entry.file_id])
+            else:
+                key = ("file", entry.file_id)
+            if key in seen:
+                repeats.dropped.append((entry, seen[key]))
+            else:
+                seen[key] = entry
+        if repeats.dropped:
+            found.append(repeats)
+    return found
+
+
+def collapse(session: Session, repeats: Iterable[Repeats]) -> int:
+    """Remove the repeated entries found by find_repeats and number the rest again.
+    The entries that stay are the same rows, so what refers to them keeps working.
+    Returns how many entries were removed. The caller commits."""
+    removed = 0
+    for found in repeats:
+        gone = {entry.id for entry, _ in found.dropped}
+        kept = [e for e in sorted(found.playlist.entries, key=lambda e: e.position)
+                if e.id not in gone]  # fmt: skip
+        for position, entry in enumerate(kept):
+            entry.position = position
+        found.playlist.entries = kept
+        removed += len(gone)
+    session.flush()
+    return removed
+
+
 def import_m3u(
     session: Session, library: Library, m3u: Path, name: str | None = None
 ) -> tuple[Playlist, list[str]]:

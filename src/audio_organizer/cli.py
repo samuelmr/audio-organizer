@@ -1291,6 +1291,49 @@ def playlists_remove(
     typer.echo(f"Removed {removed} entries from {name}")
 
 
+@playlists_app.command("dedupe")
+def playlists_dedupe(
+    ctx: typer.Context,
+    name: Annotated[
+        str | None, typer.Option(help="Only this static playlist (all of them by default)")
+    ] = None,
+    apply: Annotated[
+        bool, typer.Option("--apply", help="Remove the repeated entries (otherwise list them)")
+    ] = False,
+    library: LibraryOption = None,
+) -> None:
+    """Find tracks that a static playlist names more than once, and remove the repeats.
+
+    The same file, or files with identical audio, count as one track: what trashing
+    duplicate copies leaves behind when both were in a playlist. The first entry stays.
+    Without --apply only the repeats are listed. Playlist files already written are not
+    changed until you write them again (`aorg playlists write`), which keeps a backup of
+    a file someone else edited.
+    """
+    with _session(ctx) as session:
+        lib = _library(session, library)
+        if name is not None:
+            playlists = [_static(session, name, library)]
+        else:
+            playlists = pl.library_playlists(session, lib)
+        found = pl.find_repeats(session, playlists)
+        total = sum(len(r.dropped) for r in found)
+        typer.echo(f"{total} repeated entries in {len(found)} static playlists.")
+        for repeats in found:
+            typer.echo(f"  {repeats.playlist.name}: {len(repeats.dropped)}")
+            for entry, earlier in repeats.dropped[:5]:
+                typer.echo(f"    {entry.position + 1}. {entry.path} (as {earlier.position + 1}.)")
+            if len(repeats.dropped) > 5:
+                typer.echo(f"    ... and {len(repeats.dropped) - 5} more")
+        if not apply or not found:
+            if found:
+                typer.echo("Run with --apply to remove them.")
+            return
+        pl.collapse(session, found)
+        session.commit()
+        typer.echo(f"Removed {total} entries.")
+
+
 @playlists_app.command("import")
 def playlists_import(
     ctx: typer.Context,

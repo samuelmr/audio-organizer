@@ -1368,9 +1368,11 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         if group:
             shown = next((g for g in generated if g.name == group), shown)
         tried = {place: (folder, formats)} if place and folder is not None else {}
+        repeats = pl.find_repeats(session, [playlist])
         return render(
             request, "playlist.html", playlist=playlist, generated=generated, shown=shown,
             sorts=pl.SORTS, error=None, group=group,
+            repeated=len(repeats[0].dropped) if repeats else 0,
             places=_file_places(session, playlist, generated, tried, check),
             all_formats=list(FORMAT_LABELS),
             folder_links=_folder_links(playlist.library, [t.path for t in shown.tracks])
@@ -1502,6 +1504,13 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             )  # fmt: skip
         session.commit()
         return _redirect(f"/playlists/{playlist.id}", "Playlist saved")
+
+    @app.post("/playlists/{playlist_id}/dedupe")
+    def dedupe_playlist(playlist_id: int, session: Session = SessionDep):
+        playlist = _playlist(session, playlist_id)
+        removed = pl.collapse(session, pl.find_repeats(session, [playlist]))
+        session.commit()
+        return _redirect(f"/playlists/{playlist.id}", f"Removed {removed} repeated entries")
 
     @app.post("/playlists/{playlist_id}/delete")
     def delete_playlist(playlist_id: int, session: Session = SessionDep):
