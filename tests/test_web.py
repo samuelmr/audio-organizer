@@ -833,8 +833,8 @@ def test_album_merges_page(web):
     assert web.post("/libraries/music/album-merges", data={}).url.path.endswith("album-merges")
 
 
-def test_gnudb_button_and_lookup(web, monkeypatch):
-    from audio_organizer import gnudb
+def test_gnudb_button_and_lookup(web, Session, monkeypatch):
+    from audio_organizer import gnudb, provenance
 
     assert "Look up in gnudb" not in web.get("/libraries/music").text
     for params in ({"folder": "P!nk/Funhouse"}, {"album": "Funhouse"}):
@@ -856,12 +856,20 @@ def test_gnudb_button_and_lookup(web, monkeypatch):
 
     monkeypatch.setattr(gnudb, "lookup_folder", lookup)
     results = [(album, entry)]
-    assert "Found in gnudb: Funhouse" in post().text
+    page = post().text  # the mock stored nothing: gnudb adds nothing that differs
+    assert "Found in gnudb: Funhouse; it agrees with the tags" in page
+    assert "and what it adds is pending" in page
+    with Session() as session:
+        file = session.scalar(select(AudioFile).where(AudioFile.path.contains("So What")))
+        provenance.set_value(session, file, "gnudb", "title", "So What Now")
+        session.commit()
+    page = post().text
+    assert "its values differ from the tags in 1 file." in page
     results = [(album, None)]
     assert "no matching entry" in post().text
     results = []
     assert "Not an album folder" in post().text
-    assert asked == ["P!nk/Funhouse"] * 3
+    assert asked == ["P!nk/Funhouse"] * 4
 
 
 def test_one_long_action_at_a_time(web, monkeypatch):

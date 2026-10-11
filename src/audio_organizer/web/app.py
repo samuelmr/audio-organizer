@@ -435,13 +435,25 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         found = [album for album, entry in results if entry]
         if not found:
             return _redirect(back, "gnudb has no matching entry for this album")
+        titles = ", ".join(a.album for a in found)
+        # Where gnudb's values differ from the tags they wait for acceptance; where they fill
+        # gaps they are pending like any value, so that is where to review them
+        where = folder + "/" if folder else ""
+        differing = wr.survey(session, lib, wr.Selection(path=where or None, prefer=("gnudb",)), 1)
+        if differing.total:
+            return _redirect(
+                back,
+                f"Found in gnudb: {titles}; its values differ from the tags in "
+                f"{differing.total} file{'s' if differing.total != 1 else ''}.",
+                link=(
+                    _url(f"/libraries/{lib.name}/pending", path=where, prefer_gnudb="true"),
+                    "Review what gnudb found",
+                ),
+            )
         return _redirect(
             back,
-            f"Found in gnudb: {', '.join(a.album for a in found)}; not yet in the files.",
-            link=(
-                _url(f"/libraries/{lib.name}/pending", path=folder + "/", prefer_gnudb="true"),
-                "Review what gnudb found",
-            ),
+            f"Found in gnudb: {titles}; it agrees with the tags, and what it adds is pending.",
+            link=(_url(f"/libraries/{lib.name}/pending", path=where), "Pending changes"),
         )
 
     @app.post("/libraries/{name}/coverart", dependencies=[Exclusive])
