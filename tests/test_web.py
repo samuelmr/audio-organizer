@@ -1214,9 +1214,11 @@ def test_write_all_measurements_runs_in_the_background(web, Session, monkeypatch
     assert f'data-sync-job="{page_url}"' in page
     assert wrote_one.wait(5)
     state = _write_gaps_state(web).json()
+    # the file is counted as soon as it is written, before its batch ends
     assert (state["active"], state["label"], state["total"], state["done"]) == (
-        True, "Writing", 3, 0
+        True, "Writing", 3, 1
     )  # fmt: skip
+    assert state["current"] == "Writing file 1"
     assert (state["changesets"], state["written"]) == ([], 0)  # the first batch is under way
     assert "its progress" in web.get("/libraries/music/pending").text
     # one long-running action at a time: a second start, and any other, gets the busy page
@@ -1231,7 +1233,7 @@ def test_write_all_measurements_runs_in_the_background(web, Session, monkeypatch
     go_on.set()
     _wait(lambda: not _write_gaps_state(web).json()["active"])
     state = _write_gaps_state(web).json()
-    assert (state["status"], state["done"]) == ("stopped", 1)
+    assert (state["status"], state["done"], state["current"]) == ("stopped", 1, None)
     assert state["message"] == "Stopped after 1 of 3 files. Wrote 1 files in 1 changesets"
     page = web.get(page_url).text
     assert f'href="/changes/{state["changesets"][0]}"' in page and "Stop</button>" not in page

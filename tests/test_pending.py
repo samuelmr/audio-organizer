@@ -215,3 +215,24 @@ def test_write_gaps_reports_each_batch_and_stops_between_them(library):
     # the next run writes the rest
     ids, written, failed = wr.write_gaps(session, lib, wr.Selection(), batch=1)
     assert (len(ids), written) == (1, 1)
+
+
+def test_write_gaps_reports_each_file_of_a_batch(library):
+    """A batch of 500 files takes minutes: its progress is shown file by file, and what it
+    is doing before its first file is written."""
+    session, lib, _ = library
+    for part in ("Halo", "Insane", "Loose"):
+        set_value(session, _file(session, part), "analysis", "replaygain_track_gain", "-3.00 dB")
+    session.commit()
+    progress, steps = [], []
+    wr.write_gaps(
+        session, lib, wr.Selection(), batch=2,
+        progress=lambda done, total: progress.append((done, total)), step=steps.append,
+    )  # fmt: skip
+    assert progress == [(0, 3), (1, 3), (2, 3), (3, 3)]
+    assert steps == [
+        "Finding the values of files 1–2",
+        "Writing files 1–2",
+        "Finding the values of file 3",
+        "Writing file 3",
+    ]

@@ -9,6 +9,7 @@ scanned, so edits made elsewhere are never silently overwritten.
 import logging
 import os
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -299,9 +300,16 @@ def retag_fields(change: Change) -> list[tuple[str, str | None, str | None]]:
     return [(name, current.get(name), value) for name, value in change.payload["fields"].items()]
 
 
-def apply(session: Session, changeset: Changeset, *, dry_run: bool = False) -> list[Outcome]:
+def apply(
+    session: Session,
+    changeset: Changeset,
+    *,
+    dry_run: bool = False,
+    applied: Callable[[Outcome], None] | None = None,
+) -> list[Outcome]:
     """Apply the approved changes of a changeset. Each change is committed on its own,
-    so a failure leaves the earlier ones applied (and undoable)."""
+    so a failure leaves the earlier ones applied (and undoable). applied(outcome) is called
+    after each change is committed, so that a long changeset can show its progress."""
     outcomes = []
     for change in changeset.changes:
         if change.status != "approved":
@@ -340,6 +348,8 @@ def apply(session: Session, changeset: Changeset, *, dry_run: bool = False) -> l
             log.warning("%s failed: %s", describe(change), e, exc_info=not _expected(e))
             outcomes.append(Outcome(change, False, f"{describe(change)}: FAILED: {e}"))
         session.commit()
+        if applied:
+            applied(outcomes[-1])
     return outcomes
 
 

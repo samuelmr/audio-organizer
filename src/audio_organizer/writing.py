@@ -344,11 +344,16 @@ def store_edit(
 
 
 def write(
-    session: Session, files: list[Pending], description: str, id3_version: int | None = None
+    session: Session,
+    files: list[Pending],
+    description: str,
+    id3_version: int | None = None,
+    applied: Callable[[ch.Outcome], None] | None = None,
 ) -> tuple[Changeset, list[ch.Outcome]]:
     """Write each file's pending values into its tags and embed its decided cover, in one
     change per kind, and keep them as a changeset that can be undone. The covers that
-    were written are no longer pending (undoing the changeset makes them pending again)."""
+    were written are no longer pending (undoing the changeset makes them pending again).
+    applied(outcome) is called as each change is written (see changes.apply)."""
     changeset = ch.new_changeset(session, description, "writing")
     leaving = {  # files that leave their folder in this write: trashed, or moved elsewhere
         p.file.id for p in files if "trash" in p.covers or "path" in p.covers
@@ -398,7 +403,7 @@ def write(
         ):
             _add_leftovers(changeset, pending)
     session.commit()
-    outcomes = ch.apply(session, changeset)
+    outcomes = ch.apply(session, changeset, applied=applied)
     for outcome in outcomes:
         if outcome.ok and (desire := ch.desire_of(session, outcome.change)):
             desire.written = True
@@ -415,16 +420,19 @@ def write_gaps(
     progress: Callable[[int, int], None] | None = None,
     written_batch: Callable[[int, int, list[str]], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
+    step: Callable[[str], None] | None = None,
 ) -> tuple[list[int], int, list[str]]:
     """Write every measured or rule-derived value that fills a missing tag (see
     Selection.gaps_only), however many files, a changeset per batch so that none grows
     beyond what can be reviewed or undone. Returns the changesets' ids, how many files were
     written and the messages of the failures.
 
-    progress(done, total) is called before the first batch and after each one, and
-    written_batch(changeset id, files written, failures) after each changeset, so that a
-    background job can show what is done while it runs. should_stop is asked before each
-    batch: a stop leaves the changesets written so far, each complete and undoable."""
+    progress(done, total) is called before the first batch, as each file is written and
+    after each batch (a batch takes minutes); step(what) says what a batch is doing, as
+    finding a batch's values takes a while before its first file is written; and
+    written_batch(changeset id, files written, failures) is called after each changeset, so
+    that a background job can show what is done while it runs. should_stop is asked before
+    each batch: a stop leaves the changesets written so far, each complete and undoable."""
     selection = replace(selection, gaps_only=True, prefer=(), file_ids=None)
     ids = list(
         session.scalars(_candidates(library, selection).where(AudioFile.id.not_in(_waiting())))
@@ -432,17 +440,40 @@ def write_gaps(
     changesets: list[int] = []
     written = 0
     failed: list[str] = []
-    if progress:
-        progress(0, len(ids))
+    reported = -1
+
+    def report(done: int) -> None:
+        nonlocal reported
+        if progress and done != reported:
+            progress(done, len(ids))
+            reported = done
+
+    written_in_batch: set[int | None] = set()  # the files of the batch being written
+    batch_start = 0
+
+    def applied(outcome: ch.Outcome) -> None:
+        written_in_batch.add(outcome.change.file_id)
+        report(batch_start + len(written_in_batch))
+
+    report(0)
     for start in range(0, len(ids), batch):
         if should_stop and should_stop():
             break
-        chunk = replace(selection, file_ids=ids[start : start + batch])
+        end = min(start + batch, len(ids))
+        files = f"files {start + 1:,}–{end:,}" if end > start + 1 else f"file {end:,}"
+        if step:
+            step(f"Finding the values of {files}")
+        chunk = replace(selection, file_ids=ids[start:end])
         found = survey(session, library, chunk, batch)
         if found.files:
+            if step:
+                step(f"Writing {files}")
+            batch_start = start
+            written_in_batch.clear()
             changeset, outcomes = write(
-                session, found.files, description(chunk, len(found.files), gaps=True), id3_version
-            )
+                session, found.files, description(chunk, len(found.files), gaps=True),
+                id3_version, applied,
+            )  # fmt: skip
             changesets.append(changeset.id)
             ok = sum(o.ok for o in outcomes)
             failures = [o.message for o in outcomes if not o.ok]
@@ -451,8 +482,7 @@ def write_gaps(
             if written_batch:
                 written_batch(changeset.id, ok, failures)
         session.expunge_all()  # a library has hundreds of thousands of files
-        if progress:
-            progress(min(start + batch, len(ids)), len(ids))
+        report(end)
     return changesets, written, failed
 
 

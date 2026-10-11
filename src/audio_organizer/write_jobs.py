@@ -67,6 +67,9 @@ class WriteGapsJobs:
         def progress(done: int, total: int) -> None:
             job.done, job.total, job.status = done, total, "running"
 
+        def step(what: str) -> None:
+            job.current = what
+
         def written_batch(changeset_id: int, written: int, failures: list[str]) -> None:
             job.changesets.append(changeset_id)
             job.written += written
@@ -81,11 +84,13 @@ class WriteGapsJobs:
                 wr.write_gaps(
                     session, library, job.selection, job.id3_version, BATCH,
                     progress=progress, written_batch=written_batch,
-                    should_stop=lambda: job.stop_requested,
+                    should_stop=lambda: job.stop_requested, step=step,
                 )  # fmt: skip
             except Exception:
                 session.rollback()  # the changesets written so far are committed
                 raise
+            finally:
+                job.current = None
         failed = f"; {job.failed} failed" if job.failed else ""
         wrote = f"Wrote {job.written:,} files in {len(job.changesets)} changesets{failed}"
         if job.stop_requested and job.done < job.total:
