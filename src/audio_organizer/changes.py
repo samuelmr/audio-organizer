@@ -587,7 +587,7 @@ def _trash(session: Session, change: Change) -> dict:
     if replacement is not None:
         kept = session.get(AudioFile, replacement)
         kept_path = kept.path if kept else change.payload["replacement_path"]
-        _check_distinct(_full_path(file), root / kept_path, file.path, kept_path)
+        _check_kept(_full_path(file), root / kept_path, file.path, kept_path)
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(_full_path(file), target)
     _remove_empty_dirs(_full_path(file).parent, root)
@@ -617,18 +617,22 @@ def _trash_leftover(session: Session, change: Change) -> dict:
     if target.exists():
         raise ChangeError(f"{trash_path} already exists")
     if same_as := change.payload.get("same_as"):
-        _check_distinct(source, root / same_as, path, same_as)
+        _check_kept(source, root / same_as, path, same_as)
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(source, target)
     _remove_empty_dirs(source.parent, root)
     return {"trash": trash_path}
 
 
-def _check_distinct(path: Path, kept: Path, name: str, kept_name: str) -> None:
-    """Refuse to trash a file as a copy of one that is the same file under another name:
-    on a case-insensitive share "Album/01.mp3" and "album/01.mp3" can both be in the
-    catalog while they open one file, and trashing either loses it. A hard link (a second
-    link of the file) can go, as the other link keeps it."""
+def _check_kept(path: Path, kept: Path, name: str, kept_name: str) -> None:
+    """Refuse to trash a file as a copy of one that is not there, or that is the same file
+    under another name. The kept copy can have gone since the decision (deleted or moved
+    outside aorg); trashing the copy then would lose the track. On a case-insensitive
+    share "Album/01.mp3" and "album/01.mp3" can both be in the catalog while they open one
+    file, and trashing either loses it. A hard link (a second link of the file) can go, as
+    the other link keeps it."""
+    if not kept.exists():
+        raise ChangeError(f"{kept_name}, the copy to keep, is not there; rescan the library")
     try:
         same = os.path.samefile(path, kept) and path.stat().st_nlink < 2
     except OSError:

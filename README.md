@@ -342,7 +342,9 @@ copy is on a compilation while another copy is in the artist's own folder (add
 `--include-compilations` to include them). The web UI's Duplicates page does the same,
 and there you can choose another copy to keep for any track, and listen to the copies.
 
-A file is never trashed as a copy of itself: if two catalog entries open the same file
+A copy is never trashed when the copy to keep is no longer there (say it was deleted
+after you chose, outside `aorg`): writing refuses and asks for a rescan. Nor is a file
+trashed as a copy of itself: if two catalog entries open the same file
 (letter case on a case-insensitive share, see [Scanning](#scanning)), writing refuses and
 asks for a rescan. A hard link to the kept file can be trashed, as the kept one stays.
 

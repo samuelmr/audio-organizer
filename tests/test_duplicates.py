@@ -213,3 +213,37 @@ def test_trash_takes_a_hard_link_of_the_kept_file(library):
     [outcome] = _apply(session, changeset)
     assert outcome.ok, outcome.message
     assert album_path.exists() and not flat_path.exists()
+
+
+def test_trash_refuses_when_the_kept_copy_is_gone(library):
+    """The kept copy can disappear between the decision and the write (deleted outside
+    aorg): the copy to trash is then the only one."""
+    session, lib, root = library
+    found = du.survey(session, lib)
+    du.decide(session, lib, found.proposals, "Trash loose copies")
+    (root / "Texas/Greatest Hits/11 Halo.mp3").unlink()
+
+    _, outcomes = wr.write(session, wr.survey(session, lib, wr.Selection()).files, "x")
+
+    trashes = [o for o in outcomes if o.change.kind == "trash"]
+    assert trashes and not any(o.ok for o in trashes)
+    assert all("is not there" in o.message for o in trashes)
+    assert (root / "Texas/Texas_Halo.mp3").exists()
+    assert (root / "Texas/Greatest Hits/11 Halo 1.mp3").exists()
+
+
+def test_trash_refuses_a_leftover_whose_identical_copy_is_gone(library):
+    session, lib, root = library
+    (root / "Texas/Greatest Hits/cover.jpg").write_bytes(b"image")
+    (root / "Texas/Hits/cover.jpg").parent.mkdir()
+    (root / "Texas/Hits/cover.jpg").write_bytes(b"image")
+    changeset = ch.new_changeset(session, "Merge", "album_merge")
+    ch.propose_trash_leftover(
+        changeset, lib, "Texas/Hits/cover.jpg", same_as="Texas/Greatest Hits/cover.jpg"
+    )
+    (root / "Texas/Greatest Hits/cover.jpg").unlink()
+
+    [outcome] = _apply(session, changeset)
+
+    assert not outcome.ok and "is not there" in outcome.message
+    assert (root / "Texas/Hits/cover.jpg").exists()
