@@ -156,8 +156,10 @@ def test_case_aliases_are_one_folder_under_two_names(tmp_path):
     first = _Entry("Album", tmp_path / "Album")
     alias = _Entry("album", tmp_path / "links/album")
     assert case_aliases([first, alias]) == {"album": first}
-    # Names written with a composed or a decomposed "ä" are one name too
-    assert case_aliases([_Entry("Ä", tmp_path / "Album"), _Entry("ä", alias.path)])
+    # Names written composed or decomposed ("a" + combining mark), in either case, are one
+    for composed, decomposed in [("Ä", "ä"), ("Ö", "ö"), ("Å", "å"),
+                                 ("É", "é"), ("ñ", "Ñ")]:  # fmt: skip
+        assert case_aliases([_Entry(composed, tmp_path / "Album"), _Entry(decomposed, alias.path)])
     # Folders on a case-sensitive disk whose names differ in case are different folders
     assert case_aliases([first, _Entry("album", tmp_path / "Other")]) == {}
 
