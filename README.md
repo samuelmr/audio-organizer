@@ -543,6 +543,17 @@ drops edits (measurements and lookups are kept; `aorg history undo` brings the e
 back, see [Undoing decisions](#undoing-decisions)). Files that a changeset waiting for
 review would change are left to it.
 
+After a deep scan, or after converting preferences to ratings, thousands of files wait
+for values that cannot clash with anything. `--write-gaps` writes them all at once:
+
+    aorg pending --write-gaps                 # all measurements and ratings, whole library
+    aorg pending --write-gaps --only replaygain --path "Texas"
+
+Only measured ReplayGain values and ratings from preferences are written, and only into
+files that have no such tag: a differing tag is never overwritten, and your own edits and
+lookups stay pending for review. There is a changeset per 500 files, each of which can be
+undone. The Pending page has the same as the "Write them all" button.
+
 The web UI's Pending page lists the albums with changes waiting; choose one (or an
 artist) to see the old and new value of every field, untick the files you want to
 leave, and write the rest or discard your edits in them.

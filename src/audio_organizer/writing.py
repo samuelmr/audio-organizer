@@ -12,7 +12,8 @@ user can accept its values for a selection, which makes them edits."""
 
 import os
 from collections import Counter
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 
 from sqlalchemy import func, or_, select, union
@@ -35,6 +36,8 @@ from .provenance import resolve, unwritten
 from .tracks import present
 
 M = EffectiveMetadata
+# Sources whose values are computed, not decided by the user: safe to write into empty tags
+GAP_SOURCES = ("analysis", "rule")
 # Pending changes are grouped by album artist, or artist where there is none, and album
 ARTIST = func.coalesce(func.nullif(M.albumartist, ""), func.nullif(M.artist, ""), "")
 ALBUM = func.coalesce(M.album, "")
@@ -55,6 +58,9 @@ class Selection:
     only: list[str] | None = None  # field names, or their beginnings ("replaygain")
     # Sources whose values replace a tag that differs from them ("gnudb"); see unwritten
     prefer: tuple[str, ...] = ()
+    # Only measurements and rule-derived values (ReplayGain, ratings from preferences) for
+    # tags the file lacks: nothing is overwritten, so writing them all is safe; see survey
+    gaps_only: bool = False
 
 
 @dataclass
@@ -169,7 +175,7 @@ def survey(session: Session, library: Library, selection: Selection, limit: int 
         .where(AudioFile.id.in_(candidates))
         .order_by(func.lower(ARTIST), func.lower(ALBUM), AudioFile.path)
     )
-    if not selection.prefer:
+    if not selection.prefer and not selection.gaps_only:
         result.total = session.scalar(select(func.count()).select_from(candidates.subquery()))
         result.by_field.update(
             dict(
@@ -207,16 +213,20 @@ def survey(session: Session, library: Library, selection: Selection, limit: int 
                 ).items()
                 if matches(k, selection.only)
             }  # fmt: skip
-            covers = {} if selection.prefer else desired.get(file.id, {})
+            if selection.gaps_only:
+                fields = _gaps(file, fields)
+            covers = {} if selection.prefer or selection.gaps_only else desired.get(file.id, {})
             fields.update({name: describe_cover(spec, name) for name, spec in covers.items()})
             if not fields:
                 continue
-            if selection.prefer:
+            if selection.prefer or selection.gaps_only:
                 result.total += 1
                 result.by_field.update(fields.keys())
                 # Rows come in artist, album order, so a group is the last one or a new one
                 last = result.groups[-1] if result.groups else None
-                if last and (last.artist.lower(), last.album.lower()) == (
+                if not selection.prefer:
+                    pass  # `groups` lists the albums; it does not know about gaps
+                elif last and (last.artist.lower(), last.album.lower()) == (
                     row[1].lower(), row[2].lower()
                 ):  # fmt: skip
                     last.files += 1
@@ -236,6 +246,18 @@ def survey(session: Session, library: Library, selection: Selection, limit: int 
                 )  # fmt: skip
             )
     return result
+
+
+def _gaps(file: AudioFile, fields: dict[str, str]) -> dict[str, str]:
+    """The pending values that are measurements or rule-derived ratings and fill a tag the
+    file does not have. A measurement outranks the tag in the catalog, so a differing tag
+    is left alone here: that is for review."""
+    resolved = resolve(file.values)
+    have = {fv.field for fv in file.values if fv.source == "tag" and fv.value}
+    return {
+        k: v for k, v in fields.items()
+        if k not in have and resolved[k].source in GAP_SOURCES
+    }  # fmt: skip
 
 
 def _desired(
@@ -384,6 +406,41 @@ def write(
     return changeset, outcomes
 
 
+def write_gaps(
+    session: Session,
+    library: Library,
+    selection: Selection,
+    id3_version: int | None = None,
+    batch: int = 500,
+    progress: Callable[[int, int], None] | None = None,
+) -> tuple[list[int], int, list[str]]:
+    """Write every measured or rule-derived value that fills a missing tag (see
+    Selection.gaps_only), however many files, a changeset per batch so that none grows
+    beyond what can be reviewed or undone. Returns the changesets' ids, how many files were
+    written and the messages of the failures. progress(done, total) is called after each batch."""
+    selection = replace(selection, gaps_only=True, prefer=(), file_ids=None)
+    ids = list(
+        session.scalars(_candidates(library, selection).where(AudioFile.id.not_in(_waiting())))
+    )
+    changesets: list[int] = []
+    written = 0
+    failed: list[str] = []
+    for start in range(0, len(ids), batch):
+        chunk = replace(selection, file_ids=ids[start : start + batch])
+        found = survey(session, library, chunk, batch)
+        if found.files:
+            changeset, outcomes = write(
+                session, found.files, description(chunk, len(found.files), gaps=True), id3_version
+            )
+            changesets.append(changeset.id)
+            written += sum(o.ok for o in outcomes)
+            failed += [o.message for o in outcomes if not o.ok]
+        session.expunge_all()  # a library has hundreds of thousands of files
+        if progress:
+            progress(min(start + batch, len(ids)), len(ids))
+    return changesets, written, failed
+
+
 def _extras_to_move(
     session: Session, file: AudioFile, spec: dict, leaving: set[int], carrier: dict[str, int]
 ) -> list[tuple[str, str]]:
@@ -477,7 +534,9 @@ def accept(session: Session, files: list[Pending], source: str, description: str
     return len(taken)
 
 
-def description(selection: Selection, count: int, accept: str | None = None) -> str:
+def description(
+    selection: Selection, count: int, accept: str | None = None, gaps: bool = False
+) -> str:
     """A description naming what was written (a changeset), or with accept, whose values
     were accepted for what (an operation)."""
     what = []
@@ -491,4 +550,6 @@ def description(selection: Selection, count: int, accept: str | None = None) -> 
     where = f" ({' – '.join(what)})" if what else ""
     if accept:
         return f"Accept {accept}'s values for {files}{where}"
+    if gaps:
+        return f"Write measured and derived values into empty tags of {files}{where}"
     return f"Write the tags of {files}{where}"

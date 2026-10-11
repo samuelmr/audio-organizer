@@ -1018,8 +1018,19 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         while artist="" chooses the tracks without an artist; a list keeps the empty value."""
         lib = _library(session, name)
         artist, album = (values[0] if values else None for values in (artist, album))
-        if action not in ("write", "discard", "accept"):
+        if action not in ("write", "discard", "accept", "write_gaps"):
             raise HTTPException(400, f"Unknown action {action}")
+        if action == "write_gaps":
+            ids, written, failed = wr.write_gaps(
+                session, lib, _selection(path, artist, album, None, only, False),
+                int(id3_version) if id3_version in ("3", "4") else None,
+            )  # fmt: skip
+            note = f"; {len(failed)} failed (see the changesets)" if failed else ""
+            return _redirect(
+                f"/libraries/{lib.name}/pending",
+                f"Wrote {written} files into empty tags in {len(ids)} changesets{note}.",
+                link=("/changes", "Undo on the Changes page"),
+            )
         if (action == "accept") != prefer_gnudb and action != "discard":
             raise HTTPException(400, "gnudb's values are accepted first, then written")
         selection = _selection(path, artist, album, file_ids or [], only, prefer_gnudb)

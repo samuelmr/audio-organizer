@@ -1875,6 +1875,14 @@ def pending_command(
     id3_version: Annotated[
         int | None, typer.Option(help="Write ID3 tags as version 3 or 4 [default: as now]")
     ] = None,
+    write_gaps: Annotated[
+        bool,
+        typer.Option(
+            "--write-gaps",
+            help="Write all measurements (ReplayGain) and ratings from preferences into the "
+            "files that lack those tags, in all batches",
+        ),
+    ] = False,
     prefer_gnudb: Annotated[
         bool,
         typer.Option(
@@ -1899,6 +1907,12 @@ def pending_command(
     again). --discard drops your edits in the batch instead, so the tags count again
     (`aorg history undo` brings them back).
 
+    --write-gaps is the shortcut for a whole library (or the --artist, --album, --path and
+    --only you give): every measured or derived value (ReplayGain, ratings from
+    preferences) is written into the files that have no such tag, however many. Tags that
+    exist are never overwritten, and your own edits and lookups are left for review. One
+    changeset per 500 files; each can be undone.
+
     A gnudb value ranks below the tag, so by default only what the tags lack is written.
     --prefer-gnudb shows where gnudb's values differ from the tags, for the fields chosen
     with --only (e.g. --only genre,album); --accept takes them as your edits, to be
@@ -1906,8 +1920,10 @@ def pending_command(
     """
     if id3_version not in (None, 3, 4):
         raise typer.BadParameter("--id3-version is 3 or 4")
-    if write + discard + accept > 1:
-        raise typer.BadParameter("give one of --write, --discard and --accept")
+    if write + discard + accept + write_gaps > 1:
+        raise typer.BadParameter("give one of --write, --discard, --accept and --write-gaps")
+    if write_gaps and prefer_gnudb:
+        raise typer.BadParameter("--write-gaps does not write lookups: leave out --prefer-gnudb")
     if accept and not prefer_gnudb:
         raise typer.BadParameter("--accept takes gnudb's values: give --prefer-gnudb too")
     if write and prefer_gnudb:
@@ -1922,6 +1938,29 @@ def pending_command(
     )  # fmt: skip
     with _session(ctx) as session:
         lib = _library(session, library)
+        if write_gaps:
+            with typer.progressbar(length=1, label="Writing") as bar:
+
+                def progress(done: int, total: int) -> None:
+                    bar.length = total or 1
+                    bar.update(done - bar.pos)
+
+                ids, written, failed = wr.write_gaps(
+                    session, lib, selection, id3_version, progress=progress
+                )
+            for message in failed[:50]:
+                typer.echo(f"  {message}")
+            typer.echo(
+                f"Wrote {written} files"
+                + (f", {len(failed)} failed" if failed else "")
+                + (
+                    f" in {len(ids)} changesets ({ids[0]}–{ids[-1]}; undo with "
+                    "`aorg changes undo ID`)."
+                    if ids
+                    else ": nothing to fill."
+                )
+            )
+            return
         found = wr.survey(session, lib, selection, limit)
         counts = ", ".join(f"{name} {n}" for name, n in found.by_field.most_common())
         typer.echo(
