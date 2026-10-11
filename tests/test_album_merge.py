@@ -7,6 +7,8 @@ from sqlalchemy import select
 
 from audio_organizer import album_merge as am
 from audio_organizer import changes as ch
+from audio_organizer import operations as ops
+from audio_organizer import writing as wr
 from audio_organizer.models import AudioFile, Library
 from audio_organizer.scanner import scan
 
@@ -67,10 +69,15 @@ def test_merge_apply_and_undo(library):
     merge = am.plan_folders(
         session, lib, "Aguilera, Christina/Stripped", "Christina Aguilera/Stripped"
     )
-    changeset = am.propose(session, [merge], "Merge")
+    operation = am.decide(session, lib, [merge], "Merge")
+    assert operation.kind == "merge" and len(operation.values) == 2
+    assert am.decide(session, lib, [merge], "Merge") is None  # not decided twice
+    assert (root / "Aguilera, Christina/Stripped/01 Stripped Intro.mp3").exists()  # untouched
+    assert am.survey(session, lib, path_prefix="Christina").pending >= 1  # not proposed again
+
+    found = wr.survey(session, lib, wr.Selection(only=["trash", "path"]))
+    changeset, outcomes = wr.write(session, found.files, "Write")
     assert [c.kind for c in changeset.changes] == ["trash", "move"]
-    ch.set_status(changeset.changes, "approved")
-    outcomes = ch.apply(session, changeset)
     assert all(o.ok for o in outcomes), [o.message for o in outcomes]
     assert not (root / "Aguilera, Christina").exists()  # emptied and removed
     assert (root / "Christina Aguilera/Stripped/02 Can't Hold Us Down.mp3").exists()
@@ -80,6 +87,19 @@ def test_merge_apply_and_undo(library):
     assert all(o.ok for o in outcomes), [o.message for o in outcomes]
     assert (root / "Aguilera, Christina/Stripped/01 Stripped Intro.mp3").exists()
     assert (root / "Aguilera, Christina/Stripped/02 Can't Hold Us Down.mp3").exists()
+    assert wr.survey(session, lib, wr.Selection(only=["trash", "path"])).total == 2
+
+
+def test_merge_decision_can_be_undone(library):
+    session, lib, root = library
+    merge = am.plan_folders(
+        session, lib, "Aguilera, Christina/Stripped", "Christina Aguilera/Stripped"
+    )
+    operation = am.decide(session, lib, [merge], "Merge")
+    assert ops.undo(session, operation).reverted == 2
+    session.commit()
+    assert wr.survey(session, lib, wr.Selection()).total == 0
+    assert len(am.survey(session, lib, path_prefix="Christina").merges) == 1
 
 
 def png(width: int, height: int) -> bytes:
@@ -108,7 +128,10 @@ def test_merge_takes_the_other_files_along(library):
     merge = am.plan_folders(
         session, lib, "Aguilera, Christina/Stripped", "Christina Aguilera/Stripped"
     )
-    changeset = am.propose(session, [merge], "Merge")
+    am.decide(session, lib, [merge], "Merge")
+    found = wr.survey(session, lib, wr.Selection(only=["trash", "path"]))
+    assert all("loose file" in p.fields.get("trash", p.fields.get("path")) for p in found.files)
+    changeset, outcomes = wr.write(session, found.files, "Write")
     s, t = "Aguilera, Christina/Stripped", "Christina Aguilera/Stripped"
     assert [ch.describe(c) for c in changeset.changes[2:]] == [
         f"trash {s}/.DS_Store (not music)",
@@ -120,8 +143,6 @@ def test_merge_takes_the_other_files_along(library):
         f"trash {s}/folder.jpg (same as {t}/folder.jpg)",
         f"move {s}/front.png -> {t}/front (Aguilera, Christina - Stripped).png",
     ]
-    ch.set_status(changeset.changes, "approved")
-    outcomes = ch.apply(session, changeset)
     assert all(o.ok for o in outcomes), [o.message for o in outcomes]
     assert not (root / "Aguilera, Christina").exists()
     assert (target / "cover.png").read_bytes() == png(500, 500)

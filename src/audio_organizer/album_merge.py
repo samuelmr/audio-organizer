@@ -25,8 +25,9 @@ from sqlalchemy.orm import Session
 
 from . import changes as ch
 from . import leftovers as lo
+from . import operations as ops
 from .images import IMAGE_TYPES, dimensions
-from .models import AudioFile, Changeset, EffectiveMetadata, FieldValue, Library
+from .models import AudioFile, EffectiveMetadata, FieldValue, Library, Operation
 from .pathparse import normalize_name
 from .tracks import present
 
@@ -167,23 +168,27 @@ def batch(merges: list[Merge], limit: int) -> list[Merge]:
     return chosen
 
 
-def propose(session: Session, merges: list[Merge], description: str) -> Changeset:
-    """One changeset with the merges' trashes and moves, then the moves of the source
-    folders' other files (see leftovers), so that the source folders disappear."""
-    changeset = ch.new_changeset(session, description, "album_merge")
+def decide(
+    session: Session, library: Library, merges: list[Merge], description: str
+) -> Operation | None:
+    """Decide on the merges: the source folders' copies of tracks the target has are to be
+    trashed, and their other tracks moved into the target. Only the catalog changes (as an
+    operation that can be undone); the files are written from the Pending page
+    (writing.py). The source folders' other files (see leftovers) are kept in the decision
+    of every track, as it is not known which will be written last; they follow it, so that
+    the source folders disappear. None when it was all decided already."""
+    desires = []
     for merge in merges:
+        loose = [[a.path, a.to, a.same_as] for a in leftovers(merge, Path(library.root))]
+        extra = {"leftovers": loose} if loose else {}
         for track, keep in merge.trash:
-            ch.propose_trash(changeset, track.file, replacement=keep.file)
+            spec = {"replacement": keep.file.id, "replacement_path": keep.file.path, **extra}
+            desires.append(ops.Desire(track.file.id, "trash", spec))
         for track, path in merge.move:
-            ch.propose_move(changeset, track.file, path)
-        library = merge.source.tracks[0].file.library
-        for action in leftovers(merge, Path(library.root)):
-            if action.to is None:
-                ch.propose_trash_leftover(changeset, library, action.path, action.same_as)
-            else:
-                ch.propose_rename_file(changeset, library, action.path, action.to)
+            desires.append(ops.Desire(track.file.id, "move", {"to": path, **extra}))
+    operation = ops.record(session, library.id, "merge", description, [], desires=desires)
     session.commit()
-    return changeset
+    return operation
 
 
 @dataclass

@@ -795,7 +795,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         )  # fmt: skip
 
     @app.post("/libraries/{name}/album-merges", dependencies=[Exclusive])
-    def propose_album_merges(
+    def decide_album_merges(
         name: str,
         path: Annotated[str, Form()] = "",
         limit: Annotated[int, Form()] = 20,
@@ -803,7 +803,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         target: Annotated[str, Form()] = "",
         session: Session = SessionDep,
     ):
-        """A batch of merges, or with source and target, one merge in that direction."""
+        """Choose a batch of merges, or with source and target, one merge in that direction."""
         lib = _library(session, name)
         if source and target:
             try:
@@ -817,8 +817,12 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             description = f"Merge {len(merges)} album folders"
         if not any(m.trash or m.move for m in merges):
             return _redirect(f"/libraries/{lib.name}/album-merges", "Nothing to merge")
-        changeset = am.propose(session, merges, description)
-        return _redirect(f"/changes/{changeset.id}", "Proposed; review and approve the changes")
+        am.decide(session, lib, merges, description)
+        return _redirect(
+            _url(f"/libraries/{lib.name}/pending", path=path or None),
+            "Chosen; review and write the merges here",
+            link=(f"/libraries/{lib.name}/history", "Undo on the History page"),
+        )
 
     # ---- artists -------------------------------------------------------------------------
 

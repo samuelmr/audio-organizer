@@ -1591,9 +1591,9 @@ def _describe_merge(merge: am.Merge) -> list[str]:
 def merge_albums(
     ctx: typer.Context,
     path: Annotated[str | None, typer.Option(help="Only folders under this path")] = None,
-    limit: Annotated[int, typer.Option(help="Merges to propose in a batch")] = 20,
-    propose: Annotated[
-        bool, typer.Option("--propose", help="Create a changeset for a batch")
+    limit: Annotated[int, typer.Option(help="Merges to choose in a batch")] = 20,
+    decide: Annotated[
+        bool, typer.Option("--decide", help="Choose the merges of a batch, to write from Pending")
     ] = False,
     source: Annotated[
         str | None, typer.Option("--from", help="Merge this album folder ...")
@@ -1606,9 +1606,12 @@ def merge_albums(
     Merging trashes the source folder's copies of tracks the target already has and
     moves its other tracks into the target. A track whose number the target already uses
     is a clash and stays where it is. When no track stays, the source folder's other
-    files (cover, booklet, .cue) move along too. Batches (--propose) only include folders
+    files (cover, booklet, .cue) move along too. Batches (--decide) only include folders
     with the same album name and no clashes; merge others one at a time with --from and
     --into, in the direction you choose.
+
+    Choosing only changes the catalog (`aorg history` undoes it); the files are written
+    with `aorg pending --write`.
     """
     with _session(ctx) as session:
         lib = _library(session, library)
@@ -1624,10 +1627,14 @@ def merge_albums(
             if not merge.trash and not merge.move:
                 typer.echo("Nothing to merge")
                 return
-            changeset = am.propose(
-                session, [merge], f"Merge {merge.source.path} into {merge.target.path}"
+            operation = am.decide(
+                session, lib, [merge], f"Merge {merge.source.path} into {merge.target.path}"
             )
-            typer.echo(f"Changeset {changeset.id}: {len(changeset.changes)} changes")
+            typer.echo(
+                "Chosen"
+                + (f" (operation {operation.id})" if operation else " (already chosen)")
+                + ". Review and write it with `aorg pending`."
+            )
             return
         found = am.survey(session, lib, path_prefix=path)
         chosen = am.batch(found.merges, limit)
@@ -1635,14 +1642,15 @@ def merge_albums(
             f"{len(found.merges)} pairs of album folders share tracks: "
             f"{len(found.batchable)} can be merged in batches, "
             f"{len(found.merges) - len(found.batchable)} need a look; "
-            f"{found.pending} have changes waiting for review."
+            f"{found.pending} have changes pending or waiting for review."
         )
-        if propose:
+        if decide:
             if chosen:
-                changeset = am.propose(session, chosen, f"Merge {len(chosen)} album folders")
+                operation = am.decide(session, lib, chosen, f"Merge {len(chosen)} album folders")
                 typer.echo(
-                    f"Changeset {changeset.id}: {len(changeset.changes)} changes for "
-                    f"{len(chosen)} merges. Review with `aorg changes show {changeset.id}`."
+                    f"Chosen {len(chosen)} merges"
+                    + (f" (operation {operation.id})" if operation else " (already chosen)")
+                    + ". Review and write them with `aorg pending`."
                 )
             return
         typer.echo("Next batch:" if chosen else "Nothing to merge in a batch.")

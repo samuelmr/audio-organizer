@@ -10,9 +10,10 @@ once and can be undone (the edits stay, so the files are pending again).
 A lookup (gnudb) ranks below the tags, so where they differ it is only evidence; the
 user can accept its values for a selection, which makes them edits."""
 
+import os
 from collections import Counter
 from dataclasses import dataclass, field
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 from sqlalchemy import func, or_, select, union
 from sqlalchemy.orm import Session, selectinload
@@ -253,13 +254,17 @@ def _desired(
 def describe_cover(spec: dict, name: str = "cover") -> str:
     """What a decided cover, trashing or move is, for the diff: where a cover comes from,
     and where it goes."""
+    loose = len(spec.get("leftovers", []))
+    loose_note = f" (+{loose} loose file{'s' if loose != 1 else ''} with the last track)"
     if name == "path":
         extras = len(spec.get("extras", []))
         # Every track leaving a folder has the list; the last one written takes them along
         files = f" (+{extras} folder file{'s' if extras != 1 else ''} with the last track)"
-        return spec["to"] + (files if extras else "")
+        return spec["to"] + (files if extras else loose_note if loose else "")
     if "replacement_path" in spec:
-        return f"move to the trash (a copy of {spec['replacement_path']})"
+        return f"move to the trash (a copy of {spec['replacement_path']})" + (
+            loose_note if loose else ""
+        )
     source = spec.get("label") or spec.get("image") or "an image"
     if "to" in spec:
         source = f"{PurePosixPath(spec['to']).name} from {source}"
@@ -322,7 +327,10 @@ def write(
         p.file.id for p in files if "trash" in p.covers or "path" in p.covers
     }
     carrier = {  # per folder, the last file moved from it: the one the other files go with
-        str(PurePosixPath(p.file.path).parent): p.file.id for p in files if "path" in p.covers
+        _folder(p.file): p.file.id for p in files if "path" in p.covers
+    }
+    last_out = {  # and the last one moved or trashed: the one a merge's loose files go with
+        _folder(p.file): p.file.id for p in files if "path" in p.covers or "trash" in p.covers
     }
     for pending in files:
         tag_fields = {k: v for k, v in pending.fields.items() if k not in DESIRE_FIELDS}
@@ -354,6 +362,10 @@ def write(
                     replace=bool(spec.get("replace")),
                 )  # fmt: skip
             change.status = "approved"
+        if last_out.get(_folder(pending.file)) == pending.file.id and _folder_empties(
+            session, pending.file, leaving
+        ):
+            _add_leftovers(changeset, pending)
     session.commit()
     outcomes = ch.apply(session, changeset)
     for outcome in outcomes:
@@ -370,9 +382,20 @@ def _extras_to_move(
     from the folder, and only if no track stays in it. A move is written in parts (a
     selection), and the folder's other files must not be taken away from tracks still in
     it; the decision gives every track of the folder the list, so whichever is last has it."""
-    folder = str(PurePosixPath(file.path).parent)
-    if not spec.get("extras") or carrier.get(folder) != file.id:
+    if not spec.get("extras") or carrier.get(_folder(file)) != file.id:
         return []
+    if not _folder_empties(session, file, leaving):
+        return []
+    return [(source, target) for source, target in spec["extras"]]
+
+
+def _folder(file: AudioFile) -> str:
+    return str(PurePosixPath(file.path).parent)
+
+
+def _folder_empties(session: Session, file: AudioFile, leaving: set[int]) -> bool:
+    """Whether no track stays in the file's folder once the leaving files are gone."""
+    folder = _folder(file)
     staying = session.scalars(
         select(AudioFile.path).where(
             present(file.library_id),
@@ -380,9 +403,26 @@ def _extras_to_move(
             AudioFile.id.not_in(leaving),
         )
     )
-    if any(str(PurePosixPath(path).parent) == folder for path in staying):
-        return []
-    return [(source, target) for source, target in spec["extras"]]
+    return not any(str(PurePosixPath(path).parent) == folder for path in staying)
+
+
+def _add_leftovers(changeset: Changeset, pending: Pending) -> None:
+    """The loose files of a folder (litter, cover, booklet) that a decided merge moves or
+    trashes with the folder's last track (album_merge.decide), as changes after it. A file
+    that is gone by now is skipped."""
+    library = pending.file.library
+    root = Path(library.root)
+    done: set[str] = set()
+    for spec in pending.covers.values():
+        for path, to, same_as in spec.get("leftovers", []):
+            if path in done or not os.path.lexists(root / path):
+                continue
+            done.add(path)
+            if to is None:
+                change = ch.propose_trash_leftover(changeset, library, path, same_as)
+            else:
+                change = ch.propose_rename_file(changeset, library, path, to)
+            change.status = "approved"
 
 
 def discard(session: Session, files: list[Pending]) -> tuple[int, int]:

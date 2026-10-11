@@ -261,7 +261,8 @@ finds pairs of album folders that share identical tracks and have the same album
 (or share at least half of their tracks):
 
     aorg merge-albums                         # candidates
-    aorg merge-albums --propose --limit 20    # a changeset for a batch of safe merges
+    aorg merge-albums --decide --limit 20     # choose a batch of safe merges
+    aorg pending --write --path Texas         # review, then trash and move (undoable)
     aorg merge-albums --from "Texas/Greatest Hits" --into "Texas/The Greatest Hits"
 
 Merging one folder into another trashes its copies of tracks the other already has (that
@@ -269,8 +270,9 @@ copy is kept and playlists switch to it) and moves its other tracks over. A trac
 number the other folder already uses on the same disc is a *clash*, which usually means
 a different recording or edition; it stays where it is. Batches only include pairs with
 the same album name and no clashes; merge the others one by one in the direction you
-choose, here or on the web UI's Album folders page. To go the other way after proposing
-a merge, reject its changeset (or undo it, if applied) and propose the other direction.
+choose, here or on the web UI's Album folders page. Choosing only changes the catalog
+(`aorg history` undoes it); the trashing and moving are written from the Pending page. To
+go the other way after choosing a merge, undo it and choose the other direction.
 
 When no track stays behind, the folder's other files move too (the cover, a `.cue` or
 `.nfo`, a booklet, a Scans folder), so the merged folder disappears. Where the other folder
@@ -278,8 +280,9 @@ already has a file of that name, an identical copy and system files such as `.DS
 are trashed. Of two different images, the bigger one keeps the name and the other one is
 kept beside it with its folder's name added: `cover (Greatest Hits).jpg`, or
 `cover (Texas - Greatest Hits).jpg` when both folders have the same name. Any other file,
-such as a different `.cue`, gets the merged folder's name added in the same way. Each of
-these is a change of its own in the changeset, so you can reject any of them.
+such as a different `.cue`, gets the merged folder's name added in the same way. These
+files are dealt with when the folder's last track is written; each is a change of its own
+in the changeset that is written.
 
 ### Loose tracks
 
