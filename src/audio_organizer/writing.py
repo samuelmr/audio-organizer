@@ -129,7 +129,8 @@ def _selected(library: Library, selection: Selection) -> list:
 
 def _candidates(library: Library, selection: Selection):
     """The ids of the selection's files that may have pending changes: those with a
-    PendingField of the chosen fields or a decided cover, trash or move. With prefer, those
+    PendingField of the chosen fields or a decided cover, trash or move; with gaps_only,
+    those with a measured or rule-derived PendingField for an empty tag. With prefer, those
     with a value from a preferred source instead (whether it is to replace the tag is
     decided per file): the survey then shows just what accepting those values would take."""
     if selection.prefer:
@@ -137,6 +138,16 @@ def _candidates(library: Library, selection: Selection):
             select(FieldValue.file_id).where(
                 FieldValue.source.in_(selection.prefer),
                 or_(*(FieldValue.field.startswith(o) for o in selection.only or [""])),
+            )
+        ]
+    elif selection.gaps_only:
+        # As _gaps keeps them, so that files with only other pending values (lookups, edits)
+        # are not looked at in every run of write_gaps without ever being written
+        parts = [
+            select(P.file_id).where(
+                _field_condition(selection.only),
+                P.source.in_(GAP_SOURCES),
+                or_(P.tag.is_(None), P.tag == ""),
             )
         ]
     else:

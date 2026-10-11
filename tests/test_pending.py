@@ -236,3 +236,22 @@ def test_write_gaps_reports_each_file_of_a_batch(library):
         "Finding the values of file 3",
         "Writing file 3",
     ]
+
+
+def test_write_gaps_looks_only_at_files_with_gaps_to_fill(library):
+    """Files whose pending values are for review (a lookup, an edit, a measurement that
+    differs from the tag) are left out of the count, rather than looked at in every run."""
+    session, lib, _ = library
+    set_value(session, _file(session, "Halo"), "analysis", "replaygain_track_gain", "-3.00 dB")
+    set_value(session, _file(session, "Insane"), "gnudb", "date", "1997")
+    loose = _file(session, "Loose")
+    set_value(session, loose, "tag", "replaygain_track_gain", "-1.00 dB")
+    set_value(session, loose, "analysis", "replaygain_track_gain", "-3.00 dB")
+    set_value(session, _file(session, "So What"), "manual", "genre", "Pop")
+    session.commit()
+    progress = []
+    ids, written, failed = wr.write_gaps(
+        session, lib, wr.Selection(), progress=lambda done, total: progress.append(total)
+    )
+    assert (len(ids), written, failed) == (1, 1, [])
+    assert set(progress) == {1}
