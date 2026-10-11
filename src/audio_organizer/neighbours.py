@@ -27,9 +27,10 @@ from sqlalchemy.orm import Session
 
 from . import changes as ch
 from . import duplicates as du
+from . import operations as ops
 from .encodings import Track, load_tracks
 from .layout import file_name
-from .models import Changeset, Library
+from .models import Library, Operation
 from .pathparse import normalize_name
 
 # Album-wide tags a moved track takes from its neighbours, when they all agree; a genre
@@ -173,16 +174,22 @@ def batch(albums: list[Album], limit: int) -> list[Album]:
     return chosen
 
 
-def propose(session: Session, albums: list[Album], description: str) -> Changeset:
-    """One changeset: for each track, its album tags, then the move into the folder."""
-    changeset = ch.new_changeset(session, description, "neighbours")
+def decide(
+    session: Session, library: Library, albums: list[Album], description: str
+) -> Operation | None:
+    """Decide on the albums' loose tracks: their album tags become their own values, and
+    they are to move into the folder. Only the catalog changes (as an operation that can
+    be undone); the files are written from the Pending page (writing.py), each once with
+    its tags. None when it was all decided already."""
+    values, desires = [], []
     for album in albums:
         for move in album.moves:
-            if move.fill:
-                ch.propose_retag(changeset, move.copy.file, move.fill)
-            ch.propose_move(changeset, move.copy.file, move.to)
+            file = move.copy.file
+            values += [ops.Value(file.id, "manual", name, v) for name, v in move.fill.items()]
+            desires.append(ops.Desire(file.id, "move", {"to": move.to}))
+    operation = ops.record(session, library.id, "neighbours", description, values, desires=desires)
     session.commit()
-    return changeset
+    return operation
 
 
 def _agreed(members: list[du.Copy]) -> dict[str, str]:

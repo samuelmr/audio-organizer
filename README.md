@@ -290,8 +290,9 @@ Flat folders ("Williams, John/John Williams_Cantina Band.mp3") often hold tracks
 album folder exists, with a gap where they belong. `aorg neighbours` puts them back:
 
     aorg neighbours                           # what would move
-    aorg neighbours --path "Williams, John" --propose
-    aorg neighbours --propose --limit 100     # whole albums, up to 100 tracks
+    aorg neighbours --path "Williams, John" --decide
+    aorg neighbours --decide --limit 100      # whole albums, up to 100 tracks
+    aorg pending --path "Williams, John" --write   # review, then move them (undoable)
 
 A loose track (in an artist folder or "Unknown Album") joins an album folder when its
 album tag names exactly one album folder of its artist (ignoring case, punctuation and a

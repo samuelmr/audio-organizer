@@ -6,6 +6,7 @@ from conftest import make_audio
 from audio_organizer import changes as ch
 from audio_organizer import neighbours as nb
 from audio_organizer import tags
+from audio_organizer import writing as wr
 from audio_organizer.models import Library
 from audio_organizer.scanner import scan
 
@@ -60,15 +61,17 @@ def test_survey(library):
     assert nb.survey(session, lib, path_prefix="Klaus Doldinger/").loose == 0
 
 
-def test_propose_apply_and_undo(library):
+def test_decide_write_and_undo(library):
     session, lib, root = library
     found = nb.survey(session, lib)
-    changeset = nb.propose(session, nb.batch(found.albums, 10), "Put loose tracks in albums")
-    assert changeset.source == "neighbours"
-    assert [c.kind for c in changeset.changes] == ["retag", "move"]
+    operation = nb.decide(session, lib, nb.batch(found.albums, 10), "Put loose tracks in albums")
+    assert operation.kind == "neighbours"
+    assert nb.decide(session, lib, nb.batch(found.albums, 10), "Again") is None
     assert nb.survey(session, lib).pending == 1
-    ch.set_status(changeset.changes, "approved")
-    outcomes = ch.apply(session, changeset)
+    assert (root / "Doldinger, Klaus/Klaus Doldinger_Appell.mp3").exists()  # untouched
+
+    changeset, outcomes = wr.write(session, wr.survey(session, lib, wr.Selection()).files, "Write")
+    assert [c.kind for c in changeset.changes] == ["retag", "move"]
     assert all(o.ok for o in outcomes), [o.message for o in outcomes]
     moved = root / "Klaus Doldinger/Das Boot/03 Appell.mp3"
     fields = tags.read(moved).fields
@@ -79,6 +82,7 @@ def test_propose_apply_and_undo(library):
     outcomes = ch.undo(session, changeset)
     assert all(o.ok for o in outcomes), [o.message for o in outcomes]
     assert not moved.exists()
+    assert wr.survey(session, lib, wr.Selection(only=["path"])).total == 1  # pending again
     assert tags.read(root / "Doldinger, Klaus/Klaus Doldinger_Appell.mp3").fields["album"] == (
         "das boot"
     )

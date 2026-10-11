@@ -550,9 +550,9 @@ def test_neighbours(web, Session):
     response = web.post(
         "/libraries/music/neighbours", data={"folder": "Texas/Greatest Hits"}
     )  # fmt: skip
-    assert re.fullmatch(r"/changes/\d+", response.url.path)
+    assert response.url.path == "/libraries/music/pending"
     assert "Texas/Greatest Hits/12 Say What You Want.mp3" in response.text
-    assert "1 with changes waiting" in web.get("/libraries/music/neighbours").text
+    assert "1 with changes pending" in web.get("/libraries/music/neighbours").text
 
 
 def test_audio(web, Session):

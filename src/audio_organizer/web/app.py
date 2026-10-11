@@ -767,8 +767,8 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         )  # fmt: skip
 
     @app.post("/libraries/{name}/neighbours", dependencies=[Exclusive])
-    async def propose_neighbours(request: Request, name: str, session: Session = SessionDep):
-        """Propose the checked albums of the page (one "folder" field each)."""
+    async def decide_neighbours(request: Request, name: str, session: Session = SessionDep):
+        """Decide on the checked albums of the page (one "folder" field each)."""
         lib = _library(session, name)
         form = await request.form()
         path = str(form.get("path", ""))
@@ -776,12 +776,14 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         found = nb.survey(session, lib, path_prefix=path or None)
         chosen = [a for a in found.albums if a.folder in folders]
         if not chosen:
-            return _redirect(f"/libraries/{lib.name}/neighbours", "Nothing to propose")
+            return _redirect(f"/libraries/{lib.name}/neighbours", "Nothing to choose")
         count = sum(len(a.moves) for a in chosen)
-        changeset = nb.propose(
-            session, chosen, f"Put {count} loose tracks into {len(chosen)} albums"
+        nb.decide(session, lib, chosen, f"Put {count} loose tracks into {len(chosen)} albums")
+        return _redirect(
+            _url(f"/libraries/{lib.name}/pending", path=path or None),
+            "Decided; review and write the changes here",
+            link=(f"/libraries/{lib.name}/history", "Undo on the History page"),
         )
-        return _redirect(f"/changes/{changeset.id}", "Proposed; review and approve the changes")
 
     @app.get("/libraries/{name}/album-merges", response_class=HTMLResponse)
     def album_merges(

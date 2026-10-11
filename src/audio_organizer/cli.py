@@ -1678,7 +1678,9 @@ def neighbours(
         str | None, typer.Option(help="Only loose tracks under this path, e.g. an artist folder")
     ] = None,
     limit: Annotated[int, typer.Option(help="Tracks to include (whole albums)")] = 50,
-    propose: Annotated[bool, typer.Option("--propose", help="Create a changeset for them")] = False,
+    decide: Annotated[
+        bool, typer.Option("--decide", help="Choose them, to write from Pending")
+    ] = False,
     library: LibraryOption = None,
 ) -> None:
     """Put loose tracks back into their album folders.
@@ -1688,6 +1690,9 @@ def neighbours(
     title are not there yet. It is named like the album's other tracks and gets the
     album-wide tags they agree on (album artist, year, track total, ...). Run `aorg dupes`
     and `aorg encodings` first: loose copies of tracks already in an album are theirs.
+
+    Choosing only changes the catalog (`aorg history` undoes it); the files are written
+    with `aorg pending --write`.
     """
     with _session(ctx) as session:
         lib = _library(session, library)
@@ -1699,10 +1704,10 @@ def neighbours(
             f"folder, {found.several_folders} matching several folders, {found.taken} whose "
             f"number or title is taken, {found.no_number} without a track number, "
             f"{found.conflicts} claiming the same number, {found.pending} with changes "
-            f"waiting for review."
+            f"pending or waiting for review."
         )
         chosen = nb.batch(found.albums, limit)
-        if not propose:
+        if not decide:
             for album in chosen:
                 typer.echo(f"  {album.folder} ({album.tracks} tracks)")
                 for move in album.moves:
@@ -1713,18 +1718,19 @@ def neighbours(
                         typer.echo(f"        tags: {fill}")
             if chosen:
                 count = sum(len(a.moves) for a in chosen)
-                typer.echo(f"Run with --propose to create a changeset for {count} tracks.")
+                typer.echo(f"Run with --decide to choose these {count} tracks.")
             return
         if not chosen:
             return
         count = sum(len(a.moves) for a in chosen)
         where = f" in {path}" if path else ""
-        changeset = nb.propose(
-            session, chosen, f"Put {count} loose tracks into {len(chosen)} albums{where}"
+        operation = nb.decide(
+            session, lib, chosen, f"Put {count} loose tracks into {len(chosen)} albums{where}"
         )
         typer.echo(
-            f"Changeset {changeset.id}: {len(changeset.changes)} changes. Review with "
-            f"`aorg changes show {changeset.id}` or in the web UI."
+            f"Decided on {count} tracks"
+            + (f" (operation {operation.id})" if operation else " (already decided)")
+            + ". Review and write them with `aorg pending`."
         )
 
 

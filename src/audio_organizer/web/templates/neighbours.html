@@ -13,8 +13,8 @@ agree on.</p>
 Duplicates), {{ found.no_album_tag }} without an album tag, {{ found.no_folder }} whose album
 has no folder, {{ found.several_folders }} matching several folders, {{ found.taken }} whose
 number or title is already taken, {{ found.no_number }} without a track number,
-{{ found.conflicts }} claiming the same number, {{ found.pending }} with changes waiting for
-review.</p>
+{{ found.conflicts }} claiming the same number, {{ found.pending }} with changes pending or
+waiting for review.</p>
 
 <form class="search" method="get" action="{{ base }}/neighbours">
  <input type="search" name="path" value="{{ path }}" placeholder="Only under a path, e.g. Williams, John" aria-label="Path">
@@ -27,9 +27,9 @@ review.</p>
  <input type="hidden" name="path" value="{{ path }}">
  <p class="hint">Uncheck an album to leave its tracks where they are; ▶ plays a track, ⓘ
  opens its details.</p>
- <p><button class="primary">Propose a changeset for the checked albums</button></p>
+ <p><button class="primary">Choose the checked albums</button></p>
  <table class="duplicates">
-  <thead><tr><th><span class="visually-hidden">Propose</span></th><th>Track</th><th>New name</th><th>Tags (as proposed)</th></tr></thead>
+  <thead><tr><th><span class="visually-hidden">Choose</span></th><th>Track</th><th>New name</th><th>Tags (as chosen)</th></tr></thead>
   {% for album in batch %}
   <tbody>
    <tr>
