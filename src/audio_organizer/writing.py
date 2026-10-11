@@ -16,7 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 
-from sqlalchemy import func, or_, select, union
+from sqlalchemy import and_, func, or_, select, union
 from sqlalchemy.orm import Session, selectinload
 
 from . import changes as ch
@@ -39,6 +39,11 @@ from .tracks import present
 M = EffectiveMetadata
 # Sources whose values are computed, not decided by the user: safe to write into empty tags
 GAP_SOURCES = ("analysis", "rule")
+# Tag values that stand for "not measured" rather than a measurement, so that a gap is
+# filled where they are: some tools write a track gain of exactly 0.00 dB into every file.
+# A file's own loudness is almost never exactly the reference, so a measurement that
+# differs from such a tag is the better value.
+PLACEHOLDER_TAGS = {"replaygain_track_gain": ("0.00 dB",)}
 # Pending changes are grouped by album artist, or artist where there is none, and album
 ARTIST = func.coalesce(func.nullif(M.albumartist, ""), func.nullif(M.artist, ""), "")
 ALBUM = func.coalesce(M.album, "")
@@ -98,6 +103,20 @@ def matches(name: str, only: list[str] | None) -> bool:
     return not only or any(name == o or name.startswith(o) for o in only)
 
 
+def _is_gap(field: str, tag: str | None) -> bool:
+    """Whether a tag with this value counts as missing: it is empty or a placeholder."""
+    return not tag or tag in PLACEHOLDER_TAGS.get(field, ())
+
+
+def _gap_condition():
+    """_is_gap for the tag column of PendingField rows."""
+    return or_(
+        P.tag.is_(None),
+        P.tag == "",
+        *(and_(P.field == field, P.tag.in_(values)) for field, values in PLACEHOLDER_TAGS.items()),
+    )
+
+
 def _field_condition(only: list[str] | None):
     if not only:
         return True
@@ -149,7 +168,7 @@ def _candidates(library: Library, selection: Selection):
             select(P.file_id).where(
                 _field_condition(selection.only),
                 P.source.in_(GAP_SOURCES),
-                or_(P.tag.is_(None), P.tag == ""),
+                _gap_condition(),
             )
         ]
     else:
@@ -272,10 +291,13 @@ def survey(session: Session, library: Library, selection: Selection, limit: int 
 
 def _gaps(file: AudioFile, fields: dict[str, str]) -> dict[str, str]:
     """The pending values that are measurements or rule-derived ratings and fill a tag the
-    file does not have. A measurement outranks the tag in the catalog, so a differing tag
-    is left alone here: that is for review."""
+    file does not have, or has only as a placeholder (PLACEHOLDER_TAGS). A measurement
+    outranks the tag in the catalog, so a differing tag is left alone here: that is for
+    review."""
     resolved = resolve(file.values)
-    have = {fv.field for fv in file.values if fv.source == "tag" and fv.value}
+    have = {
+        fv.field for fv in file.values if fv.source == "tag" and not _is_gap(fv.field, fv.value)
+    }
     return {
         k: v for k, v in fields.items()
         if k not in have and resolved[k].source in GAP_SOURCES

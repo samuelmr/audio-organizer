@@ -238,6 +238,33 @@ def test_write_gaps_reports_each_file_of_a_batch(library):
     ]
 
 
+def test_write_gaps_replaces_a_placeholder_track_gain(library):
+    """Some tools write a track gain of 0.00 dB into every file: that is no measurement, so
+    the measured value fills the gap. An album gain of 0.00 dB, or a track gain that is
+    anything else, is a tag like any other and is left for review."""
+    session, lib, root = library
+    halo, insane, loose = (_file(session, part) for part in ("Halo", "Insane", "Loose"))
+    for file, tag in ((halo, "0.00 dB"), (insane, "-1.00 dB")):
+        tags.write(root / file.path, {"replaygain_track_gain": tag})
+    tags.write(root / loose.path, {"replaygain_album_gain": "0.00 dB"})
+    scan(session, lib)
+    for file in (halo, insane, loose):
+        set_value(session, file, "analysis", "replaygain_track_gain", "-3.00 dB")
+        set_value(session, file, "analysis", "replaygain_album_gain", "-2.00 dB")
+    session.commit()
+    ids, written, failed = wr.write_gaps(session, lib, wr.Selection())
+    assert (written, failed) == (3, [])
+    read = lambda file: tags.read(root / file.path).fields  # noqa: E731
+    assert read(halo)["replaygain_track_gain"] == "-3.00 dB"  # the placeholder is replaced
+    assert read(halo)["replaygain_album_gain"] == "-2.00 dB"  # an empty tag is filled
+    assert read(insane)["replaygain_track_gain"] == "-1.00 dB"  # a real tag stays
+    assert read(loose)["replaygain_track_gain"] == "-3.00 dB"
+    assert read(loose)["replaygain_album_gain"] == "0.00 dB"  # only track gain has a placeholder
+    [changeset] = (session.get(Changeset, id) for id in ids)
+    assert all(o.ok for o in ch.undo(session, changeset))
+    assert read(halo)["replaygain_track_gain"] == "0.00 dB"  # undo brings the placeholder back
+
+
 def test_write_gaps_looks_only_at_files_with_gaps_to_fill(library):
     """Files whose pending values are for review (a lookup, an edit, a measurement that
     differs from the tag) are left out of the count, rather than looked at in every run."""

@@ -561,7 +561,9 @@ for values that cannot clash with anything. `--write-gaps` writes them all at on
 
 Only measured ReplayGain values and ratings from preferences are written, and only into
 files that have no such tag: a differing tag is never overwritten, and your own edits and
-lookups stay pending for review. There is a changeset per 500 files, each of which can be
+lookups stay pending for review. A track gain of exactly `0.00 dB` counts as no tag, as
+some tools write it into every file without measuring anything; the measured value
+replaces it (undoing the changeset brings it back). There is a changeset per 500 files, each of which can be
 undone.
 
 The Pending page's *Write all measurements and ratings* button does the same, for the

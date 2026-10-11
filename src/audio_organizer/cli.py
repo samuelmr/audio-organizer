@@ -1916,7 +1916,8 @@ def pending_command(
     --write-gaps is the shortcut for a whole library (or the --artist, --album, --path and
     --only you give): every measured or derived value (ReplayGain, ratings from
     preferences) is written into the files that have no such tag, however many. Tags that
-    exist are never overwritten, and your own edits and lookups are left for review. One
+    exist are never overwritten (except a track gain of exactly 0.00 dB, which some tools
+    write without measuring), and your own edits and lookups are left for review. One
     changeset per 500 files; each can be undone.
 
     A gnudb value ranks below the tag, so by default only what the tags lack is written.

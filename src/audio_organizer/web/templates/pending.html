@@ -50,7 +50,7 @@ run <code>aorg scan --deep</code> to measure them (it reads every file, which ta
  {% if album is not none %}<input type="hidden" name="album" value="{{ album }}">{% endif %}
  <input type="hidden" name="only" value="{{ only }}">
  <p><button onclick="return confirm('Write all measurements and ratings into files that lack them?')">Write all measurements and ratings</button>
-  <span class="hint">into every file{% if chosen or path or only %} here{% endif %} that has no such tag yet. Existing tags, your edits and lookups are left for review. It runs in the background, a changeset per 500 files; each can be undone, and it can be stopped between them.</span></p>
+  <span class="hint">into every file{% if chosen or path or only %} here{% endif %} that has no such tag yet (a track gain of 0.00 dB counts as none). Existing tags, your edits and lookups are left for review. It runs in the background, a changeset per 500 files; each can be undone, and it can be stopped between them.</span></p>
 </form>
 {% endif %}
 
