@@ -63,6 +63,7 @@
 {% if title.startswith("Loudness") and on_disk %}
 <p><button form="replaygain">Measure ReplayGain</button>
 <span class="hint">Measures this track's loudness (track gain and peak). Album gain needs the whole album and comes with batch measuring.</span></p>
+{% if measure_error %}<p class="hint">Batch measuring skips this track: {{ measure_error }}. Protected (DRM) or damaged files cannot be measured; "Measure ReplayGain" tries again.</p>{% endif %}
 {% endif %}
 {% endfor %}
 {% if extra %}

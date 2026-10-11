@@ -126,7 +126,8 @@ by measuring the whole album again, which is usually within a few tenths of a dB
 results stay in the catalog until you write them into the files (see
 [Writing tags](#writing-tags)); a file whose audio changes is measured again. A file
 that cannot be measured (DRM-protected WMA, a corrupt file) is reported and remembered,
-and skipped by later scans; `aorg scan --deep --retry-failed` tries those again.
+and skipped by later scans; `aorg scan --deep --retry-failed` tries those again. The
+Pending page lists them with the reason (DRM-protected files say so).
 
 **Covers.** Albums whose tracks have no embedded cover, or one smaller than `--min-pixels`
 (200 by default) on a side, and whose folder has no image at least that big, are looked up

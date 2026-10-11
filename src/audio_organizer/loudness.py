@@ -46,7 +46,9 @@ _PEAK = re.compile(r"Peak:\s+(-?[\d.]+|-inf) dBFS")
 
 
 class LoudnessError(Exception):
-    pass
+    def __init__(self, message: str, reason: str | None = None):
+        super().__init__(message)
+        self.reason = reason or message  # without the file name, kept for the file
 
 
 def _skip_tag(path: str | Path) -> list[str]:
@@ -80,10 +82,13 @@ def measure(path: str | Path, label: str | None = None) -> dict[str, str]:
     summary = result.stderr.rpartition("Summary:")[2]
     integrated, peak = _INTEGRATED.search(summary), _PEAK.search(summary)
     if result.returncode != 0 or not integrated or not peak:
-        last = result.stderr.strip().splitlines()[-1:] or ["no output"]
-        raise LoudnessError(f"Could not measure {label}: {last[0]}")
+        if "DRM protected" in result.stderr:
+            reason = "DRM-protected, cannot be decoded"
+        else:
+            reason = (result.stderr.strip().splitlines()[-1:] or ["no output"])[0]
+        raise LoudnessError(f"Could not measure {label}: {reason}", reason)
     if integrated.group(1) == "-inf":
-        raise LoudnessError(f"{label} is silent")
+        raise LoudnessError(f"{label} is silent", "silent")
     lufs = float(integrated.group(1))
     peak_linear = 0.0 if peak.group(1) == "-inf" else 10 ** (float(peak.group(1)) / 20)
     return {
@@ -128,6 +133,19 @@ def unmeasured(
     )
 
 
+def failed(session: Session, library: Library) -> list[tuple[AudioFile, str]]:
+    """Files that could not be measured, with the reason, by path."""
+    return [
+        (file, reason)
+        for file, reason in session.execute(
+            select(AudioFile, FieldValue.value)
+            .join(FieldValue, FieldValue.file_id == AudioFile.id)
+            .where(present(library.id), FieldValue.source == "analysis", FieldValue.field == FAILED)
+            .order_by(AudioFile.path)
+        )
+    ]
+
+
 def measure_library(
     session: Session,
     library: Library,
@@ -159,7 +177,7 @@ def measure_library(
             except LoudnessError as e:
                 error = str(e)
                 stats.errors.append((file.path, error))
-                set_value(session, file, "analysis", FAILED, error)
+                set_value(session, file, "analysis", FAILED, e.reason)
             if count % 50 == 0:
                 session.commit()
             if progress:

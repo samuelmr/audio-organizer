@@ -130,3 +130,14 @@ def test_embed_and_remove_cover(copy_audio, tmp_path, name):
     assert after == before  # other tags untouched
     covers.remove(path)
     assert covers.embedded(path) is None
+
+
+def test_drm_protected_files_are_named_as_such(tmp_path, monkeypatch):
+    def run(*args, **kwargs):
+        stderr = "[in#0] DRM protected stream detected, decoding will likely fail!\nfailed"
+        return subprocess.CompletedProcess(args, 1, "", stderr)
+
+    monkeypatch.setattr(loudness.subprocess, "run", run)
+    with pytest.raises(loudness.LoudnessError, match="DRM-protected") as e:
+        loudness.measure(tmp_path / "x.wma", "Irina/Vahva/01 Kuurupiiloa.wma")
+    assert "Irina/Vahva/01" in str(e.value) and e.value.reason == "DRM-protected, cannot be decoded"

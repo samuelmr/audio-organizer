@@ -399,11 +399,15 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         extra = sorted(set(resolved) - set(FIELDS))
         path = Path(file.library.root) / file.path
         on_disk = path.is_file()
+        measure_error = next(
+            (v.value for v in file.values if v.source == "analysis" and v.field == loudness.FAILED),
+            None,
+        )
         folder_cover = sy.find_cover(path.parent) if on_disk else None
         return render(
             request, "track.html", file=file, resolved=resolved, groups=FIELD_GROUPS,
             extra=extra, manual=manual, copies=copies, snapshot=snapshot,
-            unwritten=wr.unwritten(file.values), on_disk=on_disk,
+            unwritten=wr.unwritten(file.values), on_disk=on_disk, measure_error=measure_error,
             has_cover=on_disk and covers.embedded(path) is not None,
             folder_cover=folder_cover.name if folder_cover else None,
             id3_version=tags.id3_version(path) if on_disk else None,
@@ -925,10 +929,11 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         else:
             groups = found.groups if prefer_gnudb else wr.groups(session, lib, selection)
         unmeasured = len(loudness.unmeasured(session, lib))
+        unmeasurable = loudness.failed(session, lib)
         return render(
             request, "pending.html", library=lib, found=found, groups=groups,
             path=path, artist=artist, album=album, file=file, only=only, limit=limit,
-            prefer_gnudb=prefer_gnudb, unmeasured=unmeasured,
+            prefer_gnudb=prefer_gnudb, unmeasured=unmeasured, unmeasurable=unmeasurable,
         )  # fmt: skip
 
     @app.post("/libraries/{name}/pending", response_class=HTMLResponse, dependencies=[Exclusive])

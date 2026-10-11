@@ -1006,3 +1006,24 @@ def test_locked_database_asks_to_retry(web, monkeypatch):
     response = web.get("/libraries/music/duplicates")
     assert response.status_code == 503
     assert "busy" in response.text
+
+
+def test_unmeasurable_files_are_listed_on_pending_and_track_pages(web, Session, monkeypatch):
+    from audio_organizer import loudness
+    from audio_organizer.models import Library as Lib
+
+    def measure(path, label=None):
+        raise loudness.LoudnessError(f"Could not measure {label}: DRM-protected", "DRM-protected")
+
+    monkeypatch.setattr(loudness, "measure", measure)
+    with Session() as session:
+        lib = session.scalar(select(Lib))
+        assert len(loudness.measure_library(session, lib, limit=1).errors) == 1
+    page = web.get("/libraries/music/pending").text
+    assert "1 file could not be measured" in page and "DRM-protected" in page
+
+    with Session() as session:
+        failed = loudness.failed(session, session.scalar(select(Lib)))
+    [(file, reason)] = failed
+    assert reason == "DRM-protected"
+    assert "Batch measuring skips this track" in web.get(f"/tracks/{file.id}").text

@@ -16,6 +16,18 @@ undone on the <a href="{{ base }}/history">History</a> page.</p>
 {% if unmeasured %}{{ unmeasured }} files have not been measured for ReplayGain yet:
 run <code>aorg scan --deep</code> to measure them (it reads every file, which takes a while).{% endif %}
 {% if chosen %}<a href="{{ url(here, path=path, only=only, prefer_gnudb=prefer_gnudb or none) }}">All pending changes</a>{% endif %}</p>
+{% if unmeasurable and not chosen %}
+<details>
+ <summary>{{ unmeasurable|length }} file{{ "s" if unmeasurable|length != 1 }} could not be measured</summary>
+ <p class="hint">Usually protected (DRM) WMA files, which nothing can decode without their license, or damaged files. Scans skip them; <code>aorg scan --deep --retry-failed</code> tries them again.</p>
+ <table>
+  {% for file, reason in unmeasurable[:200] %}
+  <tr><td class="path"><a href="/tracks/{{ file.id }}">{{ file.path }}</a></td><td>{{ reason }}</td></tr>
+  {% endfor %}
+ </table>
+ {% if unmeasurable|length > 200 %}<p class="hint">and {{ unmeasurable|length - 200 }} more</p>{% endif %}
+</details>
+{% endif %}
 
 {% if found.by_field %}
 <table>
