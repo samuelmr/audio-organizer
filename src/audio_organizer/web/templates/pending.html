@@ -105,7 +105,7 @@ run <code>aorg scan --deep</code> to measure them (it reads every file, which ta
  {% if prefer_gnudb %}
  <input type="hidden" name="prefer_gnudb" value="true">
  <p>Accepting gnudb's values makes them your edits (which <a href="{{ base }}/history">History</a> can undo); they are then written like any other.</p>
- <p><button class="primary" name="action" value="accept">Accept gnudb's values in the ticked files</button></p>
+ <p><button class="primary" name="action" value="accept">Accept gnudb's values in the selected files</button></p>
  {% else %}
  <label>MP3 tags as
   <select name="id3_version">
@@ -115,9 +115,9 @@ run <code>aorg scan --deep</code> to measure them (it reads every file, which ta
   </select>
  </label>
  <p>
-  <button class="primary" name="action" value="write">Write the ticked files</button>
+  <button class="primary" name="action" value="write">Write the selected files</button>
   {% if found.total > found.files | length %}<button name="action" value="write-all"{% if found.total > max_batch %} formaction="{{ here }}/write-all"{% endif %} onclick="return confirm('Write all {{ found.total }} files, not just those listed?{% if found.total > max_batch %} It runs in the background, a changeset per 500 files.{% endif %}')">Write all {{ found.total }} files</button>{% endif %}
-  <button name="action" value="discard" onclick="return confirm('Drop your edits in the ticked files? Measurements and lookups are kept, and History can bring the edits back.')">Discard my edits in them</button>
+  <button name="action" value="discard" onclick="return confirm('Drop your edits in the selected files? Measurements and lookups are kept, and History can bring the edits back.')">Discard my edits in them</button>
  </p>
  {% endif %}
 </form>

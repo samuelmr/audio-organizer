@@ -91,22 +91,22 @@
 </details>
 {% endif %}
 
-{# The ticked tracks are edited together on a page of their own. The pages below are
-   buttons of this form too, sending the search and the ticks along, so that ticks stay
+{# The selected tracks are edited together on a page of their own. The pages below are
+   buttons of this form too, sending the search and the selections along, so that selections stay
    from page to page; those of other pages are the hidden inputs. #}
 <form id="bulk" class="bulk" method="get" action="{{ base }}/edit-tracks">
  <input type="hidden" name="sort" value="{{ sort }}">
  {% for key, value in params.items() %}{% if value is not none and value != "" %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endif %}{% endfor %}
  {% for id in ticked_elsewhere %}<input type="hidden" name="file" value="{{ id }}">{% endfor %}
- <p class="count">{{ total }} tracks{% if pages > 1 %}, page {{ page }} of {{ pages }}{% endif %}<span data-ticked-count>{% if ticked %} · {{ ticked | length }} ticked{% endif %}</span></p>
- {% if total %}<button name="back" value="{{ here }}">Edit ticked tracks</button>{% endif %}
- {% if ticked %}<a href="{{ here }}">Untick all</a>{% endif %}
+ <p class="count">{{ total }} tracks{% if pages > 1 %}, page {{ page }} of {{ pages }}{% endif %}<span data-ticked-count>{% if ticked %} · {{ ticked | length }} selected{% endif %}</span></p>
+ {% if total %}<button name="back" value="{{ here }}">Edit selected tracks</button>{% endif %}
+ {% if ticked %}<a href="{{ here }}">Deselect all</a>{% endif %}
  {% if edit_all %}<a href="{{ url(base ~ '/edit-tracks', all='true', back=here, **params) }}">Edit all {{ total }}</a>{% endif %}
 </form>
 
 <table class="tracks">
  <thead>
-  <tr><th><input type="checkbox" data-select-all="file" aria-label="Tick or untick the tracks on this page" hidden></th><th class="num">#</th><th>Title</th><th>Artist</th><th>Album</th><th>Year</th><th>Genre</th><th class="num">Time</th><th></th></tr>
+  <tr><th><input type="checkbox" data-select-all="file" aria-label="Select or deselect the tracks on this page" hidden></th><th class="num">#</th><th>Title</th><th>Artist</th><th>Album</th><th>Year</th><th>Genre</th><th class="num">Time</th><th></th></tr>
  </thead>
  <tbody>
  {% set group = namespace(key=none) %}
@@ -122,7 +122,7 @@
    {% endif %}
   {% endif %}
   <tr data-select-row>
-   <td><input type="checkbox" form="bulk" name="file" value="{{ file.id }}" aria-label="Tick {{ meta.title or file.path }}"{% if file.id in ticked %} checked{% endif %}></td>
+   <td><input type="checkbox" form="bulk" name="file" value="{{ file.id }}" aria-label="Select {{ meta.title or file.path }}"{% if file.id in ticked %} checked{% endif %}></td>
    <td class="num">{% if meta.discnumber and meta.disctotal and meta.disctotal > 1 %}{{ meta.discnumber }}-{% endif %}{{ meta.tracknumber or "" }}</td>
    <td><a href="/tracks/{{ file.id }}">{{ meta.title or file.path.rsplit("/", 1)[-1] }}</a></td>
    <td>{% if meta.artist %}<a class="quiet" href="{{ url(base, artist=meta.artist) }}">{{ meta.artist }}</a>{% endif %}</td>

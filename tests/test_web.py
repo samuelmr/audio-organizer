@@ -688,7 +688,7 @@ def test_pending_page_writes_by_selection(web, Session):
     page = web.get("/libraries/music/pending", params={"only": "replaygain_album"}).text
     assert "Track gain:" not in page and "Album gain:" in page
 
-    # Only the chosen album, and only what is ticked, is written
+    # Only the chosen album, and only what is selected, is written
     page = web.get(
         "/libraries/music/pending", params={"artist": "Texas", "album": "Greatest Hits"}
     ).text
@@ -749,7 +749,7 @@ def test_ratings_and_covers_pages(web, Session):
     assert response.url.path == "/libraries/music/pending"
     assert "Cover: Texas/Greatest Hits/Folder.jpg" in response.text
 
-    # The ticked folders are chosen; none ticked chooses nothing, not the whole batch
+    # The selected folders are chosen; none selected chooses nothing, not the whole batch
     assert 'name="pick" value="Texas/Greatest Hits"' in page
     response = web.post("/libraries/music/covers", data={"picking": "true"})
     assert "No folder selected" in response.text
@@ -1294,7 +1294,7 @@ def test_conflicts_page(web, Session):
     assert "Took the tags of 1 fields" in page and "No conflicts" in page
     assert "Take the tags of 1 file retagged elsewhere" in web.get("/libraries/music/history").text
     page = web.post("/libraries/music/conflicts", data={"action": "keep"}).text
-    assert "Nothing ticked" in page
+    assert "Nothing selected" in page
 
 
 def test_write_all_pending_files_of_a_large_selection_runs_in_the_background(

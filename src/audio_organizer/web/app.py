@@ -278,9 +278,9 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         session: Session = SessionDep,
     ):
         """The tracks of a library: searched, filtered to one album, artist or folder,
-        and sorted. Sorted by album, the tracks come in album order. Ticked tracks, or all
-        of a search's, can be edited at once. The ticked tracks (file) are carried from
-        page to page in the URL, so that ticking works without JavaScript too."""
+        and sorted. Sorted by album, the tracks come in album order. Selected tracks, or all
+        of a search's, can be edited at once. The selected tracks (file) are carried from
+        page to page in the URL, so that selecting works without JavaScript too."""
         lib = _library(session, name)
         ticked = list(dict.fromkeys(file))[:MAX_ALBUM_EDIT]
         query = search(lib.id, q, show, album, albumartist, artist, folder)
@@ -737,12 +737,12 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         back: str = "",
         session: Session = SessionDep,
     ):
-        """The form editing chosen tracks at once: those ticked on the track list, or with
+        """The form editing chosen tracks at once: those selected on the track list, or with
         all, every track of a search. The form lists them by id, so that saving edits
         exactly the tracks shown here even if the search would now find others.
 
         all is asked for explicitly because the track list's form sends its search along
-        with the ticks (to keep them from page to page): with nothing ticked, that is not
+        with the selections (to keep them from page to page): with nothing selected, that is not
         to edit the whole search."""
         lib = _library(session, name)
         params = {"q": q, "show": show, "album": album, "albumartist": albumartist,
@@ -752,14 +752,14 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             back = _url(f"/libraries/{lib.name}", **params)
         if file:
             files = chosen_files(session, lib.id, file[: MAX_ALBUM_EDIT + 1])
-            # Going back keeps them ticked, to tick more or fewer
+            # Going back keeps them selected, to select more or fewer
             back += ("&" if "?" in back else "?") + urlencode({"file": file}, doseq=True)
         elif all_ and is_narrowed(**params):
             files = search_files(session, lib.id, MAX_ALBUM_EDIT + 1, **params)
         else:
             files = []
         if not files:
-            return _redirect(back, "Tick the tracks to edit first")
+            return _redirect(back, "Select the tracks to edit first")
         if len(files) > MAX_ALBUM_EDIT:
             return _redirect(back, f"Too many tracks to edit at once (over {MAX_ALBUM_EDIT})")
         metadata = {
@@ -1117,7 +1117,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         id3_version: Annotated[str, Form()] = "",
         session: Session = SessionDep,
     ):
-        """Write the ticked files' pending changes (each file once, with all of them), drop
+        """Write the selected files' pending changes (each file once, with all of them), drop
         the user's edits among them, or (with prefer_gnudb) accept gnudb's values in them
         as the user's edits. The changes are worked out again here, so a file is written
         as it is pending now.
@@ -1130,7 +1130,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             raise HTTPException(400, f"Unknown action {action}")
         if (action == "accept") != prefer_gnudb and action != "discard":
             raise HTTPException(400, "gnudb's values are accepted first, then written")
-        # write-all takes the whole selection the page showed, not the ticked files
+        # write-all takes the whole selection the page showed, not the selected files
         every = action == "write-all"
         selection = _selection(
             path, artist, album, (file or None) if every else file_ids or [], only,
@@ -1148,7 +1148,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
                 f"{found.total} files are too many to write at once: write them in the background",
             )
         if not found.files:
-            return _redirect(back, "Nothing to write: no ticked file has pending changes")
+            return _redirect(back, "Nothing to write: no selected file has pending changes")
         history = (f"/libraries/{lib.name}/history", "Undo on the History page")
         if action == "discard":
             dropped, kept = wr.discard(session, found.files)
@@ -1309,7 +1309,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         path: Annotated[str, Form()] = "",
         session: Session = SessionDep,
     ):
-        """Keep the user's values of the ticked fields (they are pending again), or take
+        """Keep the user's values of the selected fields (they are pending again), or take
         the files' tags (the edits are dropped, as a decision that can be undone)."""
         lib = _library(session, name)
         if action not in ("keep", "take"):
@@ -1323,7 +1323,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         ]
         back = _url(f"/libraries/{lib.name}/conflicts", path=path)
         if not rows:
-            return _redirect(back, "Nothing ticked")
+            return _redirect(back, "Nothing selected")
         if action == "keep":
             count = cf.keep_edits(session, rows)
             session.commit()
@@ -1398,8 +1398,8 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         pick: Annotated[list[str] | None, Form()] = None,
         session: Session = SessionDep,
     ):
-        """The folders ticked on the page (picking says the page had ticks, so that none
-        ticked proposes nothing, not the whole batch), a batch of folders, or with folder,
+        """The folders selected on the page (picking says the page had selections, so that none
+        selected proposes nothing, not the whole batch), a batch of folders, or with folder,
         just that one. The folders are looked at afresh, as the page may be out of date."""
         lib = _library(session, name)
         if folder:
@@ -1882,7 +1882,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         confirmation, as the pages work without JavaScript."""
         target = _sync_target(session, target_id)
         if not (await request.form()).get("confirm"):
-            return _redirect(f"/sync/targets/{target_id}", "Tick the box to remove the target")
+            return _redirect(f"/sync/targets/{target_id}", "Select the box to remove the target")
         name = target.name
         try:
             objects = sy.remove_target(session, target)

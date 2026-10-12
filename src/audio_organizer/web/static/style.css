@@ -301,7 +301,7 @@ details.album-edit > summary {
 details.album-edit > summary:hover { border-color: var(--muted); }
 details.album-edit[open] > summary { margin-bottom: 0.75rem; }
 
-/* the track count, with the buttons editing ticked tracks */
+/* the track count, with the buttons editing selected tracks */
 .bulk { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; margin: 1rem 0 0.5rem; }
 .bulk .count { margin: 0 auto 0 0; }
 

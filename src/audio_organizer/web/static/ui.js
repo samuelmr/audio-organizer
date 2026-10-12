@@ -45,7 +45,7 @@
   // A checkbox with data-select-all="name" selects or deselects all checkboxes of that
   // name, and shows a partial selection.
   document.querySelectorAll("input[data-select-all]").forEach((all) => {
-    // Only the checkboxes: the track list keeps ticks from other pages in hidden inputs
+    // Only the checkboxes: the track list keeps selections from other pages in hidden inputs
     const boxes = [...document.querySelectorAll(
       `input[type=checkbox][name="${all.dataset.selectAll}"]`)];
     if (!boxes.length) return;
@@ -56,9 +56,11 @@
       all.indeterminate = checked > 0 && checked < boxes.length;
     };
     all.addEventListener("change", () => {
-      // Dispatching change lets the group checkboxes below follow
+      // Dispatching change lets the group checkboxes below follow, and runs sync, which
+      // would reset this checkbox after the first box: so take its state once
+      const state = all.checked;
       boxes.forEach((b) => {
-        b.checked = all.checked;
+        b.checked = state;
         b.dispatchEvent(new Event("change"));
       });
       sync();
@@ -80,8 +82,9 @@
       all.indeterminate = checked > 0 && checked < boxes.length;
     };
     all.addEventListener("change", () => {
+      const state = all.checked;
       boxes.forEach((b) => {
-        b.checked = all.checked;
+        b.checked = state;
         b.dispatchEvent(new Event("change"));
       });
     });
@@ -89,22 +92,22 @@
     sync();
   });
 
-  // The track list's count of ticked tracks, those of other pages (hidden inputs)
-  // included, follows the ticking
+  // The track list's count of selected tracks, those of other pages (hidden inputs)
+  // included, follows the selecting
   const count = document.querySelector("[data-ticked-count]");
   const bulk = document.getElementById("bulk");
   if (count && bulk) {
     const inputs = [...bulk.elements].filter((e) => e.name === "file");
     const update = () => {
       const n = inputs.filter((e) => e.type === "hidden" || e.checked).length;
-      count.textContent = n ? ` · ${n} ticked` : "";
+      count.textContent = n ? ` · ${n} selected` : "";
     };
     inputs.forEach((e) => e.addEventListener("change", update));
   }
 
   // An element with data-shown-by="album artist" (the option to rename folders) shows only
   // once one of those fields of its form differs from the value it had; hidden, its
-  // checkbox is unticked so that it does nothing unseen. Without JavaScript it always shows.
+  // checkbox is unselected so that it does nothing unseen. Without JavaScript it always shows.
   document.querySelectorAll("[data-shown-by]").forEach((el) => {
     const form = el.closest("form");
     const fields = el.dataset.shownBy.split(" ")

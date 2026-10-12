@@ -464,9 +464,9 @@ with the fields its tracks usually share; a field left empty or unchanged keeps 
 track's own value. Once you change the album, album artist or artist, a checkbox offers
 to rename the folders too. Saving it opens the album on the Pending page.
 
-To edit any tracks at once, say to set the genre of 30 tracks a search found, tick them
-in the track list and click *Edit ticked tracks*, or *Edit all* to take every track the
-search found (up to 200). Ticks stay as you move from page to page. The form offers the
+To edit any tracks at once, say to set the genre of 30 tracks a search found, select them
+in the track list and click *Edit selected tracks*, or *Edit all* to take every track the
+search found (up to 200). Selections stay as you move from page to page. The form offers the
 fields such tracks may share (artist, album, album artist, year, genre, mood, rating,
 composer, grouping, compilation). Saving stores one edit, undone on the History page,
 and opens just those tracks on the Pending page.
@@ -532,9 +532,9 @@ network share, so the page remembers what each folder holds and lists a folder a
 when it is about to be shown and has changed; choosing covers always checks the disk.
 `aorg scan` fills this memory as it walks the library (it sees every folder anyway), so
 the page is fast from the first view. *Check the folders again* lists every folder again,
-if the counts below the table are stale. Every folder on the page is ticked; untick the
+if the counts below the table are stale. Every folder on the page is selected; deselect the
 ones you do not want, or use the box in the header to select or deselect all, and
-choose covers for the ticked ones.
+choose covers for the selected ones.
 
 A cover found online is also saved as the folder's `cover.jpg` (`cover.png` for a PNG),
 so that players that read folder images and [sync](#syncing-to-object-storage) have it
@@ -608,7 +608,7 @@ and the next run writes the files still lacking their values. Only the last run 
 server started is shown.
 
 The web UI's Pending page lists the albums with changes waiting; choose one (or an
-artist) to see the old and new value of every field, untick the files you want to
+artist) to see the old and new value of every field, deselect the files you want to
 leave, and write the rest or discard your edits in them. A page shows a batch of files
 (100 by default); when more are pending, *Write all N files* writes every one of the
 selection: up to 1000 at once as one changeset, and above that in the background of
@@ -624,7 +624,7 @@ found* link above an album's tracks opens it for that album, and the *Review gnu
 differences* link on the library's front page for all albums looked up so far). The listing then shows
 each tag and the gnudb value that would replace it. Choose the fields you trust
 (`--only genre,album`, or by clicking a field on the page), and the files (`--path` is
-an album's folder, say; on the page, untick files), and accept them. Accepted values
+an album's folder, say; on the page, deselect files), and accept them. Accepted values
 become your edits, which are then written like any other:
 
     aorg pending --prefer-gnudb --path "Texas/Greatest Hits"            # what would change
