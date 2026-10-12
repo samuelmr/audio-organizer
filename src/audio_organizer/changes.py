@@ -31,7 +31,7 @@ from .models import (
     PlaylistEntry,
     utcnow,
 )
-from .provenance import set_value, set_values
+from .provenance import comparable, set_value, set_values
 
 log = logging.getLogger(__name__)
 
@@ -392,14 +392,14 @@ def _apply_one(session: Session, change: Change, retagged: Future | None) -> Out
             except _MtimeChanged:
                 pass  # checked again below, where the catalog can tell whether it changed
         if result is not None:
-            change.undo = _store_retag(session, change.file, result)
+            change.undo = _store_retag(session, change.file, result, check=True)
         else:
             if change.kind not in ("image", "leftover", "rename"):  # which have no track to protect
                 _check_unchanged(change.file)
             if change.kind == "retag":
                 change.undo = _retag(
                     session, change.file, change.payload["fields"],
-                    change.payload.get("id3_version"),
+                    change.payload.get("id3_version"), check=True,
                 )  # fmt: skip
             elif change.kind == "move":
                 change.undo = _move(
@@ -560,6 +560,7 @@ class _Retagged:
     size: int
     mtime_ns: int
     fields: dict[str, str]
+    wanted: dict[str, str | None]
 
 
 def _retag_file(
@@ -578,14 +579,34 @@ def _retag_file(
     st = _stat_written(path)
     return _Retagged(
         {"fields": {field: before.get(field) for field in fields}},
-        st.st_size, st.st_mtime_ns, tags.read(path).fields,
+        st.st_size, st.st_mtime_ns, tags.read(path).fields, fields,
     )  # fmt: skip
 
 
-def _store_retag(session: Session, file: AudioFile, retagged: _Retagged) -> dict:
-    """Update the catalog with a retag's outcome; returns the change's undo."""
+def _store_retag(
+    session: Session, file: AudioFile, retagged: _Retagged, check: bool = False
+) -> dict:
+    """Update the catalog with a retag's outcome; returns the change's undo. With check,
+    fields that the file does not read back as written are an error: a format that cannot
+    keep a value would otherwise leave the change applied and the file still pending. The
+    catalog is updated first, so that it shows what the file has."""
     _store_refresh(session, file, retagged.size, retagged.mtime_ns, retagged.fields)
+    if check:
+        lost = [
+            name for name, wanted in retagged.wanted.items()
+            if _differs(name, wanted, retagged.fields.get(name))
+        ]  # fmt: skip
+        if lost:
+            raise ChangeError(f"the file did not keep {', '.join(lost)} as written")
     return retagged.undo
+
+
+def _differs(name: str, wanted: str | None, found: str | None) -> bool:
+    """Whether a field read back is not what was written, allowing for the ways tags are
+    normalized (numbers, dates, spelling) as the catalog does."""
+    if wanted is None or found is None:
+        return wanted != found
+    return comparable(name, wanted) != comparable(name, found)
 
 
 def _refresh(session: Session, file: AudioFile) -> None:
@@ -603,11 +624,15 @@ def _store_refresh(
 
 
 def _retag(
-    session: Session, file: AudioFile, fields: dict[str, str | None], id3_version: int | None = None
+    session: Session,
+    file: AudioFile,
+    fields: dict[str, str | None],
+    id3_version: int | None = None,
+    check: bool = False,
 ) -> dict:
     path, size, mtime_ns = _full_path(file), file.size, file.mtime_ns
     return _store_retag(
-        session, file, _retag_file(path, file.path, size, mtime_ns, fields, id3_version)
+        session, file, _retag_file(path, file.path, size, mtime_ns, fields, id3_version), check
     )
 
 

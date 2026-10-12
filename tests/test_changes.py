@@ -352,3 +352,26 @@ def test_changesets_that_do_more_than_retag_apply_in_order(catalog, monkeypatch)
     assert all(o.ok for o in ch.apply(session, changeset))
     assert threads == {threading.current_thread().name}
     assert tags.read(root / "Texas/Halo.mp3").fields["genre"] == "Pop"
+
+
+def test_retag_the_file_does_not_keep_fails(Session, copy_audio, tmp_path):
+    """MP4 keeps a track number only as a number: a retag it cannot store must not be
+    reported as applied, with the file still pending."""
+    root = tmp_path / "music"
+    copy_audio("m4a", root / "P!nk/Funhouse/01 So What.m4a")
+    session = Session()
+    library = Library(name="test", root=str(root))
+    session.add(library)
+    session.commit()
+    scan(session, library)
+    file = session.scalar(select(AudioFile))
+    changeset = ch.new_changeset(session, "edit", "writing")
+    change = ch.propose_retag(changeset, file, {"genre": "Rock", "tracknumber": "Intro"})
+    change.status = "approved"
+    session.commit()
+    [outcome] = ch.apply(session, changeset)
+    assert not outcome.ok
+    assert "did not keep tracknumber" in outcome.message
+    assert change.status == "failed"
+    assert resolve(file.values)["genre"].candidates["tag"] == "Rock"  # the catalog has the file's
+    session.close()
