@@ -159,6 +159,40 @@ def test_merge_takes_the_other_files_along(library):
     ]  # fmt: skip
 
 
+def test_two_merges_into_one_folder_share_its_names(library):
+    """Merges decided one after the other into the same folder: the first one's files are
+    not on the disk yet when the second is planned, but their names are taken all the same."""
+    session, lib, root = library
+    target = "Christina Aguilera/Stripped"
+    other = "C Aguilera/Stripped"
+    (root / other).mkdir(parents=True)
+    shutil.copyfile(root / target / "01 Stripped Intro.mp3", root / other / "01 Stripped Intro.mp3")
+    first, second = "Aguilera, Christina/Stripped", other
+    for folder, notes in ((first, b"one"), (second, b"two")):
+        (root / folder).mkdir(parents=True, exist_ok=True)
+        (root / folder / "desktop.ini").write_bytes(b"[.ShellClassInfo]")
+        (root / folder / "notes.txt").write_bytes(notes)
+    scan(session, lib)
+    for source in (first, second):
+        am.decide(session, lib, [am.plan_folders(session, lib, source, target)], "Merge")
+
+    found = wr.survey(session, lib, wr.Selection(only=["trash", "path"]))
+    changeset, outcomes = wr.write(session, found.files, "Write")
+    assert all(o.ok for o in outcomes), [o.message for o in outcomes]
+    described = [ch.describe(c) for c in changeset.changes]
+    assert f"move {first}/desktop.ini -> {target}/desktop.ini" in described
+    assert f"trash {second}/desktop.ini (same as {target}/desktop.ini)" in described
+    assert f"move {second}/notes.txt -> {target}/notes (C Aguilera - Stripped).txt" in described
+    assert not (root / "C Aguilera").exists() and not (root / "Aguilera, Christina").exists()
+
+    outcomes = ch.undo(session, changeset)
+    assert all(o.ok for o in outcomes), [o.message for o in outcomes]
+    for folder, notes in ((first, b"one"), (second, b"two")):
+        assert (root / folder / "notes.txt").read_bytes() == notes
+        assert (root / folder / "desktop.ini").exists()
+    assert not (root / target / "desktop.ini").exists()
+
+
 def test_no_leftovers_move_while_tracks_stay(library):
     session, lib, root = library
     (root / "Texas/Greatest Hits/booklet.pdf").write_bytes(b"booklet")

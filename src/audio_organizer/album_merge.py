@@ -27,8 +27,8 @@ from . import changes as ch
 from . import leftovers as lo
 from . import operations as ops
 from .images import IMAGE_TYPES, dimensions
-from .models import AudioFile, EffectiveMetadata, FieldValue, Library, Operation
-from .pathparse import normalize_name
+from .models import AudioFile, EffectiveMetadata, FieldValue, FileDesire, Library, Operation
+from .pathparse import normalize_name, path_key
 from .tracks import present
 
 
@@ -178,8 +178,11 @@ def decide(
     of every track, as it is not known which will be written last; they follow it, so that
     the source folders disappear. None when it was all decided already."""
     desires = []
+    reserved = reserved_paths(session, library)
     for merge in merges:
-        loose = [[a.path, a.to, a.same_as] for a in leftovers(merge, Path(library.root))]
+        found = leftovers(merge, Path(library.root), reserved)
+        reserved.update({path_key(a.to): a.path for a in found if a.to})
+        loose = [[a.path, a.to, a.same_as] for a in found]
         extra = {"leftovers": loose} if loose else {}
         for track, keep in merge.trash:
             spec = {"replacement": keep.file.id, "replacement_path": keep.file.path, **extra}
@@ -201,22 +204,58 @@ class Leftover:
     same_as: str | None = None
 
 
-def leftovers(merge: Merge, root: Path) -> list[Leftover]:
+def reserved_paths(session: Session, library: Library) -> dict[str, str]:
+    """Destinations that decisions not yet written have claimed, as path_key -> the source
+    file of a decided leftover ("" for a track), so that another merge into the same folder
+    does not plan for a name the disk still shows as free."""
+    reserved: dict[str, str] = {}
+    for spec in session.scalars(
+        select(FileDesire.spec)
+        .join(AudioFile, AudioFile.id == FileDesire.file_id)
+        .where(
+            AudioFile.library_id == library.id,
+            FileDesire.written.is_(False),
+            FileDesire.kind.in_(("move", "trash")),
+        )
+    ):
+        if "to" in spec:
+            reserved[path_key(spec["to"])] = ""
+        for path, to, _ in spec.get("leftovers", []):
+            if to:
+                reserved[path_key(to)] = path
+    return reserved
+
+
+def leftovers(merge: Merge, root: Path, reserved: dict[str, str] | None = None) -> list[Leftover]:
     """What becomes of the source folder's other files (cover, .cue, booklet, Scans; see
     leftovers.folder_files) when all its tracks leave: they move into the target. When
     the target has a file of that name, an identical copy (or a system file such as
     .DS_Store) is trashed. Of two different images the bigger one ends up under the name,
     and the other next to it with its folder's name added ("cover (Greatest Hits).jpg");
-    any other file gets the source folder's name added. Nothing when some audio stays."""
+    any other file gets the source folder's name added. Nothing when some audio stays.
+
+    reserved (see reserved_paths) are destinations that decided but unwritten moves will
+    fill: a name there counts as taken, as if the file were already in the target."""
     source, target = merge.source, merge.target
     contents = lo.folder_files(root / source.path)
     if merge.clashes or contents is None or contents[0] > len(source.tracks):
         return []
     result: list[Leftover] = []
-    planned: set[str] = set()  # destinations taken by earlier actions, casefolded
+    planned: set[str] = set()  # destinations taken by earlier actions
+    reserved = reserved or {}
 
-    def free(path: str) -> bool:
-        return path.casefold() not in planned and not os.path.lexists(root / path)
+    def claimed_by(path: str, source: str) -> str | None:
+        """The source file of another decision that will put a file at path, else None. A
+        decision of source itself (deciding again) is no clash."""
+        claim = reserved.get(path_key(path))
+        return None if claim is None or claim == source else claim
+
+    def free(path: str, source: str = "") -> bool:
+        return (
+            path_key(path) not in planned
+            and claimed_by(path, source) is None
+            and not os.path.lexists(root / path)
+        )
 
     # Folders of the same name ("Texas/Greatest Hits", "Texas (1)/Greatest Hits") are told
     # apart by their parents
@@ -234,18 +273,24 @@ def leftovers(merge: Merge, root: Path) -> list[Leftover]:
 
     for relative in contents[1]:
         path, to = f"{source.path}/{relative}", f"{target.path}/{relative}"
-        if free(to):
+        # What stands at the name: a file on disk, or one that a decided merge will move there
+        there = claimed_by(to, path) or to
+        if free(to, path):
             result.append(Leftover(path, to))
-        elif _same_content(root / path, root / to):
+        elif _same_content(root / path, root / there):
             result.append(Leftover(path, None, same_as=to))
         elif lo.is_system_file(PurePosixPath(relative).name):
             result.append(Leftover(path, None))
-        elif _is_image(relative) and _image_size(root / path) > _image_size(root / to):
+        elif (
+            _is_image(relative)
+            and os.path.lexists(root / to)
+            and _image_size(root / path) > _image_size(root / to)
+        ):
             result.append(Leftover(to, suffixed(to, target)))  # the target's smaller image
             result.append(Leftover(path, to))
         else:
             result.append(Leftover(path, suffixed(to, source)))
-        planned.update(a.to.casefold() for a in result[-2:] if a.to)
+        planned.update(path_key(a.to) for a in result[-2:] if a.to)
     return result
 
 

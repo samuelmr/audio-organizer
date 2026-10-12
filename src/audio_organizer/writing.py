@@ -476,6 +476,7 @@ def write(
             change.status = "approved"
     # Files move after all tags, covers and trashing are written: a file may take the
     # place of a copy that is trashed in this write (encodings)
+    later: list[tuple[str, str]] = []
     for pending in files:
         if "path" in pending.covers and "trash" not in pending.covers:
             spec = pending.covers["path"]
@@ -485,7 +486,11 @@ def write(
         if last_out.get(_folder(pending.file)) == pending.file.id and _folder_empties(
             session, pending.file, leaving
         ):
-            _add_leftovers(changeset, pending)
+            _add_leftovers(changeset, pending, later)
+    if later:
+        library = files[0].file.library
+        for path, same_as in later:
+            ch.propose_trash_leftover(changeset, library, path, same_as).status = "approved"
     session.commit()
     outcomes = ch.apply(session, changeset, applied=applied)
     for outcome in outcomes:
@@ -626,10 +631,11 @@ def _folder_empties(session: Session, file: AudioFile, leaving: set[int]) -> boo
     return not any(str(PurePosixPath(path).parent) == folder for path in staying)
 
 
-def _add_leftovers(changeset: Changeset, pending: Pending) -> None:
+def _add_leftovers(changeset: Changeset, pending: Pending, later: list[tuple[str, str]]) -> None:
     """The loose files of a folder (litter, cover, booklet) that a decided merge moves or
     trashes with the folder's last track (album_merge.decide), as changes after it. A file
-    that is gone by now is skipped."""
+    that is gone by now is skipped. The trash of a copy whose twin to keep is yet to be moved
+    there (by another folder's leftovers) is left in later, as (path, twin), to follow all."""
     library = pending.file.library
     root = Path(library.root)
     done: set[str] = set()
@@ -638,6 +644,9 @@ def _add_leftovers(changeset: Changeset, pending: Pending) -> None:
             if path in done or not os.path.lexists(root / path):
                 continue
             done.add(path)
+            if to is None and same_as and not os.path.lexists(root / same_as):
+                later.append((path, same_as))  # the copy to keep is yet to be moved there
+                continue
             if to is None:
                 change = ch.propose_trash_leftover(changeset, library, path, same_as)
             else:
