@@ -74,8 +74,10 @@ from ..tracks import (
     SELECTION_FIELDS,
     album_files,
     chosen_files,
+    is_narrowed,
     present,
     search,
+    search_files,
     shared_values,
 )
 from ..write_jobs import WriteGapsJob, WriteGapsJobs
@@ -312,10 +314,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             else None
         )  # fmt: skip
         # Otherwise a narrowed list (a search, an artist) can be edited whole
-        edit_all = (
-            album_edit is None and 0 < total <= MAX_ALBUM_EDIT
-            and bool(q.split() or show != "all" or {album, artist, folder} != {None})
-        )  # fmt: skip
+        edit_all = album_edit is None and 0 < total <= MAX_ALBUM_EDIT and is_narrowed(**params)
         # Sorted by album, each album gets a heading with its cover; on an album's page,
         # or a folder's holding one album, the page's own heading has it
         albums_shown = {((m.album or "").lower(), (m.albumartist or "").lower()) for _, m in rows}
@@ -744,15 +743,8 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             back = _url(f"/libraries/{lib.name}", **params)
         if file:
             files = chosen_files(session, lib.id, file[: MAX_ALBUM_EDIT + 1])
-        elif q.split() or show != "all" or {album, artist, folder} != {None}:
-            files = list(
-                session.scalars(
-                    search(lib.id, **params)
-                    .with_only_columns(AudioFile)
-                    .order_by(AudioFile.path)
-                    .limit(MAX_ALBUM_EDIT + 1)
-                )
-            )
+        elif is_narrowed(**params):
+            files = search_files(session, lib.id, MAX_ALBUM_EDIT + 1, **params)
         else:
             files = []
         if not files:

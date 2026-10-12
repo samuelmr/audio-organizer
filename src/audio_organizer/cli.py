@@ -37,7 +37,7 @@ from .models import AudioFile, Change, Changeset, Library, Operation, Playlist, 
 from .provenance import resolve
 from .scanner import ScanStats, scan
 from .tags import FIELDS
-from .tracks import album_files, relative_folder
+from .tracks import FILTERS, album_files, is_narrowed, relative_folder, search_files
 
 app = typer.Typer(
     no_args_is_help=True, rich_markup_mode="markdown", help="Maintain a music collection."
@@ -722,6 +722,93 @@ def edit_album(
                 )
         if edit.moves:
             typer.echo("Review and write the moves with `aorg pending --only path`.")
+
+
+@app.command("edit-tracks")
+def edit_tracks(
+    ctx: typer.Context,
+    library: Annotated[str | None, typer.Argument()] = None,
+    query: Annotated[
+        str, typer.Option("--query", "-q", help="Words in the artist, album, title or path")
+    ] = "",
+    show: Annotated[str, typer.Option(help=f"Only tracks that are: {', '.join(FILTERS)}")] = "all",
+    artist: Annotated[str | None, typer.Option(help="Only this artist (ignoring case)")] = None,
+    album: Annotated[str | None, typer.Option(help="Only this album (ignoring case)")] = None,
+    albumartist: Annotated[
+        str | None, typer.Option(help="Only this album artist (ignoring case)")
+    ] = None,
+    folder: Annotated[
+        str | None, typer.Option(help="Only the tracks in this folder, not its subfolders")
+    ] = None,
+    set_: Annotated[list[str], typer.Option("--set", help="field=value")] = [],  # noqa: B006
+    unset: Annotated[list[str], typer.Option(help="Field whose manual value to remove")] = [],  # noqa: B006
+    move_files: Annotated[
+        bool,
+        typer.Option(
+            "--move-files",
+            help="Also rename the folders named after the album or artist being renamed",
+        ),
+    ] = False,
+) -> None:
+    """Edit the tracks a search finds at once, as the web UI's track list does: e.g. set
+    the genre of every track with "live" in its title or path by an artist. Without --set
+    or --unset, lists the tracks it would edit:
+
+        aorg edit-tracks --artist Texas --query live
+        aorg edit-tracks --artist Texas --query live --set genre="Pop Rock"
+
+    The edit is stored in the catalog for every track found, as one decision that `aorg
+    history undo` reverts; the files are written later with their other pending changes
+    (see `aorg pending`). The whole library is never edited at once: give a query or
+    another criterion.
+    """
+    if show not in FILTERS:
+        raise typer.BadParameter(f"--show is one of {', '.join(FILTERS)}")
+    criteria = {"q": query, "show": show, "artist": artist, "album": album,
+                "albumartist": albumartist, "folder": folder}  # fmt: skip
+    if not is_narrowed(**criteria):
+        raise typer.BadParameter("give --query, --show, --artist, --album or --folder")
+    values = _edit_values(set_, unset)
+    with _session(ctx) as session:
+        lib = _library(session, library)
+        if folder is not None:
+            try:
+                criteria["folder"] = relative_folder(lib, folder)
+            except ValueError as e:
+                raise typer.BadParameter(str(e)) from None
+        files = search_files(session, lib.id, **criteria)
+        if not files:
+            typer.echo("No tracks found.")
+            raise typer.Exit(1)
+        if not values:
+            for file in files:
+                typer.echo(file.path)
+            typer.echo(f"{len(files)} tracks; edit them with --set field=value.")
+            return
+        edit = ae.edit(
+            session, lib, files, values, ae.selection_description(files), move_files=move_files
+        )
+        if not edit.pending:
+            typer.echo(f"Saved for {len(files)} tracks; their tags already match.")
+        else:
+            typer.echo(
+                f"Saved for {len(files)} tracks; {len(edit.pending)} of them are not yet "
+                "written. Review and write them with"
+            )
+            groups = list(dict.fromkeys(wr.group_of(file) for file in edit.pending))
+            for group_artist, group_album in groups[:10]:
+                typer.echo(
+                    f"  aorg pending --artist {shlex.quote(group_artist)} "
+                    f"--album {shlex.quote(group_album)}"
+                )
+            if len(groups) > 10:
+                typer.echo(f"  and {len(groups) - 10} more albums (see `aorg pending`)")
+        for move in edit.moves:
+            typer.echo(f"  move {move.file.path} -> {move.target}")
+        if edit.moves:
+            typer.echo("Review and write the moves with `aorg pending --only path`.")
+        elif edit.plan is not None:
+            typer.echo("No folders to rename.")
 
 
 def _edit_values(set_: list[str], unset: list[str]) -> dict[str, str | None]:

@@ -382,3 +382,30 @@ def test_web_edit_all_of_a_search(Session, library):
     # The link back goes only to the library's own pages
     params = {"q": "foreigner", "back": "https://example.com"}
     assert "example.com" not in web.get("/libraries/music/edit-tracks", params=params).text
+
+
+def test_cli_edit_tracks(Session, library):
+    db = str(Session.kw["bind"].url)
+    # Without --set, the tracks it would edit
+    result = CliRunner().invoke(app, ["--db", db, "edit-tracks", "--query", "foreigner"])
+    assert result.exit_code == 0, result.output
+    assert f"{ALBUM}/Bonus/03 Cold as Ice.mp3" in result.output
+    assert "3 tracks; edit them with --set" in result.output
+
+    result = CliRunner().invoke(
+        app, ["--db", db, "edit-tracks", "-q", "mp3", "--set", "genre=Rock and Pop"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "Saved for 4 tracks; 4 of them are not yet written" in result.output
+    assert "aorg pending --artist Foreigner --album 'Best of Foriegner'" in result.output
+    assert "--album 'Greatest Hits'" in result.output
+    with Session() as session:
+        operation = session.scalar(select(Operation).order_by(Operation.id.desc()))
+        assert operation.description == "Manual edit of 4 chosen tracks"
+        assert session.scalar(select(Changeset)) is None  # nothing is written yet
+
+    # Never the whole library at once
+    result = CliRunner().invoke(app, ["--db", db, "edit-tracks", "--set", "genre=Rock"])
+    assert result.exit_code != 0 and "give --query" in result.output
+    result = CliRunner().invoke(app, ["--db", db, "edit-tracks", "-q", "nothing-like-this"])
+    assert result.exit_code == 1 and "No tracks found" in result.output

@@ -135,6 +135,27 @@ def search(
     return query
 
 
+def is_narrowed(
+    q: str = "",
+    show: str = "all",
+    album: str | None = None,
+    albumartist: str | None = None,
+    artist: str | None = None,
+    folder: str | None = None,
+) -> bool:
+    """Whether search's criteria choose some tracks rather than the whole library: only
+    those are edited at once, so that no slip edits every track."""
+    return bool(q.split() or show != "all" or {album, albumartist, artist, folder} != {None})
+
+
+def search_files(
+    session: Session, library_id: int, limit: int | None = None, **criteria
+) -> list[AudioFile]:
+    """The files search finds (with its criteria), in path order; at most limit."""
+    query = search(library_id, **criteria).with_only_columns(AudioFile).order_by(AudioFile.path)
+    return list(session.scalars(query.limit(limit) if limit is not None else query))
+
+
 def chosen_files(session: Session, library_id: int, ids: Iterable[int]) -> list[AudioFile]:
     """The library's present files among the ids (others are left out), in path order."""
     ids = list(dict.fromkeys(ids))
