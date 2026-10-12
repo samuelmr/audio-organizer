@@ -1,9 +1,11 @@
-"""Writing all measurements and derived ratings (writing.write_gaps) as a background job
-of the web UI.
+"""Writing many files (writing.write_gaps, write_all) as a background job of the web UI:
+all measurements and derived ratings, or everything pending in a selection the user
+reviewed.
 
 After a deep scan of a large library, hundreds of thousands of files wait for their
-ReplayGain values: hours of writing, far longer than a request may wait. The job runs
-write_gaps in a thread of the server (see background), a changeset per batch, and shows
+ReplayGain values: hours of writing, far longer than a request may wait; so may a review
+of thousands of edited tracks. The job runs in a thread of the server (see background), a
+changeset per batch, and shows
 how far it has come and which changesets it has written. It can be stopped between
 batches; a job that is stopped or fails keeps the changesets written so far, each of which
 can be undone, and the next run writes the files still lacking their values.
@@ -22,11 +24,19 @@ BATCH = 500  # files per changeset
 
 
 class WriteGapsJob(Job):
-    """A run of write_gaps; total and done count the files looked at."""
+    """A run of write_gaps, or with gaps False of write_all; total and done count the
+    files looked at."""
 
-    def __init__(self, library_id: int, selection: wr.Selection, id3_version: int | None):
+    def __init__(
+        self,
+        library_id: int,
+        selection: wr.Selection,
+        id3_version: int | None,
+        gaps: bool = True,
+    ):
         super().__init__(library_id)
         self.selection = selection
+        self.gaps = gaps
         self.id3_version = id3_version
         self.changesets: list[int] = []
         self.written = 0  # files written
@@ -52,11 +62,13 @@ class WriteGapsJobs:
         selection: wr.Selection,
         id3_version: int | None = None,
         finished: Callable[[], None] | None = None,
+        gaps: bool = True,
     ) -> WriteGapsJob:
-        """Start writing in a background thread; background.Busy if a run of this library
-        is under way. finished is called when the run ends, however it ends (and not if this
-        raises)."""
-        job = WriteGapsJob(library.id, selection, id3_version)
+        """Start writing in a background thread: the measured and derived values filling
+        empty tags (gaps), or everything pending in the selection. background.Busy if a
+        run of this library is under way. finished is called when the run ends, however it
+        ends (and not if this raises)."""
+        job = WriteGapsJob(library.id, selection, id3_version, gaps)
         return self._jobs.start(job, self._run, finished)
 
     def stop(self, library: Library) -> None:
@@ -81,7 +93,8 @@ class WriteGapsJobs:
         with self._session_factory() as session:
             library = session.get(Library, job.library_id)
             try:
-                wr.write_gaps(
+                write = wr.write_gaps if job.gaps else wr.write_all
+                write(
                     session, library, job.selection, job.id3_version, BATCH,
                     progress=progress, written_batch=written_batch,
                     should_stop=lambda: job.stop_requested, step=step,
@@ -99,5 +112,9 @@ class WriteGapsJobs:
         else:
             job.status = "done"
             job.message = (
-                f"{wrote}." if job.total else "Nothing to write: no file lacks its values."
+                f"{wrote}."
+                if job.total
+                else "Nothing to write: no file lacks its values."
+                if job.gaps
+                else "Nothing to write: no file has pending changes."
             )

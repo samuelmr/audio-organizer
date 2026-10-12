@@ -1295,3 +1295,41 @@ def test_conflicts_page(web, Session):
     assert "Take the tags of 1 file retagged elsewhere" in web.get("/libraries/music/history").text
     page = web.post("/libraries/music/conflicts", data={"action": "keep"}).text
     assert "Nothing ticked" in page
+
+
+def test_write_all_pending_files_of_a_large_selection_runs_in_the_background(
+    web, Session, monkeypatch
+):
+    """Above what a request writes at once, Write all N files starts the background job
+    (a changeset per batch) and goes to its progress page; edits are written, not only
+    measurements."""
+    from audio_organizer import write_jobs
+    from audio_organizer import writing as wr
+    from audio_organizer.web import app as web_app
+
+    with Session() as session:
+        files = session.scalars(select(AudioFile)).all()
+        _, operation = wr.record_edit(session, files, {"genre": "Blues"}, "edit")
+        operation_id = operation.id
+    monkeypatch.setattr(web_app, "MAX_BATCH", 2)
+    monkeypatch.setattr(write_jobs, "BATCH", 2)
+    params = {"operation": operation_id, "limit": 1}
+    assert "Write all 3 files" in web.get("/libraries/music/pending", params=params).text
+
+    assert (
+        'formaction="/libraries/music/pending/write-all"'
+        in web.get("/libraries/music/pending", params=params).text
+    )
+    stale = web.post(
+        "/libraries/music/pending", data={"action": "write-all", "operation": operation_id}
+    )
+    assert "too many to write at once" in stale.text
+    page = web.post("/libraries/music/pending/write-all", data={"operation": operation_id}).text
+    assert 'data-sync-job="/libraries/music/pending/write-gaps"' in page
+    assert "Writing many files" in page
+    _wait(lambda: not _write_gaps_state(web).json()["active"])
+    state = _write_gaps_state(web).json()
+    assert (state["status"], state["message"]) == ("done", "Wrote 3 files in 2 changesets.")
+    assert {tags.read(p).fields.get("genre") for p in web.root.rglob("*.m*")} == {"Blues"}
+    with Session() as session:
+        assert wr.survey(session, session.scalar(select(Library)), wr.Selection()).total == 0

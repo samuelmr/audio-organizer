@@ -51,7 +51,7 @@ run <code>aorg scan --deep</code> to measure them (it reads every file, which ta
 {% endif %}
 
 {% if gap_job and gap_job.active %}
-<p class="notice">Writing all measurements and ratings in the background: <a href="{{ here }}/write-gaps">its progress</a>.</p>
+<p class="notice">Writing {{ "all measurements and ratings" if gap_job.gaps else "many files" }} in the background: <a href="{{ here }}/write-gaps">its progress</a>.</p>
 {% elif found.total and not prefer_gnudb %}
 <form method="post" action="{{ here }}/write-gaps" class="stacked" data-busy>
  <input type="hidden" name="path" value="{{ path }}">
@@ -116,7 +116,7 @@ run <code>aorg scan --deep</code> to measure them (it reads every file, which ta
  </label>
  <p>
   <button class="primary" name="action" value="write">Write the ticked files</button>
-  {% if found.total > found.files | length %}<button name="action" value="write-all" onclick="return confirm('Write all {{ found.total }} files, not just those listed?')">Write all {{ found.total }} files</button>{% endif %}
+  {% if found.total > found.files | length %}<button name="action" value="write-all"{% if found.total > max_batch %} formaction="{{ here }}/write-all"{% endif %} onclick="return confirm('Write all {{ found.total }} files, not just those listed?{% if found.total > max_batch %} It runs in the background, a changeset per 500 files.{% endif %}')">Write all {{ found.total }} files</button>{% endif %}
   <button name="action" value="discard" onclick="return confirm('Drop your edits in the ticked files? Measurements and lookups are kept, and History can bring the edits back.')">Discard my edits in them</button>
  </p>
  {% endif %}

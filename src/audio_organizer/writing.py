@@ -507,9 +507,30 @@ def write_gaps(
     step: Callable[[str], None] | None = None,
 ) -> tuple[list[int], int, list[str]]:
     """Write every measured or rule-derived value that fills a missing tag (see
-    Selection.gaps_only), however many files, a changeset per batch so that none grows
-    beyond what can be reviewed or undone. Returns the changesets' ids, how many files were
-    written and the messages of the failures.
+    Selection.gaps_only), however many files; see write_all for the batches and callbacks."""
+    selection = replace(selection, gaps_only=True, prefer=(), file_ids=None)
+    return write_all(
+        session, library, selection, id3_version, batch, progress, written_batch, should_stop,
+        step,
+    )  # fmt: skip
+
+
+def write_all(
+    session: Session,
+    library: Library,
+    selection: Selection,
+    id3_version: int | None = None,
+    batch: int = 500,
+    progress: Callable[[int, int], None] | None = None,
+    written_batch: Callable[[int, int, list[str]], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
+    step: Callable[[str], None] | None = None,
+) -> tuple[list[int], int, list[str]]:
+    """Write every file of the selection that has pending changes, however many, in path
+    order and a changeset per batch so that none grows beyond what can be reviewed or
+    undone. Without gaps_only this writes what the user chose to review, edits and lookups
+    included. Returns the changesets' ids, how many files were written and the messages of
+    the failures.
 
     progress(done, total) is called before the first batch, as each file is written and
     after each batch (a batch takes minutes); step(what) says what a batch is doing, as
@@ -517,9 +538,12 @@ def write_gaps(
     written_batch(changeset id, files written, failures) is called after each changeset, so
     that a background job can show what is done while it runs. should_stop is asked before
     each batch: a stop leaves the changesets written so far, each complete and undoable."""
-    selection = replace(selection, gaps_only=True, prefer=(), file_ids=None)
     ids = list(
-        session.scalars(_candidates(library, selection).where(AudioFile.id.not_in(_waiting())))
+        session.scalars(
+            _candidates(library, selection)
+            .where(AudioFile.id.not_in(_waiting()))
+            .order_by(AudioFile.path)
+        )
     )
     changesets: list[int] = []
     written = 0
@@ -555,7 +579,8 @@ def write_gaps(
             batch_start = start
             written_in_batch.clear()
             changeset, outcomes = write(
-                session, found.files, description(chunk, len(found.files), gaps=True),
+                session, found.files,
+                description(selection, len(found.files), gaps=selection.gaps_only),
                 id3_version, applied,
             )  # fmt: skip
             changesets.append(changeset.id)
@@ -567,45 +592,6 @@ def write_gaps(
                 written_batch(changeset.id, ok, failures)
         session.expunge_all()  # a library has hundreds of thousands of files
         report(end)
-    return changesets, written, failed
-
-
-def write_all(
-    session: Session,
-    library: Library,
-    selection: Selection,
-    id3_version: int | None = None,
-    batch: int = 500,
-    progress: Callable[[int, int], None] | None = None,
-) -> tuple[list[int], int, list[str]]:
-    """Write every file of the selection that has pending changes, however many: a
-    changeset per batch (in path order), so that none grows beyond what can be reviewed
-    or undone. Unlike write_gaps this writes what the user chose to review, edits and
-    lookups included. Returns the changesets' ids, how many files were written and the
-    messages of the failures; progress(done, total) is called after each batch."""
-    ids = list(
-        session.scalars(
-            _candidates(library, selection)
-            .where(AudioFile.id.not_in(_waiting()))
-            .order_by(AudioFile.path)
-        )
-    )
-    changesets: list[int] = []
-    written = 0
-    failed: list[str] = []
-    for start in range(0, len(ids), batch):
-        chunk = replace(selection, file_ids=ids[start : start + batch])
-        found = survey(session, library, chunk, batch)
-        if found.files:
-            changeset, outcomes = write(
-                session, found.files, description(selection, len(found.files)), id3_version
-            )
-            changesets.append(changeset.id)
-            written += sum(o.ok for o in outcomes)
-            failed += [o.message for o in outcomes if not o.ok]
-        session.expunge_all()  # a library has hundreds of thousands of files
-        if progress:
-            progress(min(start + batch, len(ids)), len(ids))
     return changesets, written, failed
 
 

@@ -610,8 +610,11 @@ The web UI's Pending page lists the albums with changes waiting; choose one (or 
 artist) to see the old and new value of every field, untick the files you want to
 leave, and write the rest or discard your edits in them. A page shows a batch of files
 (100 by default); when more are pending, *Write all N files* writes every one of the
-selection (up to 1000 at once, as one changeset). On the command line `--write --all`
-does that for any number, a changeset per 500 files, each of which can be undone.
+selection: up to 1000 at once as one changeset, and above that in the background of
+`aorg web`, a changeset per 500 files, on the same progress page as *Write all
+measurements and ratings* (it can be stopped between changesets, each of which can be
+undone, and other actions that change files wait until it ends). On the command line
+`--write --all` does that for any number, a changeset per 500 files.
 
 By default only what the tags lack is written, so a gnudb value that differs from a tag
 is left out: the tag is the stronger evidence. To review those, add `--prefer-gnudb`

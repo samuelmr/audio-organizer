@@ -1,13 +1,13 @@
 {% extends "base.html" %}
-{% block title %}Writing measurements and ratings – {{ library.name }} – audio-organizer{% endblock %}
+{% block title %}Writing {{ "many files" if job and not job.gaps else "measurements and ratings" }} – {{ library.name }} – audio-organizer{% endblock %}
 {% block content %}
 {% set base = '/libraries/' ~ library.name %}
-<h1>Writing measurements and ratings</h1>
+<h1>Writing {{ "many files" if job and not job.gaps else "measurements and ratings" }}</h1>
 <p class="subtitle"><a href="{{ base }}">{{ library.name }}</a> · <a href="{{ base }}/pending">Pending</a> · <a href="/changes">Changes</a></p>
 
 {% if not state %}
 <p>Nothing has been written in the background since the server started. Start it with
-<em>Write all measurements and ratings</em> on the <a href="{{ base }}/pending">Pending</a> page.</p>
+<em>Write all measurements and ratings</em>, or <em>Write all N files</em> of a large selection, on the <a href="{{ base }}/pending">Pending</a> page.</p>
 {% else %}
 {# The same fields as a sync's progress page, so that sync.js updates this one too #}
 <section class="sync-job" data-sync-job="{{ base }}/pending/write-gaps" aria-live="polite">
@@ -23,8 +23,7 @@
   <a href="{{ base }}/pending/write-gaps" data-field="refresh">Refresh</a>
  </form>
  <p class="hint">Other actions that change files wait until this ends. Stopping keeps the
- changesets written so far; writing again later carries on with the files still lacking
- their values.</p>
+ changesets written so far; writing again later carries on with the files still pending.</p>
  {% endif %}
 
  {% if job.changesets %}

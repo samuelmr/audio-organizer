@@ -328,7 +328,7 @@ def test_write_all_writes_every_file_in_batches(library):
         session, lib, selection, batch=2, progress=lambda done, total: seen.append((done, total))
     )
     assert (len(ids), written, failed) == (2, 3, [])  # a changeset per batch
-    assert seen == [(2, 3), (3, 3)]
+    assert seen[0] == (0, 3) and seen[-1] == (3, 3)
     assert wr.survey(session, lib, selection).total == 0
     for file in files:
         assert tags.read(root / file.path).fields["genre"] == "Rock"

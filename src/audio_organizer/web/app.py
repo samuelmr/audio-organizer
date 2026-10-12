@@ -1095,6 +1095,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             request, "pending.html", library=lib, found=found, groups=groups,
             path=path, artist=artist, album=album, file=file, only=only, limit=limit,
             operation=operation, operations=operations, summaries=summaries,
+            max_batch=MAX_BATCH,
             prefer_gnudb=prefer_gnudb,
             unmeasured=unmeasured, unmeasurable=unmeasurable,
             gap_job=gap_writes.get(lib),
@@ -1141,11 +1142,10 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             file=file or None, only=only or None,
             prefer_gnudb="true" if prefer_gnudb else None, operation=operation or None,
         )  # fmt: skip
-        if every and found.total > MAX_BATCH:
+        if every and found.total > MAX_BATCH:  # the page offers the background job for these
             return _redirect(
                 back,
-                f"{found.total} files are too many to write at once here (at most {MAX_BATCH}); "
-                "write them with `aorg pending --write --all`",
+                f"{found.total} files are too many to write at once: write them in the background",
             )
         if not found.files:
             return _redirect(back, "Nothing to write: no ticked file has pending changes")
@@ -1172,6 +1172,34 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             outcomes=outcomes, outcome_title="Written",
         )  # fmt: skip
 
+    @app.post("/libraries/{name}/pending/write-all")
+    def start_write_all(
+        name: str,
+        path: Annotated[str, Form()] = "",
+        artist: Annotated[list[str] | None, Form()] = None,
+        album: Annotated[list[str] | None, Form()] = None,
+        operation: Annotated[list[int] | None, Form()] = None,
+        file: Annotated[list[int] | None, Form()] = None,
+        only: Annotated[str, Form()] = "",
+        id3_version: Annotated[str, Form()] = "",
+        session: Session = SessionDep,
+    ):
+        """Write everything pending in the selection the page showed, however many files, in
+        the background (write_jobs) with a changeset per 500 files, and go to its progress
+        page. Like write-gaps, the job holds the one long-running action's turn until it
+        ends. The page offers this above MAX_BATCH files; below, the request writes them."""
+        lib = _library(session, name)
+        artist, album = (values[0] if values else None for values in (artist, album))
+        selection = _selection(path, artist, album, file or None, only, False, operation)
+        version = int(id3_version) if id3_version in ("3", "4") else None
+        claim_exclusive()
+        try:
+            gap_writes.start(lib, selection, version, finished=running.release, gaps=False)
+        except BaseException:
+            running.release()
+            raise
+        return _redirect(f"/libraries/{lib.name}/pending/write-gaps")
+
     @app.post("/libraries/{name}/pending/write-gaps")
     def start_write_gaps(
         name: str,
@@ -1184,7 +1212,8 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         session: Session = SessionDep,
     ):
         """Write all measurements and derived ratings into the files that lack them, in the
-        background (write_jobs), and go to its progress page. The job holds the one
+        background (write_jobs), and go to its progress page (which also shows the writing
+        of a large selection, see write_pending). The job holds the one
         long-running action's turn until it ends, so nothing else writes files meanwhile."""
         lib = _library(session, name)
         artist, album = (values[0] if values else None for values in (artist, album))
@@ -1200,8 +1229,8 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
 
     @app.get("/libraries/{name}/pending/write-gaps")
     def write_gaps_job(request: Request, name: str, session: Session = SessionDep):
-        """The progress of writing all measurements and ratings: a page, or JSON for its
-        script (sync.js)."""
+        """The progress of the background writing, of all measurements and ratings or of a
+        large selection: a page, or JSON for its script (sync.js)."""
         lib = _library(session, name)
         job = gap_writes.get(lib)
         state = _write_gaps_state(job) if job else None
