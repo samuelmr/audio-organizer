@@ -304,6 +304,20 @@ def survey(session: Session, library: Library, selection: Selection, limit: int 
     return result
 
 
+def _numbers_for_totals(file: AudioFile, fields: dict[str, str]) -> dict[str, str]:
+    """Writing a total into a file whose tags have no track (or disc) number: the number the
+    catalog knows from elsewhere, such as the file name, goes with it, since ID3 and MP4
+    keep both in one field. Where none is known the writer stores 0, "unknown"; the
+    catalog does not invent one."""
+    resolved = resolve(file.values)
+    have = {fv.field for fv in file.values if fv.source == "tag" and fv.value}
+    return {
+        number: resolved[number].value
+        for number, total in (("tracknumber", "tracktotal"), ("discnumber", "disctotal"))
+        if total in fields and number not in fields and number not in have and number in resolved
+    }
+
+
 def _gaps(file: AudioFile, fields: dict[str, str]) -> dict[str, str]:
     """The pending values that are measurements or rule-derived ratings and fill a tag the
     file does not have, or has only as a placeholder (PLACEHOLDER_TAGS). A measurement
@@ -450,6 +464,7 @@ def write(
     }
     for pending in files:
         tag_fields = {k: v for k, v in pending.fields.items() if k not in DESIRE_FIELDS}
+        tag_fields.update(_numbers_for_totals(pending.file, tag_fields))
         if tag_fields and "trash" not in pending.covers:  # a trashed file is not retagged
             change = ch.propose_retag(changeset, pending.file, tag_fields, id3_version)
             change.status = "approved"

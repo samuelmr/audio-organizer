@@ -531,7 +531,7 @@ def _write_id3(tags: ID3, changes: dict[str, str | None], merged: dict[str, str 
     ):
         if number_key in changes or total_key in changes:
             tags.delall(frame_cls.__name__)
-            pair = _join_pair(merged.get(number_key), merged.get(total_key))
+            pair = _join_pair(merged.get(number_key), merged.get(total_key), unknown_number="0")
             if pair:
                 tags.add(frame_cls(encoding=3, text=[pair]))
 
@@ -579,11 +579,12 @@ def _write_mp4(
         ("discnumber", "disctotal", "disk"),
     ):
         if number_key in changes or total_key in changes:
-            number = merged.get(number_key)
+            number, total = merged.get(number_key), merged.get(total_key)
+            if total and total.isdigit() and not number:
+                number = "0"  # the total of an unknown number, as in "0/5"
             if number is None or not number.isdigit():
                 tags.pop(atom, None)
             else:
-                total = merged.get(total_key)
                 tags[atom] = [(int(number), int(total) if total and total.isdigit() else 0)]
 
 
@@ -595,7 +596,13 @@ def _set_freeform(tags: MP4Tags, name: str, value: str | None) -> None:
         tags[MP4_FREEFORM + name] = [MP4FreeForm(value.encode("utf-8"))]
 
 
-def _join_pair(number: str | None, total: str | None) -> str | None:
+def _join_pair(
+    number: str | None, total: str | None, unknown_number: str | None = None
+) -> str | None:
+    """A "number/total" frame text. A total alone is kept as unknown_number/total: the
+    number is not invented, and 0 reads as unknown."""
     if not number:
-        return None
+        if not (total and unknown_number):
+            return None
+        number = unknown_number
     return f"{number}/{total}" if total else number
