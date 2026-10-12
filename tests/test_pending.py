@@ -299,6 +299,7 @@ def test_selection_by_operation(library):
 
     assert chosen(first.id) == {halo.path: {"genre": "Rock"}, insane.path: {"genre": "Rock"}}
     assert wr.operations_pending(session, lib, [first.id]) == {first.id}
+    assert ops.summary(session, first) == [ops.Summed("genre", "Rock", 2, False)]
 
     # Edited again since: shown as pending now
     wr.store_edit(session, [halo], {"genre": "Pop Rock"}, "second")
@@ -330,6 +331,7 @@ def test_cli_pending_by_operation(library):
     assert "3 files have values not yet in them (genre 3)." in result.output
     assert "Texas/Greatest Hits/11 Halo.mp3" in result.output
     assert "P!nk" not in result.output
+    assert "#1: genre -> Rock: 3 files" in result.output  # what the decision set
     assert run("pending", "--operation", "9").exit_code != 0
 
     result = run("pending", "--operation", "1", "--limit", "1", "--write")

@@ -1080,6 +1080,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         lib = _library(session, name)
         limit = _clamp_batch(limit)
         operations = [_operation(session, lib, op_id) for op_id in operation]
+        summaries = {op.id: ops.summary(session, op) for op in operations}
         selection = _selection(path, artist, album, file or None, only, prefer_gnudb, operation)
         found = wr.survey(session, lib, selection, limit)
         # The list of albums is for choosing; once one is chosen it is in the heading
@@ -1093,7 +1094,8 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         return render(
             request, "pending.html", library=lib, found=found, groups=groups,
             path=path, artist=artist, album=album, file=file, only=only, limit=limit,
-            operation=operation, operations=operations, prefer_gnudb=prefer_gnudb,
+            operation=operation, operations=operations, summaries=summaries,
+            prefer_gnudb=prefer_gnudb,
             unmeasured=unmeasured, unmeasurable=unmeasurable,
             gap_job=gap_writes.get(lib),
         )  # fmt: skip

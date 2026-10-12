@@ -2124,6 +2124,9 @@ def pending_command(
             )
             return
         for operation_id in operation:
+            for s in ops.summary(session, _operation(session, operation_id)):
+                what = "decided" if s.desire else "removed" if s.after is None else f"-> {s.after}"
+                typer.echo(f"#{operation_id}: {s.field} {what}: {s.files} files")
             undone = _operation(session, operation_id).reverted_by
             if undone is not None:
                 typer.echo(

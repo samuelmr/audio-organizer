@@ -14,7 +14,12 @@ undone on the <a href="{{ base }}/history">History</a> page.</p>
 {% for op in operations if op.reverted_by %}
 <p class="notice">Decision #{{ op.id }} was undone by <a href="{{ base }}/history/{{ op.reverted_by }}">#{{ op.reverted_by }}</a>. Shown is what its files have pending now, which is mostly nothing.</p>
 {% endfor %}
-{% if operations %}<p class="hint">The files {{ "these decisions" if operations | length > 1 else "this decision" }} touched, as they are pending now: also with edits made to them since.</p>{% endif %}
+{% if operations %}<p class="hint">The files {{ "these decisions" if operations | length > 1 else "this decision" }} touched, as they are pending now: also with edits made to them since.</p>
+<ul class="hint">
+ {% for op in operations %}{% for s in summaries[op.id] %}
+ <li>#{{ op.id }}: {{ labels.get(s.field, s.field) }}{% if s.desire %} decided{% elif s.after is none %} removed{% else %} → {{ s.after }}{% endif %}: {{ s.files }} file{{ "s" if s.files != 1 }}</li>
+ {% endfor %}{% endfor %}
+</ul>{% endif %}
 <p class="hint">{{ found.total }} file{{ "s" if found.total != 1 }} {{ "have" if found.total != 1 else "has" }} values not yet in {{ "them" if found.total != 1 else "it" }}{% if chosen or path %} here{% endif %}{% if found.waiting %};
 {{ found.waiting }} more have changes waiting for review in <a href="/changes">changesets</a>{% endif %}.
 {% if found.conflicts %}<a href="{{ url(base ~ '/conflicts', path=path) }}">{{ found.conflicts }} field{{ "s" if found.conflicts != 1 }} retagged elsewhere since you edited {{ "them are" if found.conflicts != 1 else "it is" }} held back</a> until you decide.{% endif %}

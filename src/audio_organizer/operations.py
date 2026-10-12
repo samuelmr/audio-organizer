@@ -249,6 +249,35 @@ class Entry:
     files: int  # in how many files
 
 
+class Summed(NamedTuple):
+    field: str
+    after: str | None  # the value it set; None when it removed one, or for a desire
+    files: int
+    desire: bool  # a cover, trash or move: "after" is a spec, not worth showing
+
+
+def summary(session: Session, operation: Operation, limit: int = 8) -> list[Summed]:
+    """What the operation set, in a line per field and value ("genre → Pop Rock: 30
+    files"), the most files first: a reminder of the decision above the files it touched,
+    where a rule or edit has far too many values to read one by one."""
+    rows = session.execute(
+        select(
+            OperationValue.field,
+            OperationValue.source,
+            OperationValue.after,
+            func.count(func.distinct(OperationValue.file_id)).label("files"),
+        )
+        .where(OperationValue.operation_id == operation.id)
+        .group_by(OperationValue.field, OperationValue.source, OperationValue.after)
+        .order_by(func.count(func.distinct(OperationValue.file_id)).desc(), OperationValue.field)
+        .limit(limit)
+    )
+    return [
+        Summed(field, None if source == DESIRE else after, files, source == DESIRE)
+        for field, source, after, files in rows
+    ]
+
+
 def history(session: Session, library_id: int, limit: int = 50, offset: int = 0) -> list[Entry]:
     """The library's operations, newest first, with how much each changed."""
     counts = (

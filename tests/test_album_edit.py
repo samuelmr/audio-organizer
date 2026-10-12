@@ -363,6 +363,7 @@ def test_web_edit_chosen_tracks(Session, library):
     assert "2 chosen tracks" in response.text
     assert response.text.count('name="file_ids"') == 2
     assert f'name="operation" value="{operation_id}"' in response.text  # kept by the forms
+    assert f"#{operation_id}: Genre → Rock and Pop: 2 files" in response.text
     history = web.get("/libraries/music/history").text
     assert f"/libraries/music/pending?operation={operation_id}" in history
     assert web.get("/libraries/music/pending", params={"operation": 999}).status_code == 404

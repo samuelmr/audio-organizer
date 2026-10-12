@@ -488,7 +488,8 @@ combines with `--only`, `--limit`, `--write` and `--discard`. It chooses the fil
 decision set a value of which still have changes waiting, shown as they are pending
 *now*: a file edited again since shows the later value too, files already written drop
 out, and a decision that was undone shows nothing, except changes later edits left on its
-files (the page and command say it was undone). The web UI's Pending page takes
+files (the page and command say it was undone). Both begin with what the decision set, a line
+per field and value ("genre → Pop Rock: 30 files"). The web UI's Pending page takes
 `?operation=12` the same way; saving an edit opens it, and the History page links each
 decision that still has files pending.
 
