@@ -1978,6 +1978,14 @@ def pending_command(
     ] = None,
     limit: Annotated[int, typer.Option(help="Files in a batch")] = 100,
     write: Annotated[bool, typer.Option("--write", help="Write the batch into the files")] = False,
+    all_: Annotated[
+        bool,
+        typer.Option(
+            "--all",
+            help="With --write: every file of the selection, not just a batch; a changeset "
+            "per 500 files",
+        ),
+    ] = False,
     discard: Annotated[
         bool, typer.Option("--discard", help="Drop your edits in the batch instead")
     ] = False,
@@ -2041,6 +2049,8 @@ def pending_command(
         raise typer.BadParameter("--write-gaps does not write lookups: leave out --prefer-gnudb")
     if accept and not prefer_gnudb:
         raise typer.BadParameter("--accept takes gnudb's values: give --prefer-gnudb too")
+    if all_ and not write:
+        raise typer.BadParameter("--all writes the whole selection: give --write too")
     if write and prefer_gnudb:
         raise typer.BadParameter(
             "gnudb's values are written once accepted: --accept them, then --write without "
@@ -2094,6 +2104,29 @@ def pending_command(
                 "back: see `aorg conflicts`."
             )
         batch = found.files
+        if write and all_:
+            with typer.progressbar(length=1, label="Writing") as bar:
+
+                def progress(done: int, total: int) -> None:
+                    bar.length = total or 1
+                    bar.update(done - bar.pos)
+
+                ids, written, failed = wr.write_all(
+                    session, lib, selection, id3_version, progress=progress
+                )
+            for message in failed[:50]:
+                typer.echo(f"  {message}")
+            typer.echo(
+                f"Wrote {written} files"
+                + (f", {len(failed)} failed" if failed else "")
+                + (
+                    f" in {len(ids)} changesets ({ids[0]}–{ids[-1]}; undo with "
+                    "`aorg changes undo ID`)."
+                    if ids
+                    else ": nothing to write."
+                )
+            )
+            return
         if write and batch:
             changeset, outcomes = wr.write(
                 session, batch, wr.description(selection, len(batch)), id3_version
@@ -2162,6 +2195,8 @@ def pending_command(
             typer.echo(f"Run with --accept to take gnudb's values in these {len(batch)} files.")
         elif batch:
             typer.echo(f"Run with --write to write these {len(batch)} files.")
+            if found.total > len(batch):
+                typer.echo(f"Run with --write --all to write all {found.total}.")
 
 
 # ---- decisions -----------------------------------------------------------------------------

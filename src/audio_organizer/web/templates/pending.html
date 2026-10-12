@@ -101,6 +101,7 @@ run <code>aorg scan --deep</code> to measure them (it reads every file, which ta
  {% if album is not none %}<input type="hidden" name="album" value="{{ album }}">{% endif %}
  <input type="hidden" name="only" value="{{ only }}">
  {% for id in operation %}<input type="hidden" name="operation" value="{{ id }}">{% endfor %}
+ {% for id in file %}<input type="hidden" name="file" value="{{ id }}">{% endfor %}
  {% if prefer_gnudb %}
  <input type="hidden" name="prefer_gnudb" value="true">
  <p>Accepting gnudb's values makes them your edits (which <a href="{{ base }}/history">History</a> can undo); they are then written like any other.</p>
@@ -115,6 +116,7 @@ run <code>aorg scan --deep</code> to measure them (it reads every file, which ta
  </label>
  <p>
   <button class="primary" name="action" value="write">Write the ticked files</button>
+  {% if found.total > found.files | length %}<button name="action" value="write-all" onclick="return confirm('Write all {{ found.total }} files, not just those listed?')">Write all {{ found.total }} files</button>{% endif %}
   <button name="action" value="discard" onclick="return confirm('Drop your edits in the ticked files? Measurements and lookups are kept, and History can bring the edits back.')">Discard my edits in them</button>
  </p>
  {% endif %}

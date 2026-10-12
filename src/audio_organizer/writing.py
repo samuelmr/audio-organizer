@@ -570,6 +570,45 @@ def write_gaps(
     return changesets, written, failed
 
 
+def write_all(
+    session: Session,
+    library: Library,
+    selection: Selection,
+    id3_version: int | None = None,
+    batch: int = 500,
+    progress: Callable[[int, int], None] | None = None,
+) -> tuple[list[int], int, list[str]]:
+    """Write every file of the selection that has pending changes, however many: a
+    changeset per batch (in path order), so that none grows beyond what can be reviewed
+    or undone. Unlike write_gaps this writes what the user chose to review, edits and
+    lookups included. Returns the changesets' ids, how many files were written and the
+    messages of the failures; progress(done, total) is called after each batch."""
+    ids = list(
+        session.scalars(
+            _candidates(library, selection)
+            .where(AudioFile.id.not_in(_waiting()))
+            .order_by(AudioFile.path)
+        )
+    )
+    changesets: list[int] = []
+    written = 0
+    failed: list[str] = []
+    for start in range(0, len(ids), batch):
+        chunk = replace(selection, file_ids=ids[start : start + batch])
+        found = survey(session, library, chunk, batch)
+        if found.files:
+            changeset, outcomes = write(
+                session, found.files, description(selection, len(found.files)), id3_version
+            )
+            changesets.append(changeset.id)
+            written += sum(o.ok for o in outcomes)
+            failed += [o.message for o in outcomes if not o.ok]
+        session.expunge_all()  # a library has hundreds of thousands of files
+        if progress:
+            progress(min(start + batch, len(ids)), len(ids))
+    return changesets, written, failed
+
+
 def _extras_to_move(
     session: Session, file: AudioFile, spec: dict, leaving: set[int], carrier: dict[str, int]
 ) -> list[tuple[str, str]]:

@@ -571,6 +571,7 @@ with all of them:
     aorg pending --artist Texas --album "Greatest Hits" --write
     aorg pending --only replaygain --path "Texas" --write
     aorg pending --write --limit 200 --id3-version 3      # the first 200 files
+    aorg pending --operation 12 --write --all # every file of the selection
     aorg pending --artist Texas --discard     # drop your edits instead
 
 `--artist` is the album artist, or the artist where there is none; `--album ""` takes
@@ -607,7 +608,10 @@ server started is shown.
 
 The web UI's Pending page lists the albums with changes waiting; choose one (or an
 artist) to see the old and new value of every field, untick the files you want to
-leave, and write the rest or discard your edits in them.
+leave, and write the rest or discard your edits in them. A page shows a batch of files
+(100 by default); when more are pending, *Write all N files* writes every one of the
+selection (up to 1000 at once, as one changeset). On the command line `--write --all`
+does that for any number, a changeset per 500 files, each of which can be undone.
 
 By default only what the tags lack is written, so a gnudb value that differs from a tag
 is left out: the tag is the stronger evidence. To review those, add `--prefer-gnudb`

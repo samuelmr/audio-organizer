@@ -318,6 +318,23 @@ def test_selection_by_operation(library):
     assert description.endswith(f"(operation #{first.id})")
 
 
+def test_write_all_writes_every_file_in_batches(library):
+    session, lib, root = library
+    files = [_file(session, name) for name in ("Halo", "Insane", "Loose")]
+    _, operation = wr.record_edit(session, files, {"genre": "Rock"}, "edit")
+    selection = wr.Selection(operation_ids=[operation.id])
+    seen = []
+    ids, written, failed = wr.write_all(
+        session, lib, selection, batch=2, progress=lambda done, total: seen.append((done, total))
+    )
+    assert (len(ids), written, failed) == (2, 3, [])  # a changeset per batch
+    assert seen == [(2, 3), (3, 3)]
+    assert wr.survey(session, lib, selection).total == 0
+    for file in files:
+        assert tags.read(root / file.path).fields["genre"] == "Rock"
+    assert wr.write_all(session, lib, selection) == ([], 0, [])
+
+
 def test_cli_pending_by_operation(library):
     session, lib, root = library
     db = str(session.get_bind().url)
@@ -334,6 +351,9 @@ def test_cli_pending_by_operation(library):
     assert "#1: genre -> Rock: 3 files" in result.output  # what the decision set
     assert run("pending", "--operation", "9").exit_code != 0
 
+    result = run("pending", "--operation", "1", "--limit", "1")
+    assert "Run with --write --all to write all 3." in result.output
+    assert run("pending", "--all").exit_code != 0  # only with --write
     result = run("pending", "--operation", "1", "--limit", "1", "--write")
     assert "Wrote 1 files" in result.output
     result = run("pending", "--operation", "1", "--discard")
@@ -342,3 +362,9 @@ def test_cli_pending_by_operation(library):
     assert "was undone by #" not in run("pending", "--operation", "1").output
     run("history", "undo", "1")
     assert "was undone by #" in run("pending", "--operation", "1").output
+
+    # --all writes every file of the selection, not just a batch
+    run("edit", "Texas/White on Blonde/01 Insane.mp3", "--set", "genre=Blues")
+    run("edit", "Texas/Loose.mp3", "--set", "genre=Blues")
+    result = run("pending", "--write", "--all", "--limit", "1")
+    assert "Wrote 3 files in 1 changesets" in result.output

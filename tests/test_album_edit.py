@@ -381,6 +381,18 @@ def test_web_edit_chosen_tracks(Session, library):
     assert response.url.path == "/libraries/music/edit-tracks"
     assert "Nothing changed" in response.text
 
+    # Of a long list only a batch is shown; "Write all" writes the rest too
+    params = {"operation": operation_id, "limit": 1}
+    page = web.get("/libraries/music/pending", params=params).text
+    assert page.count('name="file_ids"') == 1 and "Write all 2 files" in page
+    response = web.post(
+        "/libraries/music/pending",
+        data={"action": "write-all", "operation": operation_id, "only": ""},
+    )
+    assert "Written" in response.text
+    with Session() as session:
+        assert wr.survey(session, session.scalar(select(Library)), wr.Selection()).total == 0
+
 
 def test_web_edit_all_of_a_search(Session, library):
     web = TestClient(create_app(Session))

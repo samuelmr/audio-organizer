@@ -1110,6 +1110,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         artist: Annotated[list[str] | None, Form()] = None,
         album: Annotated[list[str] | None, Form()] = None,
         operation: Annotated[list[int] | None, Form()] = None,
+        file: Annotated[list[int] | None, Form()] = None,
         only: Annotated[str, Form()] = "",
         prefer_gnudb: Annotated[bool, Form()] = False,
         id3_version: Annotated[str, Form()] = "",
@@ -1124,17 +1125,28 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         while artist="" chooses the tracks without an artist; a list keeps the empty value."""
         lib = _library(session, name)
         artist, album = (values[0] if values else None for values in (artist, album))
-        if action not in ("write", "discard", "accept"):
+        if action not in ("write", "write-all", "discard", "accept"):
             raise HTTPException(400, f"Unknown action {action}")
         if (action == "accept") != prefer_gnudb and action != "discard":
             raise HTTPException(400, "gnudb's values are accepted first, then written")
-        selection = _selection(path, artist, album, file_ids or [], only, prefer_gnudb, operation)
+        # write-all takes the whole selection the page showed, not the ticked files
+        every = action == "write-all"
+        selection = _selection(
+            path, artist, album, (file or None) if every else file_ids or [], only,
+            prefer_gnudb, operation,
+        )  # fmt: skip
         found = wr.survey(session, lib, selection, MAX_BATCH)
         back = selection_url(
             f"/libraries/{lib.name}/pending", path=path or None, artist=artist, album=album,
-            only=only or None, prefer_gnudb="true" if prefer_gnudb else None,
-            operation=operation or None,
+            file=file or None, only=only or None,
+            prefer_gnudb="true" if prefer_gnudb else None, operation=operation or None,
         )  # fmt: skip
+        if every and found.total > MAX_BATCH:
+            return _redirect(
+                back,
+                f"{found.total} files are too many to write at once here (at most {MAX_BATCH}); "
+                "write them with `aorg pending --write --all`",
+            )
         if not found.files:
             return _redirect(back, "Nothing to write: no ticked file has pending changes")
         history = (f"/libraries/{lib.name}/history", "Undo on the History page")
