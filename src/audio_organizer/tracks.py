@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import PurePosixPath
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from .models import AudioFile, EffectiveMetadata, FieldValue
@@ -20,6 +20,17 @@ BATCH = 2000
 # The fields an album's tracks usually share, offered for editing all of them at once
 ALBUM_FIELDS = ("album", "albumartist", "artist", "date", "originaldate", "genre",
                 "compilation", "disctotal", "albumartistsort")  # fmt: skip
+# The fields offered for editing chosen tracks at once (say, the genre of a search result):
+# what tracks from several albums plausibly share; not track numbers or titles
+SELECTION_FIELDS = ("artist", "album", "albumartist", "date", "genre", "mood", "rating",
+                    "composer", "grouping", "compilation")  # fmt: skip
+# The track list's "show" choices, as conditions on EffectiveMetadata
+FILTERS = {
+    "all": None,
+    "disputed": EffectiveMetadata.disputed,
+    "no-album": EffectiveMetadata.album.is_(None),
+    "no-title": EffectiveMetadata.title.is_(None),
+}
 
 
 @dataclass
@@ -90,6 +101,50 @@ def album_filter(
             ~AudioFile.path.like(escaped + "%/%", escape="\\"),
         ]
     return conditions
+
+
+def search(
+    library_id: int,
+    q: str = "",
+    show: str = "all",
+    album: str | None = None,
+    albumartist: str | None = None,
+    artist: str | None = None,
+    folder: str | None = None,
+):
+    """A query for the present tracks with their EffectiveMetadata, as the track list
+    shows them: each word of q in the artist, album, title or path, the show filter (see
+    FILTERS) and one album, artist or folder."""
+    M = EffectiveMetadata
+    query = select(AudioFile, M).join(M, M.file_id == AudioFile.id).where(present(library_id))
+    for word in q.split():
+        pattern = f"%{word}%"
+        query = query.where(
+            or_(
+                M.artist.ilike(pattern),
+                M.album.ilike(pattern),
+                M.title.ilike(pattern),
+                AudioFile.path.ilike(pattern),
+            )
+        )
+    if FILTERS.get(show) is not None:
+        query = query.where(FILTERS[show])
+    query = query.where(*album_filter(album, albumartist, folder))
+    if artist is not None:
+        query = query.where(func.lower(M.artist) == artist.lower())
+    return query
+
+
+def chosen_files(session: Session, library_id: int, ids: Iterable[int]) -> list[AudioFile]:
+    """The library's present files among the ids (others are left out), in path order."""
+    ids = list(dict.fromkeys(ids))
+    files: list[AudioFile] = []
+    for start in range(0, len(ids), BATCH):
+        chunk = ids[start : start + BATCH]
+        files += session.scalars(
+            select(AudioFile).where(present(library_id), AudioFile.id.in_(chunk))
+        )
+    return sorted(files, key=lambda f: f.path)
 
 
 def album_files(

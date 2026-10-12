@@ -5,9 +5,9 @@
 {%- endmacro %}
 
 {# A small cover on a tinted square, which shows alone when there is none (static/ui.js
-   removes the image that failed to load) #}
-{% macro thumb(file_id) -%}
-<span class="thumb"><img src="/tracks/{{ file_id }}/art" alt="" loading="lazy"></span>
+   removes the image that failed to load); size="large" beside a page's heading #}
+{% macro thumb(file_id, size="") -%}
+<span class="thumb{% if size %} {{ size }}{% endif %}"><img src="/tracks/{{ file_id }}/art" alt="" loading="lazy"></span>
 {%- endmacro %}
 
 {# The folders holding some tracks, each linking to the folder on this machine #}

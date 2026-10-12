@@ -68,7 +68,16 @@ from ..models import (
 )
 from ..provenance import resolve
 from ..tags import FIELDS
-from ..tracks import ALBUM_FIELDS, album_files, album_filter, present, shared_values
+from ..tracks import (
+    ALBUM_FIELDS,
+    FILTERS,
+    SELECTION_FIELDS,
+    album_files,
+    chosen_files,
+    present,
+    search,
+    shared_values,
+)
 from ..write_jobs import WriteGapsJob, WriteGapsJobs
 
 HERE = Path(__file__).parent
@@ -116,12 +125,6 @@ SORTS = {
     "genre": (M.genre, M.artist),
     "path": (AudioFile.path,),
     "added": (AudioFile.first_seen,),
-}
-FILTERS = {
-    "all": None,
-    "disputed": EffectiveMetadata.disputed,
-    "no-album": EffectiveMetadata.album.is_(None),
-    "no-title": EffectiveMetadata.title.is_(None),
 }
 
 
@@ -269,29 +272,13 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         artist: str | None = None,
         folder: str | None = None,
         page: int = 1,
-        edit: bool = False,
         session: Session = SessionDep,
     ):
         """The tracks of a library: searched, filtered to one album, artist or folder,
-        and sorted. Sorted by album, the tracks come in album order. With edit, the form
-        editing all of an album's tracks is open."""
+        and sorted. Sorted by album, the tracks come in album order. Ticked tracks, or all
+        of a search's, can be edited at once."""
         lib = _library(session, name)
-        query = select(AudioFile, M).join(M, M.file_id == AudioFile.id).where(present(lib.id))
-        for word in q.split():
-            pattern = f"%{word}%"
-            query = query.where(
-                or_(
-                    M.artist.ilike(pattern),
-                    M.album.ilike(pattern),
-                    M.title.ilike(pattern),
-                    AudioFile.path.ilike(pattern),
-                )
-            )
-        if FILTERS.get(show) is not None:
-            query = query.where(FILTERS[show])
-        query = query.where(*album_filter(album, albumartist, folder))
-        if artist is not None:
-            query = query.where(func.lower(M.artist) == artist.lower())
+        query = search(lib.id, q, show, album, albumartist, artist, folder)
         sort = sort if sort in SORTS else ("album" if album or folder else "artist")
         total = session.scalar(select(func.count()).select_from(query.subquery()))
         pages = max(1, ceil(total / PAGE_SIZE))
@@ -324,10 +311,22 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             and show == "all" and 0 < total <= MAX_ALBUM_EDIT
             else None
         )  # fmt: skip
+        # Otherwise a narrowed list (a search, an artist) can be edited whole
+        edit_all = (
+            album_edit is None and 0 < total <= MAX_ALBUM_EDIT
+            and bool(q.split() or show != "all" or {album, artist, folder} != {None})
+        )  # fmt: skip
+        # Sorted by album, each album gets a heading with its cover; on an album's page,
+        # or a folder's holding one album, the page's own heading has it
+        albums_shown = {((m.album or "").lower(), (m.albumartist or "").lower()) for _, m in rows}
+        album_groups = (
+            sort == "album" and album is None and (folder is None or len(albums_shown) > 1)
+        )
         return render(
             request, "library.html", library=lib, rows=rows, total=total, sort=sort,
             album_folder=album_folder, folder_links=folder_links, album_edit=album_edit,
-            edit=edit,
+            edit_all=edit_all, album_groups=album_groups,
+            here=_url(f"/libraries/{lib.name}", sort=sort, page=page, **params),
             page=page, pages=pages, sorts=list(SORTS), filters=list(FILTERS), params=params,
             **params,
         )  # fmt: skip
@@ -385,7 +384,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         }
         return render(
             request, "albums.html", library=lib, rows=rows, total=total, q=q, page=page,
-            pages=pages, folders=folders, max_album_edit=MAX_ALBUM_EDIT,
+            pages=pages, folders=folders,
         )  # fmt: skip
 
     @app.get("/tracks/{file_id}", response_class=HTMLResponse)
@@ -706,12 +705,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             return _redirect(back, "No tracks found")
         if len(files) > MAX_ALBUM_EDIT:
             return _redirect(back, f"Too many tracks to edit at once (over {MAX_ALBUM_EDIT})")
-        shared = shared_values(session, files, ALBUM_FIELDS)
-        values: dict[str, str | None] = {}
-        for field in ALBUM_FIELDS:
-            submitted = str(form.get(field, "")).strip()
-            if submitted and submitted != shared[field]:
-                values[field] = submitted
+        values = _changed_values(form, shared_values(session, files, ALBUM_FIELDS))
         if not values:
             return _redirect(back, "Nothing changed")
         folder = chosen["folder"].strip("/") if chosen["folder"] is not None else None
@@ -719,24 +713,92 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             session, lib, files, values, ae.description(chosen["album"], folder),
             move_files=form.get("move_files") == "true",
         )  # fmt: skip
-        pending = None
-        if edit.pending or edit.moves:
-            artist, album = wr.group_of((edit.pending or [edit.moves[0].file])[0])
-            pending = selection_url(f"/libraries/{lib.name}/pending", artist=artist, album=album)
-        if pending is None:
+        if not (edit.pending or edit.moves):
             return _redirect(back, "Saved; the files' tags already match")
-        message = f"Saved; {len(edit.pending)} files are not yet written"
-        if edit.moves:
-            message += f", and {len(edit.moves)} are to move to renamed folders"
-        elif edit.plan is not None:
-            message += "; no folders to rename"
-        left = len(edit.plan.conflicts) + edit.plan.case_only if edit.plan else 0
-        if left:
-            message += (
-                f"; {left} files stay where they are: their new path is taken, or "
-                "differs only in letter case"
+        artist, album = wr.group_of((edit.pending or [edit.moves[0].file])[0])
+        pending = selection_url(f"/libraries/{lib.name}/pending", artist=artist, album=album)
+        return _redirect(pending, _edit_message(edit))
+
+    @app.get("/libraries/{name}/edit-tracks", response_class=HTMLResponse)
+    def edit_tracks_form(
+        request: Request,
+        name: str,
+        file: Annotated[list[int], Query()] = [],  # noqa: B006
+        q: str = "",
+        show: str = "all",
+        album: str | None = None,
+        albumartist: str | None = None,
+        artist: str | None = None,
+        folder: str | None = None,
+        back: str = "",
+        session: Session = SessionDep,
+    ):
+        """The form editing chosen tracks at once: those ticked on the track list, or all
+        tracks of a search. The form lists them by id, so that saving edits exactly the
+        tracks shown here even if the search would now find others."""
+        lib = _library(session, name)
+        params = {"q": q, "show": show, "album": album, "albumartist": albumartist,
+                  "artist": artist, "folder": folder}  # fmt: skip
+        # Only a link back to the page the tracks were chosen on, never elsewhere
+        if not back.startswith(f"/libraries/{lib.name}"):
+            back = _url(f"/libraries/{lib.name}", **params)
+        if file:
+            files = chosen_files(session, lib.id, file[: MAX_ALBUM_EDIT + 1])
+        elif q.split() or show != "all" or {album, artist, folder} != {None}:
+            files = list(
+                session.scalars(
+                    search(lib.id, **params)
+                    .with_only_columns(AudioFile)
+                    .order_by(AudioFile.path)
+                    .limit(MAX_ALBUM_EDIT + 1)
+                )
             )
-        return _redirect(pending, message + ". Review and write them here.")
+        else:
+            files = []
+        if not files:
+            return _redirect(back, "Tick the tracks to edit first")
+        if len(files) > MAX_ALBUM_EDIT:
+            return _redirect(back, f"Too many tracks to edit at once (over {MAX_ALBUM_EDIT})")
+        metadata = {
+            m.file_id: m
+            for m in session.scalars(select(M).where(M.file_id.in_([f.id for f in files])))
+        }
+        return render(
+            request, "edit_tracks.html", library=lib, files=files, metadata=metadata,
+            shared=shared_values(session, files, SELECTION_FIELDS), back=back,
+        )  # fmt: skip
+
+    @app.post("/libraries/{name}/edit-tracks")
+    async def edit_tracks(request: Request, name: str, session: Session = SessionDep):
+        """Edit the chosen tracks at once, as an album's (see edit_album), and review the
+        files that now differ from the edit on the Pending page."""
+        lib = _library(session, name)
+        form = await request.form()
+        ids = [int(i) for i in form.getlist("file") if str(i).isdigit()]
+        back = str(form.get("back", ""))
+        if not back.startswith(f"/libraries/{lib.name}"):
+            back = f"/libraries/{lib.name}"
+        if len(ids) > MAX_ALBUM_EDIT:
+            return _redirect(back, f"Too many tracks to edit at once (over {MAX_ALBUM_EDIT})")
+        files = chosen_files(session, lib.id, ids)
+        if not files:
+            return _redirect(back, "No tracks found")
+        values = _changed_values(form, shared_values(session, files, SELECTION_FIELDS))
+        if not values:
+            again = _url(f"/libraries/{lib.name}/edit-tracks", file=[f.id for f in files],
+                         back=back)  # fmt: skip
+            return _redirect(again, "Nothing changed")
+        edit = ae.edit(
+            session, lib, files, values, ae.selection_description(files),
+            move_files=form.get("move_files") == "true",
+        )  # fmt: skip
+        if not (edit.pending or edit.moves):
+            return _redirect(back, "Saved; the files' tags already match")
+        changed = list(
+            dict.fromkeys([f.id for f in edit.pending] + [m.file.id for m in edit.moves])
+        )
+        pending = _url(f"/libraries/{lib.name}/pending", file=changed)
+        return _redirect(pending, _edit_message(edit))
 
     # ---- duplicates ----------------------------------------------------------------------
 
@@ -996,20 +1058,21 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         path: str = "",
         artist: str | None = None,
         album: str | None = None,
-        file: int | None = None,
+        file: Annotated[list[int], Query()] = [],  # noqa: B006
         only: str = "",
         limit: int = 100,
         prefer_gnudb: bool = False,
         session: Session = SessionDep,
     ):
         """What is waiting to be written into the files: the albums that have pending
-        changes, and for the chosen ones what would change in each file."""
+        changes, and for the chosen ones what would change in each file. Files can be
+        chosen by id: a track, or the tracks edited together."""
         lib = _library(session, name)
         limit = _clamp_batch(limit)
-        selection = _selection(path, artist, album, [file] if file else None, only, prefer_gnudb)
+        selection = _selection(path, artist, album, file or None, only, prefer_gnudb)
         found = wr.survey(session, lib, selection, limit)
         # The list of albums is for choosing; once one is chosen it is in the heading
-        chosen = artist is not None or album is not None or file is not None
+        chosen = artist is not None or album is not None or bool(file)
         if chosen:
             groups = []
         else:
@@ -2128,6 +2191,33 @@ def _folder_links(library: Library, paths) -> list[tuple[str, str]]:
     ]
 
 
+def _changed_values(form, shared: dict[str, str | None]) -> dict[str, str | None]:
+    """The fields of an edit-all form filled in with a new value. An empty field, or one
+    left as the value all tracks share, keeps each track's own value."""
+    values: dict[str, str | None] = {}
+    for field, value in shared.items():
+        submitted = str(form.get(field, "")).strip()
+        if submitted and submitted != value:
+            values[field] = submitted
+    return values
+
+
+def _edit_message(edit: ae.AlbumEdit) -> str:
+    """What an edit of many tracks at once left to write, for the Pending page."""
+    message = f"Saved; {len(edit.pending)} files are not yet written"
+    if edit.moves:
+        message += f", and {len(edit.moves)} are to move to renamed folders"
+    elif edit.plan is not None:
+        message += "; no folders to rename"
+    left = len(edit.plan.conflicts) + edit.plan.case_only if edit.plan else 0
+    if left:
+        message += (
+            f"; {left} files stay where they are: their new path is taken, or "
+            "differs only in letter case"
+        )
+    return message + ". Review and write them here."
+
+
 def _redirect(
     path: str, message: str | None = None, link: tuple[str, str] | None = None
 ) -> RedirectResponse:
@@ -2141,15 +2231,16 @@ def _redirect(
 
 
 def _url(base: str, /, **params) -> str:
-    """A path with query parameters (which may include "path"), leaving out empty ones."""
-    query = urlencode({k: v for k, v in params.items() if v not in (None, "")})
+    """A path with query parameters (which may include "path"), leaving out empty ones. A
+    list repeats its parameter (file=1&file=2)."""
+    query = urlencode({k: v for k, v in params.items() if v not in (None, "")}, doseq=True)
     return f"{base}?{query}" if query else base
 
 
 def selection_url(base: str, /, **params) -> str:
     """Like _url, but keeping empty values: on the Pending page, artist="" chooses the
     tracks without an artist, while leaving artist out chooses every artist."""
-    query = urlencode({k: v for k, v in params.items() if v is not None})
+    query = urlencode({k: v for k, v in params.items() if v is not None}, doseq=True)
     return f"{base}?{query}" if query else base
 
 

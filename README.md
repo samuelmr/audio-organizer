@@ -213,7 +213,8 @@ audio-organizer I have donated 40 €. If you find audio-organizer valuable, ple
 
 The web UI shows the same catalog: browse, search and sort your tracks, list those whose
 sources disagree or that lack an album or title, see a track's values and where they
-come from, its identical copies and its original tags, and edit them. Click an album,
+come from, its identical copies and its original tags, and edit them, one at a time or
+many at once. Click an album,
 artist or folder to see just its tracks (an album's in disc and track order), or browse
 the albums list with their covers. Albums are grouped by their tags, so the tracks of an album scattered
 across folders show up together. The Pending page shows, album by album, what your edits
@@ -457,10 +458,17 @@ track stays where it is if its new path is taken, or differs only in letter case
 same folder on macOS and most NAS shares). To move files into your library's layout
 instead, use `aorg reorganize` (see above).
 
-In the web UI, an album's or folder's page has an *Edit all tracks* form with the fields
-its tracks usually share and a checkbox to rename the folders too; a field left empty or
-unchanged keeps each track's own value. Saving it opens the album on the Pending page.
-The Albums page has a *Rename album* link on each album, which opens that form.
+In the web UI, an album's or folder's page has an *Edit album* (or *Edit folder*) form
+with the fields its tracks usually share and a checkbox to rename the folders too; a
+field left empty or unchanged keeps each track's own value. Saving it opens the album on
+the Pending page.
+
+To edit any tracks at once, say to set the genre of 30 tracks a search found, tick them
+in the track list and click *Edit ticked tracks*, or *Edit all* to take every track the
+search found (up to 200). The form offers the fields such tracks may share (artist,
+album, album artist, year, genre, mood, rating, composer, grouping, compilation). Saving
+stores one edit, undone on the History page, and opens just those tracks on the Pending
+page.
 
 Besides title, artist, album, track and disc numbers, year and genre, these fields can
 be read and edited: original year, album artist and artist sort names, composer,

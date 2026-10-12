@@ -11,10 +11,10 @@ from audio_organizer import tags
 from audio_organizer import writing as wr
 from audio_organizer.cli import app
 from audio_organizer.layout import _renamed
-from audio_organizer.models import AudioFile, Changeset, Library
+from audio_organizer.models import AudioFile, Changeset, Library, Operation
 from audio_organizer.provenance import resolve
 from audio_organizer.scanner import scan
-from audio_organizer.tracks import album_files, shared_values
+from audio_organizer.tracks import album_files, chosen_files, search, shared_values
 from audio_organizer.web import create_app
 
 ALBUM = "Foreigner/Best of Foriegner"
@@ -136,11 +136,13 @@ def test_cli_edit_album(Session, library):
 def test_web_edit_album(Session, library):
     web = TestClient(create_app(Session))
     page = web.get("/libraries/music", params={"folder": ALBUM}).text
-    assert "Edit all 2 tracks" in page
+    assert "Edit folder: all 2 tracks" in page
     assert 'name="album" value="Best of Foriegner"' in page
     assert 'name="genre" value="" placeholder="(differs between tracks)"' in page
-    assert "Edit all" not in web.get("/libraries/music").text  # not for the whole library
-    assert "Edit all" not in web.get("/libraries/music", params={"artist": "Foreigner"}).text
+    # Not for the whole library, nor an artist (whose tracks are edited as chosen tracks)
+    assert 'id="edit-album"' not in web.get("/libraries/music").text
+    page = web.get("/libraries/music", params={"artist": "Foreigner"}).text
+    assert 'id="edit-album"' not in page
 
     response = web.post(
         "/libraries/music/edit-album",
@@ -290,13 +292,16 @@ def test_cli_edit_album_moving_files(Session, library):
     assert "aorg pending --only path" in result.output
 
 
-def test_web_rename_album_link_and_moves(Session, library):
+def test_web_album_page_and_moves(Session, library):
     web = TestClient(create_app(Session))
     page = web.get("/libraries/music/albums").text
-    link = re.search(r'href="([^"]*edit=true[^"]*)">Rename album', page).group(1)
+    link = re.search(r'href="([^"]*)">Best of Foriegner', page).group(1)
     page = web.get(link.replace("&amp;", "&")).text
-    assert '<details class="album-edit" id="edit-album" open>' in page
+    assert "Edit album: all 3 tracks" in page
     assert 'value="Best of Foriegner"' in page
+    # The album's cover beside its heading; no search, the album is in album order
+    assert 'class="thumb large"' in page
+    assert 'class="search"' not in page
 
     response = web.post(
         "/libraries/music/edit-album",
@@ -306,3 +311,74 @@ def test_web_rename_album_link_and_moves(Session, library):
     assert response.url.path == "/libraries/music/pending"
     assert "3 files are not yet written, and 3 are to move to renamed folders" in response.text
     assert "Foreigner/Best of Foreigner/Bonus/03 Cold as Ice.mp3" in response.text
+
+
+def test_search_and_chosen_files(Session, library):
+    with Session() as session:
+        lib_id = session.scalar(select(Library.id))
+        found = session.scalars(search(lib_id, q="foreigner ice").with_only_columns(AudioFile))
+        assert _paths(found) == [f"{ALBUM}/Bonus/03 Cold as Ice.mp3"]
+        by_folder = session.scalars(
+            search(lib_id, folder=ALBUM).with_only_columns(AudioFile).order_by(AudioFile.path)
+        ).all()
+        assert _paths(by_folder) == _paths(album_files(session, lib_id, folder=ALBUM))
+        other = session.scalar(select(AudioFile).where(AudioFile.path.startswith("Texas")))
+        # In path order, each once, only the library's present files
+        chosen = chosen_files(session, lib_id, [by_folder[1].id, other.id, by_folder[1].id, 999])
+        assert _paths(chosen) == [f"{ALBUM}/02 Juke Box Hero.mp3", other.path]
+
+
+def test_web_edit_chosen_tracks(Session, library):
+    """Ticked tracks of the list, from several albums, get one edit, which is undoable and
+    reviewed on the Pending page with just those files."""
+    web = TestClient(create_app(Session))
+    with Session() as session:
+        ids = {f.path: f.id for f in session.scalars(select(AudioFile))}
+    urgent, halo = ids[f"{ALBUM}/01 Urgent.mp3"], ids["Texas/Greatest Hits/11 Halo.mp3"]
+    page = web.get("/libraries/music", params={"q": "foreigner"}).text
+    assert f'form="bulk" name="file" value="{urgent}"' in page
+    assert "Edit ticked tracks" in page
+    assert "Edit all 3" in page  # a search can be edited whole
+    assert "Edit all" not in web.get("/libraries/music").text  # the whole library can't
+
+    # Nothing ticked: back to the list
+    response = web.get("/libraries/music/edit-tracks", params={"back": "/libraries/music?q=x"})
+    assert response.url.path == "/libraries/music" and response.url.params["q"] == "x"
+    assert "Tick the tracks to edit first" in response.text
+
+    page = web.get("/libraries/music/edit-tracks", params={"file": [urgent, halo]}).text
+    assert "Edit 2 tracks" in page
+    assert 'name="genre" value="" placeholder="(differs between tracks)"' in page
+    assert "Texas/Greatest Hits/11 Halo.mp3" in page
+
+    response = web.post(
+        "/libraries/music/edit-tracks", data={"file": [urgent, halo], "genre": "Rock and Pop"}
+    )
+    assert response.url.path == "/libraries/music/pending"
+    assert sorted(map(int, response.url.params.get_list("file"))) == sorted([urgent, halo])
+    assert "Saved; 2 files are not yet written" in response.text
+    assert "2 chosen tracks" in response.text
+    assert response.text.count('name="file_ids"') == 2
+    with Session() as session:
+        for file_id in (urgent, halo):
+            assert resolve(session.get(AudioFile, file_id).values)["genre"].value == "Rock and Pop"
+        juke = session.get(AudioFile, ids[f"{ALBUM}/02 Juke Box Hero.mp3"])
+        assert resolve(juke.values)["genre"].value == "AOR"  # not ticked
+        operation = session.scalar(select(Operation).order_by(Operation.id.desc()))
+        assert operation.description == "Manual edit of 2 chosen tracks"
+
+    response = web.post(
+        "/libraries/music/edit-tracks", data={"file": [urgent], "genre": "Rock and Pop"}
+    )
+    assert response.url.path == "/libraries/music/edit-tracks"
+    assert "Nothing changed" in response.text
+
+
+def test_web_edit_all_of_a_search(Session, library):
+    web = TestClient(create_app(Session))
+    page = web.get("/libraries/music/edit-tracks", params={"q": "foreigner"}).text
+    assert "Edit 3 tracks" in page
+    assert 'name="album" value="Best of Foriegner"' in page
+    # The link back goes only to the library's own pages
+    params = {"q": "foreigner", "back": "https://example.com"}
+    assert "example.com" not in web.get("/libraries/music/edit-tracks", params=params).text

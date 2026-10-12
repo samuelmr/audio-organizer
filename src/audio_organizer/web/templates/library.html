@@ -3,6 +3,12 @@
 {% block content %}
 {% from "_macros.html" import thumb, folders %}
 {% set base = '/libraries/' ~ library.name %}
+{# An album's or folder's page shows its cover beside the heading, unless the folder holds
+   several albums, which then get a heading each in the list #}
+{% set cover = rows[0][0].id if rows and not album_groups and (album is not none or folder is not none) else none %}
+<div class="page-head">
+ {% if cover is not none %}{{ thumb(cover, "large") }}{% endif %}
+ <div>
 {% if album is not none %}
  <h1>{{ album }}</h1>
  <p class="subtitle">Album{% if albumartist %} by <a href="{{ url(base, artist=albumartist) }}">{{ albumartist }}</a>{% endif %} · <a href="{{ base }}">All tracks</a></p>
@@ -16,6 +22,29 @@
  <h1>{{ library.name }}</h1>
  <p class="hint"><a href="{{ base }}/gnudb/lookups">Look up albums in gnudb</a>, in the background (hours for thousands of albums), then <a href="{{ url(base ~ '/pending', prefer_gnudb='true') }}">Review gnudb differences</a>: the albums of the whole library where gnudb's values differ from the tags.
  <a href="{{ base }}/coverart/lookups">Find covers online</a> the same way.</p>
+{% endif %}
+ </div>
+</div>
+
+{# An album or folder is short and in album order already: no search there #}
+{% if album is none and folder is none %}
+<form class="search" method="get" action="{{ base }}">
+ {% if artist is not none %}<input type="hidden" name="artist" value="{{ artist }}">{% endif %}
+ <input type="search" name="q" value="{{ q }}" placeholder="Artist, album, title or path" aria-label="Search">
+ <label>Show
+  <select name="show">
+   {% for f in filters %}
+    <option value="{{ f }}" {% if f == show %}selected{% endif %}>{{ {"all": "all tracks", "disputed": "sources disagree", "no-album": "no album", "no-title": "no title"}[f] }}</option>
+   {% endfor %}
+  </select>
+ </label>
+ <label>Sort by
+  <select name="sort">
+   {% for s in sorts %}<option value="{{ s }}" {% if s == sort %}selected{% endif %}>{{ s }}</option>{% endfor %}
+  </select>
+ </label>
+ <button>Search</button>
+</form>
 {% endif %}
 
 {{ folders(folder_links) }}
@@ -35,8 +64,8 @@
 {% endif %}
 
 {% if album_edit is not none %}
-<details class="album-edit" id="edit-album"{% if edit %} open{% endif %}>
- <summary>Edit all {{ total }} tracks</summary>
+<details class="album-edit" id="edit-album">
+ <summary>Edit {{ "album" if album is not none else "folder" }}: all {{ total }} tracks</summary>
  <form method="post" action="{{ base }}/edit-album">
   {% for key in ("album", "albumartist", "folder") %}{% if params[key] is not none %}<input type="hidden" name="of_{{ key }}" value="{{ params[key] }}">{% endif %}{% endfor %}
   <table class="fields">
@@ -62,44 +91,33 @@
 </details>
 {% endif %}
 
-<form class="search" method="get" action="{{ base }}">
- {% for key in ("album", "albumartist", "artist", "folder") %}{% if params[key] is not none %}<input type="hidden" name="{{ key }}" value="{{ params[key] }}">{% endif %}{% endfor %}
- <input type="search" name="q" value="{{ q }}" placeholder="Artist, album, title or path" aria-label="Search">
- <label>Show
-  <select name="show">
-   {% for f in filters %}
-    <option value="{{ f }}" {% if f == show %}selected{% endif %}>{{ {"all": "all tracks", "disputed": "sources disagree", "no-album": "no album", "no-title": "no title"}[f] }}</option>
-   {% endfor %}
-  </select>
- </label>
- <label>Sort by
-  <select name="sort">
-   {% for s in sorts %}<option value="{{ s }}" {% if s == sort %}selected{% endif %}>{{ s }}</option>{% endfor %}
-  </select>
- </label>
- <button>Search</button>
+{# The ticked tracks are edited together on a page of their own #}
+<form id="bulk" class="bulk" method="get" action="{{ base }}/edit-tracks">
+ <input type="hidden" name="back" value="{{ here }}">
+ <p class="count">{{ total }} tracks{% if pages > 1 %}, page {{ page }} of {{ pages }}{% endif %}</p>
+ {% if total %}<button>Edit ticked tracks</button>{% endif %}
+ {% if edit_all %}<a href="{{ url(base ~ '/edit-tracks', back=here, **params) }}">Edit all {{ total }}</a>{% endif %}
 </form>
-
-<p class="count">{{ total }} tracks{% if pages > 1 %}, page {{ page }} of {{ pages }}{% endif %}</p>
 
 <table class="tracks">
  <thead>
-  <tr><th class="num">#</th><th>Title</th><th>Artist</th><th>Album</th><th>Year</th><th>Genre</th><th class="num">Time</th><th></th></tr>
+  <tr><th><input type="checkbox" data-select-all="file" aria-label="Tick or untick the tracks on this page" hidden></th><th class="num">#</th><th>Title</th><th>Artist</th><th>Album</th><th>Year</th><th>Genre</th><th class="num">Time</th><th></th></tr>
  </thead>
  <tbody>
  {% set group = namespace(key=none) %}
  {% for file, meta in rows %}
-  {% if sort == "album" and album is none %}
+  {% if album_groups %}
    {% set key = ((meta.album or "") | lower, (meta.albumartist or "") | lower) %}
    {% if key != group.key %}
     {% set group.key = key %}
-    <tr class="group"><th colspan="8">
+    <tr class="group"><th colspan="9">
      {{ thumb(file.id) }}{% if meta.album %}<a href="{{ url(base, album=meta.album, albumartist=meta.albumartist) }}">{{ meta.album }}</a>{% else %}No album{% endif %}
      {% if meta.albumartist %}<span class="by">{{ meta.albumartist }}</span>{% endif %}
     </th></tr>
    {% endif %}
   {% endif %}
-  <tr>
+  <tr data-select-row>
+   <td><input type="checkbox" form="bulk" name="file" value="{{ file.id }}" aria-label="Tick {{ meta.title or file.path }}"></td>
    <td class="num">{% if meta.discnumber and meta.disctotal and meta.disctotal > 1 %}{{ meta.discnumber }}-{% endif %}{{ meta.tracknumber or "" }}</td>
    <td><a href="/tracks/{{ file.id }}">{{ meta.title or file.path.rsplit("/", 1)[-1] }}</a></td>
    <td>{% if meta.artist %}<a class="quiet" href="{{ url(base, artist=meta.artist) }}">{{ meta.artist }}</a>{% endif %}</td>
@@ -110,7 +128,7 @@
    <td>{% if meta.disputed %}<span class="flag" title="Its sources disagree">≠</span>{% endif %}</td>
   </tr>
  {% else %}
-  <tr><td colspan="8">No tracks found.</td></tr>
+  <tr><td colspan="9">No tracks found.</td></tr>
  {% endfor %}
  </tbody>
 </table>

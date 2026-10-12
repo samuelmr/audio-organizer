@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ files | length }} tracks – audio-organizer{% endblock %}
+{% block content %}
+{% set base = '/libraries/' ~ library.name %}
+<h1>Edit {{ files | length }} track{{ "s" if files | length != 1 }}</h1>
+<p class="subtitle"><a href="{{ back }}">Back to the list</a></p>
+
+<form method="post" action="{{ base }}/edit-tracks">
+ <input type="hidden" name="back" value="{{ back }}">
+ {% for file in files %}<input type="hidden" name="file" value="{{ file.id }}">{% endfor %}
+ <table class="fields">
+  <tbody>
+  {% for name, value in shared.items() %}
+   <tr>
+    <th scope="row"><label for="s-{{ name }}">{{ field_labels.get(name, name) }}</label></th>
+    <td><input id="s-{{ name }}" name="{{ name }}" value="{{ value or '' }}"{% if value is none %} placeholder="(differs between tracks)"{% endif %}></td>
+   </tr>
+  {% endfor %}
+  </tbody>
+ </table>
+ <p class="hint">A field you change is saved as your edit of every track listed below, and
+ proposed as changes to the files' tags, which you review before they are applied. Empty
+ fields and fields left as they are stay as they are on each track. The edit is undone
+ from the <a href="{{ base }}/history">History</a> page.</p>
+ <p><label><input type="checkbox" name="move_files" value="true"> Also rename the folders
+ named after the album or artist</label>
+ <span class="hint">Only when you change the album, album artist or artist: folders whose
+ names hold the old album name, or are the old artist's name, get the new name; file names
+ stay as they are.</span></p>
+ <p><button class="primary">Save</button></p>
+</form>
+
+<h2>The tracks</h2>
+<table class="tracks">
+ <thead><tr><th>Title</th><th>Artist</th><th>Album</th><th>Year</th><th>Genre</th><th>File</th></tr></thead>
+ <tbody>
+ {% for file in files %}
+  {% set meta = metadata.get(file.id) %}
+  <tr>
+   <td><a href="/tracks/{{ file.id }}">{{ meta.title if meta and meta.title else file.path.rsplit("/", 1)[-1] }}</a></td>
+   <td>{{ meta.artist or "" if meta }}</td>
+   <td>{{ meta.album or "" if meta }}</td>
+   <td>{{ meta.year or "" if meta }}</td>
+   <td>{{ meta.genre or "" if meta }}</td>
+   <td class="path">{{ file.path }}</td>
+  </tr>
+ {% endfor %}
+ </tbody>
+</table>
+{% endblock %}

@@ -1,5 +1,6 @@
 """Editing all tracks of an album or folder at once, such as fixing a typo in the album's
-name: the same manual values for every track, stored in the catalog as one operation
+name, or any chosen tracks, such as the genre of a search result: the same manual values
+for every track, stored in the catalog as one operation
 (which can be undone) and written into the files later with their other pending changes
 (writing.py). Optionally the folders named after the old album or artist are renamed:
 the moves are decided too, and written with the tags."""
@@ -61,3 +62,8 @@ def description(album: str | None, folder: str | None) -> str:
     return (
         f"Manual edit of album {album}" if album is not None else f"Manual edit of folder {folder}/"
     )
+
+
+def selection_description(files: list[AudioFile]) -> str:
+    """Names the edit of chosen tracks (say, from a search) in History."""
+    return f"Manual edit of {len(files)} chosen track{'s' if len(files) != 1 else ''}"
