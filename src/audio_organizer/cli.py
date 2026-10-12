@@ -955,6 +955,14 @@ def changes_retry(
         _report(outcomes)
 
 
+@changes_app.command("drop-failed")
+def changes_drop_failed(ctx: typer.Context, changeset_id: int) -> None:
+    """Forget the failed changes of a changeset; applied changes stay and can be undone."""
+    with _session(ctx) as session:
+        count = ch.drop_failed(session, _changeset(session, changeset_id))
+        typer.echo(f"Dropped {count} failed change{'s' * (count != 1)} of changeset {changeset_id}")
+
+
 @changes_app.command("delete")
 def changes_delete(ctx: typer.Context, changeset_id: int) -> None:
     """Delete a changeset that has no applied changes (undo those first)."""

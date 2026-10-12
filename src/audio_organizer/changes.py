@@ -247,6 +247,17 @@ def retry_failed(changeset: Changeset) -> int:
     return count
 
 
+def drop_failed(session: Session, changeset: Changeset) -> int:
+    """Forget the failed changes of a changeset, keeping the applied ones (and their undo).
+    A failed change touched nothing, so nothing is lost; it may just not be wanted any more
+    (the target was replaced by a better file, say)."""
+    failed = [c for c in changeset.changes if c.status == "failed"]
+    for change in failed:
+        changeset.changes.remove(change)  # delete-orphan removes the row
+    session.commit()
+    return len(failed)
+
+
 def delete_changeset(session: Session, changeset: Changeset) -> None:
     """Forget a changeset. Applied changes keep what undo needs in the changeset, so those
     must be undone first."""

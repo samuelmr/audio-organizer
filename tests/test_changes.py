@@ -163,6 +163,25 @@ def test_retry_failed_change_after_cause_is_gone(catalog, copy_audio):
     assert (root / "Texas/other.mp3").exists()
 
 
+def test_drop_failed_keeps_applied_changes_and_their_undo(catalog, copy_audio):
+    session, root, file = catalog
+    copy_audio("mp3b", root / "Texas/other.mp3")
+    changeset = ch.new_changeset(session, "reorganize", "manual")
+    bad = ch.propose_move(changeset, file, "Texas/other.mp3")
+    ch.set_status([bad], "approved")
+    ch.apply(session, changeset)
+    assert bad.status == "failed"
+    good = ch.propose_move(changeset, file, "Texas/Halo.mp3")
+    ch.set_status([good], "approved")
+    ch.apply(session, changeset)
+
+    assert ch.drop_failed(session, changeset) == 1
+    assert [c.status for c in changeset.changes] == ["applied"]
+    assert ch.drop_failed(session, changeset) == 0
+    [outcome] = ch.undo(session, changeset)
+    assert outcome.ok, outcome.message
+
+
 def test_delete_changeset_only_without_applied_changes(catalog):
     session, root, file = catalog
     changeset = ch.new_changeset(session, "reorganize", "manual")

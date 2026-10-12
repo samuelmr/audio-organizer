@@ -221,8 +221,9 @@ across folders show up together. The Pending page shows, album by album, what yo
 and measurements would change in the files, and writes the albums you choose; the
 History page lists your edits and other decisions, and undoes them. The web UI
 is also where changesets are easiest to review:
-select changes (or all, then deselect some) to approve or reject, try a dry run, apply
-and undo. The ▶ buttons on track, duplicate and changeset pages play the files in the
+select changes (or all, then deselect some) to approve or reject, try a dry run, apply,
+undo, retry the failed changes or drop them (`aorg changes drop-failed`; applied changes
+stay and can still be undone). The ▶ buttons on track, duplicate and changeset pages play the files in the
 browser, so copies can be compared by ear (MP3, M4A and AAC play everywhere; WMA does
 not). Playlists can be viewed, created and edited; a playlist's page also writes its files to the library disk or a bucket (showing each file's full path, which you can change before writing), deletes them again and restores deleted or replaced ones, and the Playlists page saves the default folders and formats. On the Sync page, a target's plan
 can be reviewed and started, and its progress followed.

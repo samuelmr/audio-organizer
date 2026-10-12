@@ -1569,6 +1569,11 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             outcomes=outcomes, outcome_title="Retried",
         )  # fmt: skip
 
+    @app.post("/changes/{changeset_id}/drop-failed", dependencies=[Exclusive])
+    def changeset_drop_failed(changeset_id: int, session: Session = SessionDep):
+        count = ch.drop_failed(session, _changeset(session, changeset_id))
+        return _redirect(f"/changes/{changeset_id}", f"Dropped {count} failed changes")
+
     @app.post("/changes/{changeset_id}/delete", dependencies=[Exclusive])
     def changeset_delete(changeset_id: int, session: Session = SessionDep):
         changeset = _changeset(session, changeset_id)

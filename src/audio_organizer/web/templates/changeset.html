@@ -101,6 +101,10 @@
  <form method="post" action="/changes/{{ changeset.id }}/retry" class="inline" data-busy>
   <button class="primary">Retry failed changes</button>
  </form>
+ <form method="post" action="/changes/{{ changeset.id }}/drop-failed" class="inline"
+  onsubmit="return confirm('Forget the failed changes? Applied changes stay.')">
+  <button>Drop failed changes</button>
+ </form>
  {% endif %}
  <form method="post" action="/changes/{{ changeset.id }}/undo" class="inline" data-busy>
   <button>Undo applied changes</button>
