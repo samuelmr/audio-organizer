@@ -1,4 +1,5 @@
 import shutil
+import unicodedata
 from pathlib import Path
 
 import pytest
@@ -272,3 +273,22 @@ def test_layout_setting(library):
     with pytest.raises(lo.LayoutError):
         lo.set_layout(session, lib, "{nonsense}/{title}")
     assert session.scalar(select(EffectiveMetadata).limit(1)) is not None
+
+
+def test_unicode_form_of_a_path_is_a_rename_not_a_clash(library):
+    """A file under an NFD name moves to the NFC name the layout renders; another file
+    under the NFD spelling of a target does take it."""
+    session, lib, root = library
+    nfd = lambda text: unicodedata.normalize("NFD", text)  # noqa: E731
+    wanted = {
+        lo.path_key(t): [lo.Move(f, t)]
+        for f, t in [(AudioFile(id=1, path=nfd("A/Hittejä.mp3")), "A/Hittejä.mp3")]
+    }
+    result = lo.Plan()
+    lo._group(result, wanted, {lo.path_key(nfd("A/Hittejä.mp3")): AudioFile(id=1)})
+    assert result.conflicts == [] and len(result.albums) == 1  # itself, not taken
+
+    other = {lo.path_key(nfd("A/Hittejä.mp3")): AudioFile(id=2, path=nfd("A/Hittejä.mp3"))}
+    result = lo.Plan()
+    lo._group(result, wanted, other)
+    assert [why for _, _, why in result.conflicts] == [f"taken by {nfd('A/Hittejä.mp3')}"]

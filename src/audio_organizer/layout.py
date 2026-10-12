@@ -44,7 +44,7 @@ from .models import (
     LibrarySetting,
     Operation,
 )
-from .pathparse import normalize_name
+from .pathparse import normalize_name, path_key
 from .tracks import present
 
 DEFAULT_LAYOUT = "{albumartistsort}/{album}/{disc}{track} {title}"
@@ -148,11 +148,11 @@ def plan(
         key = (normalize_name(album_artists[file.id] or ""), normalize_name(meta.album or ""))
         discs[key] = max(discs[key], meta.disctotal or 0, meta.discnumber or 0)
 
-    taken = {file.path.casefold(): file for file, _ in rows}  # where files are now
+    taken = {path_key(file.path): file for file, _ in rows}  # where files are now
     by_id = {file.id: file for file, _ in rows}
     for file_id, spec in desired:  # and where decided moves will put them
         if file_id in by_id:
-            taken.setdefault(spec["to"].casefold(), by_id[file_id])
+            taken.setdefault(path_key(spec["to"]), by_id[file_id])
     wanted: dict[str, list[Move]] = defaultdict(list)
     for file, meta in rows:
         if path_prefix and not file.path.startswith(path_prefix):
@@ -175,10 +175,10 @@ def plan(
             result.incomplete += 1
         elif target == file.path:
             result.in_place += 1
-        elif target.casefold() == file.path.casefold():
+        elif path_key(target) == path_key(file.path) and not _unicode_only(target, file.path):
             result.case_only += 1
         else:
-            wanted[target.casefold()].append(Move(file, target))
+            wanted[path_key(target)].append(Move(file, target))
     _group(result, wanted, taken)
     return result
 
@@ -199,10 +199,10 @@ def follow_renames(
         target = _renamed(file.path, changed)
         if target == file.path:
             result.in_place += 1
-        elif target.casefold() == file.path.casefold():
+        elif path_key(target) == path_key(file.path) and not _unicode_only(target, file.path):
             result.case_only += 1
         else:
-            wanted[target.casefold()].append(Move(file, target))
+            wanted[path_key(target)].append(Move(file, target))
     targets = [m.target for moves in wanted.values() for m in moves]
     taken = {}
     for start in range(0, len(targets), 500):
@@ -213,7 +213,7 @@ def follow_renames(
                 func.lower(AudioFile.path).in_([t.lower() for t in targets[start : start + 500]]),
             )
         ):
-            taken[file.path.casefold()] = file
+            taken[path_key(file.path)] = file
     _group(result, wanted, taken)
     return result
 
@@ -235,6 +235,12 @@ def _renamed(path: str, changed: dict[str, tuple[str, str]]) -> str:
     return "/".join([*folders, parts[-1]])
 
 
+def _unicode_only(target: str, path: str) -> bool:
+    """Whether the paths differ only in Unicode form (NFC or NFD): renamed to the form the
+    layout renders, which is not a change of letters like case is."""
+    return unicodedata.normalize("NFC", target) == unicodedata.normalize("NFC", path)
+
+
 def _group(result: Plan, wanted: dict[str, list[Move]], taken: dict[str, AudioFile]) -> None:
     """Group the wanted moves by target folder, leaving out (as conflicts) those whose
     target several files want or another file has."""
@@ -245,7 +251,7 @@ def _group(result: Plan, wanted: dict[str, list[Move]], taken: dict[str, AudioFi
             for m in moves:
                 result.conflicts.append((m.file, m.target, "several files would get this path"))
             continue
-        occupant = taken.get(move.target.casefold())
+        occupant = taken.get(path_key(move.target))
         if occupant is not None and occupant.id != move.file.id:
             result.conflicts.append((move.file, move.target, f"taken by {occupant.path}"))
             continue

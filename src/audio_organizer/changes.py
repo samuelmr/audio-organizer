@@ -697,7 +697,10 @@ def _move(
 ) -> dict:
     root = Path(file.library.root)
     source, target = _full_path(file), root / to
-    if target.exists():
+    # A name that differs only in case or Unicode form "exists" on volumes that treat those
+    # as the same name: the file itself, to be renamed
+    same_file = target.exists() and _same_file(source, target)
+    if target.exists() and not same_file:
         raise ChangeError(f"{to} already exists")
     clash = session.scalar(
         select(AudioFile.id).where(
@@ -707,13 +710,31 @@ def _move(
     if clash:
         raise ChangeError(f"{to} is still in the catalog as a missing file; rescan first")
     target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(source, target)
+    if same_file:
+        _rename_via_temporary(source, target)
+    else:
+        shutil.move(source, target)
     moved_extras = _move_extras(root, extras or [])
     _remove_empty_dirs(source.parent, root)
     old_path = file.path
     file.path = Path(to).as_posix()
     _refresh(session, file)
     return {"from": old_path, "extras": moved_extras}
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    try:
+        return a.samefile(b)
+    except OSError:
+        return False
+
+
+def _rename_via_temporary(source: Path, target: Path) -> None:
+    """Rename a file to another spelling of its own name. Renaming straight to a name the
+    file system sees as the same may leave the old spelling, so it goes by a temporary name."""
+    temporary = source.with_name(f".{source.name}.aorg-tmp")
+    os.rename(source, temporary)
+    os.rename(temporary, target)
 
 
 def _move_extras(root: Path, pairs: list[list[str]]) -> list[list[str]]:

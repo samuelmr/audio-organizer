@@ -116,6 +116,13 @@ def unflip(name: str) -> str:
     return f"{first} {last}"
 
 
+def path_key(path: str) -> str:
+    """What decides whether two paths are the same file: letter case and Unicode form
+    ignored. macOS and most NAS shares treat "ä" typed as one character (NFC) or as "a"
+    plus a combining diaeresis (NFD) as the same name, and so are paths that differ in case."""
+    return unicodedata.normalize("NFC", path).casefold()
+
+
 def normalize_name(name: str) -> str:
     """A loose comparison key: case, accents, punctuation and a leading 'The' ignored."""
     text = unicodedata.normalize("NFKD", name.casefold())

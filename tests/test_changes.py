@@ -1,5 +1,6 @@
 import os
 import threading
+import unicodedata
 
 import pytest
 from sqlalchemy import select
@@ -111,6 +112,37 @@ def test_move_refuses_to_overwrite(catalog, copy_audio):
     ch.set_status([change], "approved")
     [outcome] = ch.apply(session, changeset)
     assert not outcome.ok and "already exists" in outcome.message
+
+
+def test_move_to_another_unicode_form_of_its_own_name(Session, copy_audio, tmp_path):
+    """On volumes that treat NFC and NFD names as one (macOS, NAS shares) the target
+    "exists": it is the file itself, so it is renamed and not refused."""
+    nfd, nfc = (
+        unicodedata.normalize("NFD", "Hittejä.mp3"),
+        unicodedata.normalize("NFC", "Hittejä.mp3"),
+    )
+    root = tmp_path / "music"
+    copy_audio("mp3", root / "Aknestik" / nfd)
+    session = Session()
+    library = Library(name="test", root=str(root))
+    session.add(library)
+    session.commit()
+    scan(session, library)
+    file = session.scalar(select(AudioFile))
+    assert file.path == f"Aknestik/{nfd}"
+
+    changeset = ch.new_changeset(session, "reorganize", "manual")
+    change = ch.propose_move(changeset, file, f"Aknestik/{nfc}")
+    ch.set_status([change], "approved")
+    [outcome] = ch.apply(session, changeset)
+    assert outcome.ok, outcome.message
+    assert file.path == f"Aknestik/{nfc}"
+    assert [p.name for p in (root / "Aknestik").iterdir()] == [nfc]  # no temporary left
+
+    [outcome] = ch.undo(session, changeset)
+    assert outcome.ok, outcome.message
+    assert file.path == f"Aknestik/{nfd}"
+    session.close()
 
 
 def test_retry_failed_change_after_cause_is_gone(catalog, copy_audio):
