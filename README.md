@@ -459,16 +459,26 @@ same folder on macOS and most NAS shares). To move files into your library's lay
 instead, use `aorg reorganize` (see above).
 
 In the web UI, an album's or folder's page has an *Edit album* (or *Edit folder*) form
-with the fields its tracks usually share and a checkbox to rename the folders too; a
-field left empty or unchanged keeps each track's own value. Saving it opens the album on
-the Pending page.
+with the fields its tracks usually share; a field left empty or unchanged keeps each
+track's own value. Once you change the album, album artist or artist, a checkbox offers
+to rename the folders too. Saving it opens the album on the Pending page.
 
 To edit any tracks at once, say to set the genre of 30 tracks a search found, tick them
 in the track list and click *Edit ticked tracks*, or *Edit all* to take every track the
-search found (up to 200). The form offers the fields such tracks may share (artist,
-album, album artist, year, genre, mood, rating, composer, grouping, compilation). Saving
-stores one edit, undone on the History page, and opens just those tracks on the Pending
-page.
+search found (up to 200). Ticks stay as you move from page to page. The form offers the
+fields such tracks may share (artist, album, album artist, year, genre, mood, rating,
+composer, grouping, compilation). Saving stores one edit, undone on the History page,
+and opens just those tracks on the Pending page.
+
+On the command line, `aorg edit-tracks` does the same with the tracks a search finds.
+Without `--set` it lists them, to check the search first:
+
+    aorg edit-tracks --artist Texas --query live
+    aorg edit-tracks --artist Texas --query live --set genre="Pop Rock"
+
+Its search takes the words of `--query` (in the artist, album, title or path), and
+`--show disputed`, `--artist`, `--album`, `--albumartist` and `--folder`; the whole library
+is never edited at once.
 
 Besides title, artist, album, track and disc numbers, year and genre, these fields can
 be read and edited: original year, album artist and artist sort names, composer,

@@ -176,14 +176,15 @@ form.inline { display: inline; }
 
 /* pages and groups as chips */
 .pages, .groups { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1rem 0; }
-.pages a, .groups a {
+.pages a, .pages button, .groups a {
   background: var(--highlight);
+  border: 0;
   border-radius: 2em;
   color: var(--fg);
   padding: 0.2rem 0.9rem;
   text-decoration: none;
 }
-.pages a:hover, .groups a:hover { background: var(--line); }
+.pages a:hover, .pages button:hover, .groups a:hover { background: var(--line); }
 .groups a[aria-current] { background: var(--accent-soft); font-weight: 600; }
 
 .fields input { width: 100%; min-width: 12rem; }

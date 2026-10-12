@@ -274,12 +274,15 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         artist: str | None = None,
         folder: str | None = None,
         page: int = 1,
+        file: Annotated[list[int], Query()] = [],  # noqa: B006
         session: Session = SessionDep,
     ):
         """The tracks of a library: searched, filtered to one album, artist or folder,
         and sorted. Sorted by album, the tracks come in album order. Ticked tracks, or all
-        of a search's, can be edited at once."""
+        of a search's, can be edited at once. The ticked tracks (file) are carried from
+        page to page in the URL, so that ticking works without JavaScript too."""
         lib = _library(session, name)
+        ticked = list(dict.fromkeys(file))[:MAX_ALBUM_EDIT]
         query = search(lib.id, q, show, album, albumartist, artist, folder)
         sort = sort if sort in SORTS else ("album" if album or folder else "artist")
         total = session.scalar(select(func.count()).select_from(query.subquery()))
@@ -324,7 +327,8 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         return render(
             request, "library.html", library=lib, rows=rows, total=total, sort=sort,
             album_folder=album_folder, folder_links=folder_links, album_edit=album_edit,
-            edit_all=edit_all, album_groups=album_groups,
+            edit_all=edit_all, album_groups=album_groups, ticked=ticked,
+            ticked_elsewhere=[i for i in ticked if i not in {f.id for f, _ in rows}],
             here=_url(f"/libraries/{lib.name}", sort=sort, page=page, **params),
             page=page, pages=pages, sorts=list(SORTS), filters=list(FILTERS), params=params,
             **params,
@@ -729,12 +733,17 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         albumartist: str | None = None,
         artist: str | None = None,
         folder: str | None = None,
+        all_: Annotated[bool, Query(alias="all")] = False,
         back: str = "",
         session: Session = SessionDep,
     ):
-        """The form editing chosen tracks at once: those ticked on the track list, or all
-        tracks of a search. The form lists them by id, so that saving edits exactly the
-        tracks shown here even if the search would now find others."""
+        """The form editing chosen tracks at once: those ticked on the track list, or with
+        all, every track of a search. The form lists them by id, so that saving edits
+        exactly the tracks shown here even if the search would now find others.
+
+        all is asked for explicitly because the track list's form sends its search along
+        with the ticks (to keep them from page to page): with nothing ticked, that is not
+        to edit the whole search."""
         lib = _library(session, name)
         params = {"q": q, "show": show, "album": album, "albumartist": albumartist,
                   "artist": artist, "folder": folder}  # fmt: skip
@@ -743,7 +752,9 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             back = _url(f"/libraries/{lib.name}", **params)
         if file:
             files = chosen_files(session, lib.id, file[: MAX_ALBUM_EDIT + 1])
-        elif is_narrowed(**params):
+            # Going back keeps them ticked, to tick more or fewer
+            back += ("&" if "?" in back else "?") + urlencode({"file": file}, doseq=True)
+        elif all_ and is_narrowed(**params):
             files = search_files(session, lib.id, MAX_ALBUM_EDIT + 1, **params)
         else:
             files = []

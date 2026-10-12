@@ -81,7 +81,7 @@
   <p class="hint">A field you change is saved as your edit of every track shown here, and
   proposed as changes to the files' tags, which you review before they are applied. Empty
   fields and fields left as they are stay as they are on each track.</p>
-  <p><label><input type="checkbox" name="move_files" value="true"> Also rename the folders
+  <p data-shown-by="album albumartist artist"><label><input type="checkbox" name="move_files" value="true"> Also rename the folders
   named after the album or artist</label>
   <span class="hint">Folders whose names hold the old album name, or are the old artist's
   name, get the new name; file names stay as they are. The moves are part of the same
@@ -91,12 +91,17 @@
 </details>
 {% endif %}
 
-{# The ticked tracks are edited together on a page of their own #}
+{# The ticked tracks are edited together on a page of their own. The pages below are
+   buttons of this form too, sending the search and the ticks along, so that ticks stay
+   from page to page; those of other pages are the hidden inputs. #}
 <form id="bulk" class="bulk" method="get" action="{{ base }}/edit-tracks">
- <input type="hidden" name="back" value="{{ here }}">
- <p class="count">{{ total }} tracks{% if pages > 1 %}, page {{ page }} of {{ pages }}{% endif %}</p>
- {% if total %}<button>Edit ticked tracks</button>{% endif %}
- {% if edit_all %}<a href="{{ url(base ~ '/edit-tracks', back=here, **params) }}">Edit all {{ total }}</a>{% endif %}
+ <input type="hidden" name="sort" value="{{ sort }}">
+ {% for key, value in params.items() %}{% if value is not none and value != "" %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endif %}{% endfor %}
+ {% for id in ticked_elsewhere %}<input type="hidden" name="file" value="{{ id }}">{% endfor %}
+ <p class="count">{{ total }} tracks{% if pages > 1 %}, page {{ page }} of {{ pages }}{% endif %}<span data-ticked-count>{% if ticked %} · {{ ticked | length }} ticked{% endif %}</span></p>
+ {% if total %}<button name="back" value="{{ here }}">Edit ticked tracks</button>{% endif %}
+ {% if ticked %}<a href="{{ here }}">Untick all</a>{% endif %}
+ {% if edit_all %}<a href="{{ url(base ~ '/edit-tracks', all='true', back=here, **params) }}">Edit all {{ total }}</a>{% endif %}
 </form>
 
 <table class="tracks">
@@ -117,7 +122,7 @@
    {% endif %}
   {% endif %}
   <tr data-select-row>
-   <td><input type="checkbox" form="bulk" name="file" value="{{ file.id }}" aria-label="Tick {{ meta.title or file.path }}"></td>
+   <td><input type="checkbox" form="bulk" name="file" value="{{ file.id }}" aria-label="Tick {{ meta.title or file.path }}"{% if file.id in ticked %} checked{% endif %}></td>
    <td class="num">{% if meta.discnumber and meta.disctotal and meta.disctotal > 1 %}{{ meta.discnumber }}-{% endif %}{{ meta.tracknumber or "" }}</td>
    <td><a href="/tracks/{{ file.id }}">{{ meta.title or file.path.rsplit("/", 1)[-1] }}</a></td>
    <td>{% if meta.artist %}<a class="quiet" href="{{ url(base, artist=meta.artist) }}">{{ meta.artist }}</a>{% endif %}</td>
@@ -135,8 +140,8 @@
 
 {% if pages > 1 %}
 <nav class="pages" aria-label="Pages">
- {% if page > 1 %}<a href="{{ url(base, sort=sort, page=page - 1, **params) }}">← Previous</a>{% endif %}
- {% if page < pages %}<a href="{{ url(base, sort=sort, page=page + 1, **params) }}">Next →</a>{% endif %}
+ {% if page > 1 %}<button form="bulk" formaction="{{ base }}" name="page" value="{{ page - 1 }}">← Previous</button>{% endif %}
+ {% if page < pages %}<button form="bulk" formaction="{{ base }}" name="page" value="{{ page + 1 }}">Next →</button>{% endif %}
 </nav>
 {% endif %}
 {% endblock %}

@@ -45,7 +45,9 @@
   // A checkbox with data-select-all="name" selects or deselects all checkboxes of that
   // name, and shows a partial selection.
   document.querySelectorAll("input[data-select-all]").forEach((all) => {
-    const boxes = [...document.querySelectorAll(`input[name="${all.dataset.selectAll}"]`)];
+    // Only the checkboxes: the track list keeps ticks from other pages in hidden inputs
+    const boxes = [...document.querySelectorAll(
+      `input[type=checkbox][name="${all.dataset.selectAll}"]`)];
     if (!boxes.length) return;
     all.hidden = false;
     const sync = () => {
@@ -85,6 +87,34 @@
     });
     boxes.forEach((b) => b.addEventListener("change", sync));
     sync();
+  });
+
+  // The track list's count of ticked tracks, those of other pages (hidden inputs)
+  // included, follows the ticking
+  const count = document.querySelector("[data-ticked-count]");
+  const bulk = document.getElementById("bulk");
+  if (count && bulk) {
+    const inputs = [...bulk.elements].filter((e) => e.name === "file");
+    const update = () => {
+      const n = inputs.filter((e) => e.type === "hidden" || e.checked).length;
+      count.textContent = n ? ` · ${n} ticked` : "";
+    };
+    inputs.forEach((e) => e.addEventListener("change", update));
+  }
+
+  // An element with data-shown-by="album artist" (the option to rename folders) shows only
+  // once one of those fields of its form differs from the value it had; hidden, its
+  // checkbox is unticked so that it does nothing unseen. Without JavaScript it always shows.
+  document.querySelectorAll("[data-shown-by]").forEach((el) => {
+    const form = el.closest("form");
+    const fields = el.dataset.shownBy.split(" ")
+      .map((name) => form.elements.namedItem(name)).filter(Boolean);
+    const update = () => {
+      el.hidden = !fields.some((f) => f.value.trim() !== f.defaultValue.trim());
+      if (el.hidden) el.querySelectorAll("input[type=checkbox]").forEach((b) => { b.checked = false; });
+    };
+    fields.forEach((f) => f.addEventListener("input", update));
+    update();
   });
 
   // Playlist file places (form.place): typing a folder or choosing formats updates the

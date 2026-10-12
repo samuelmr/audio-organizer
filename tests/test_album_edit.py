@@ -376,12 +376,42 @@ def test_web_edit_chosen_tracks(Session, library):
 
 def test_web_edit_all_of_a_search(Session, library):
     web = TestClient(create_app(Session))
-    page = web.get("/libraries/music/edit-tracks", params={"q": "foreigner"}).text
+    page = web.get("/libraries/music/edit-tracks", params={"q": "foreigner", "all": "true"}).text
     assert "Edit 3 tracks" in page
     assert 'name="album" value="Best of Foriegner"' in page
+    # The list's form sends its search with the ticks: with none ticked, not the search
+    response = web.get("/libraries/music/edit-tracks", params={"q": "foreigner"})
+    assert "Tick the tracks to edit first" in response.text
     # The link back goes only to the library's own pages
-    params = {"q": "foreigner", "back": "https://example.com"}
+    params = {"q": "foreigner", "all": "true", "back": "https://example.com"}
     assert "example.com" not in web.get("/libraries/music/edit-tracks", params=params).text
+
+
+def test_web_ticks_stay_from_page_to_page(Session, library, monkeypatch):
+    monkeypatch.setattr("audio_organizer.web.app.PAGE_SIZE", 2)
+    web = TestClient(create_app(Session))
+    with Session() as session:
+        ids = {f.path: f.id for f in session.scalars(select(AudioFile))}
+    urgent = ids[f"{ALBUM}/01 Urgent.mp3"]
+    params = {"q": "foreigner", "sort": "path"}
+    page = web.get("/libraries/music", params=params | {"file": urgent}).text
+    assert f'name="file" value="{urgent}" aria-label="Tick Urgent" checked' in page
+    assert "· 1 ticked" in page
+    # The next page is a button of the form, keeping the search and the ticks
+    assert 'form="bulk" formaction="/libraries/music" name="page" value="2">Next' in page
+    assert '<input type="hidden" name="q" value="foreigner">' in page
+
+    page = web.get("/libraries/music", params=params | {"file": urgent, "page": 2}).text
+    assert f'<input type="hidden" name="file" value="{urgent}">' in page  # from page 1
+    assert "Untick all" in page
+
+    # Back from the edit form, the tracks are still ticked
+    page = web.get(
+        "/libraries/music/edit-tracks",
+        params={"file": urgent, "back": "/libraries/music?q=foreigner"},
+    ).text
+    back = re.search(r'href="([^"]*)">Back to the list', page).group(1).replace("&amp;", "&")
+    assert back == f"/libraries/music?q=foreigner&file={urgent}"
 
 
 def test_cli_edit_tracks(Session, library):
