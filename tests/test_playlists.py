@@ -7,7 +7,7 @@ from sqlalchemy import select
 from audio_organizer import playlists as pl
 from audio_organizer import tags
 from audio_organizer.models import AudioFile, Library, Playlist
-from audio_organizer.playlist_formats import iso_duration, to_m3u
+from audio_organizer.playlist_formats import iso_duration, to_html, to_json, to_m3u
 from audio_organizer.scanner import scan
 from audio_organizer.tracks import Track
 
@@ -276,3 +276,11 @@ def test_generated_shuffle_changes_between_runs():
             playlists.feed(t)
         orders.add(tuple(t.path for t in playlists.results()[0].tracks))
     assert len(orders) > 1
+
+
+def test_playlist_files_have_no_album_track_number():
+    """The track number belongs to an album, so in a playlist it would read as a position."""
+    entries = [(track(title="Halo", tracknumber="3/12"), "a/b.mp3")]
+    data = json.loads(to_json("Mix", entries))
+    assert "position" not in data["track"][0]
+    assert "position" not in to_html("Mix", entries)

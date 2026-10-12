@@ -106,7 +106,6 @@ def _recording(track: Track, location: str) -> dict[str, str]:
         "datePublished": track.get("year"),
         "genre": track.get("genre"),
         "keywords": track.get("mood"),
-        "position": track.get("tracknumber"),
         "name": track.get("title") or _stem(track.path),
         "url": location,
     }
