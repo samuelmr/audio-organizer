@@ -18,7 +18,7 @@ sets its values back where nothing has changed them since, so its files are pend
    <td><a href="{{ base }}/history/{{ op.id }}">{{ op.description }}</a>{% if op.reverts %} <span class="hint">(undoes #{{ op.reverts }})</span>{% endif %}</td>
    <td class="num">{{ entry.values }}</td>
    <td class="num">{{ entry.files }}</td>
-   <td>{{ op.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+   <td>{{ op.created_at.strftime("%Y-%m-%d %H:%M") }}{% if op.id in with_pending %} <a href="{{ url(base ~ '/pending', operation=op.id) }}">Pending</a>{% endif %}</td>
    <td>{% if op.reverted_by %}<span class="hint">undone by #{{ op.reverted_by }}</span>{% else %}<form method="post" action="{{ base }}/history/{{ op.id }}/undo" data-busy><button>Undo</button></form>{% endif %}</td>
   </tr>
  {% else %}

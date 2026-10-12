@@ -478,7 +478,19 @@ Without `--set` it lists them, to check the search first:
 
 Its search takes the words of `--query` (in the artist, album, title or path), and
 `--show disputed`, `--artist`, `--album`, `--albumartist` and `--folder`; the whole library
-is never edited at once.
+is never edited at once. It ends by printing the one command that reviews exactly the
+files the edit touched (`aorg edit-album` does too):
+
+    aorg pending --operation 12
+
+`--operation` takes the number of an entry on the History page (`aorg history`), and
+combines with `--only`, `--limit`, `--write` and `--discard`. It chooses the files that
+decision set a value of which still have changes waiting, shown as they are pending
+*now*: a file edited again since shows the later value too, files already written drop
+out, and a decision that was undone shows nothing, except changes later edits left on its
+files (the page and command say it was undone). The web UI's Pending page takes
+`?operation=12` the same way; saving an edit opens it, and the History page links each
+decision that still has files pending.
 
 Besides title, artist, album, track and disc numbers, year and genre, these fields can
 be read and edited: original year, album artist and artist sort names, composer,

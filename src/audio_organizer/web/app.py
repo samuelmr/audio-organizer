@@ -797,10 +797,13 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         )  # fmt: skip
         if not (edit.pending or edit.moves):
             return _redirect(back, "Saved; the files' tags already match")
-        changed = list(
-            dict.fromkeys([f.id for f in edit.pending] + [m.file.id for m in edit.moves])
-        )
-        pending = _url(f"/libraries/{lib.name}/pending", file=changed)
+        if edit.operation_ids:
+            pending = _url(f"/libraries/{lib.name}/pending", operation=edit.operation_ids)
+        else:  # the values were stored already: only the files still pending can be named
+            changed = list(
+                dict.fromkeys([f.id for f in edit.pending] + [m.file.id for m in edit.moves])
+            )
+            pending = _url(f"/libraries/{lib.name}/pending", file=changed)
         return _redirect(pending, _edit_message(edit))
 
     # ---- duplicates ----------------------------------------------------------------------
@@ -1047,11 +1050,12 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
 
     def _selection(
         path: str, artist: str | None, album: str | None, file_ids: list[int] | None,
-        only: str, prefer_gnudb: bool,
+        only: str, prefer_gnudb: bool, operation_ids: list[int] | None = None,
     ) -> wr.Selection:  # fmt: skip
         return wr.Selection(
             path=path or None, artist=artist, album=album, file_ids=file_ids,
             only=_only(only), prefer=("gnudb",) if prefer_gnudb else (),
+            operation_ids=operation_ids or None,
         )  # fmt: skip
 
     @app.get("/libraries/{name}/pending", response_class=HTMLResponse)
@@ -1062,6 +1066,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         artist: str | None = None,
         album: str | None = None,
         file: Annotated[list[int], Query()] = [],  # noqa: B006
+        operation: Annotated[list[int], Query()] = [],  # noqa: B006
         only: str = "",
         limit: int = 100,
         prefer_gnudb: bool = False,
@@ -1069,13 +1074,16 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
     ):
         """What is waiting to be written into the files: the albums that have pending
         changes, and for the chosen ones what would change in each file. Files can be
-        chosen by id: a track, or the tracks edited together."""
+        chosen by id (a track), or by decision (operation): the files it touched, e.g. the
+        tracks edited together. A decision that was undone, or whose files were edited
+        again, shows what the files have pending now."""
         lib = _library(session, name)
         limit = _clamp_batch(limit)
-        selection = _selection(path, artist, album, file or None, only, prefer_gnudb)
+        operations = [_operation(session, lib, op_id) for op_id in operation]
+        selection = _selection(path, artist, album, file or None, only, prefer_gnudb, operation)
         found = wr.survey(session, lib, selection, limit)
         # The list of albums is for choosing; once one is chosen it is in the heading
-        chosen = artist is not None or album is not None or bool(file)
+        chosen = artist is not None or album is not None or bool(file) or bool(operation)
         if chosen:
             groups = []
         else:
@@ -1085,7 +1093,8 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         return render(
             request, "pending.html", library=lib, found=found, groups=groups,
             path=path, artist=artist, album=album, file=file, only=only, limit=limit,
-            prefer_gnudb=prefer_gnudb, unmeasured=unmeasured, unmeasurable=unmeasurable,
+            operation=operation, operations=operations, prefer_gnudb=prefer_gnudb,
+            unmeasured=unmeasured, unmeasurable=unmeasurable,
             gap_job=gap_writes.get(lib),
         )  # fmt: skip
 
@@ -1098,6 +1107,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         path: Annotated[str, Form()] = "",
         artist: Annotated[list[str] | None, Form()] = None,
         album: Annotated[list[str] | None, Form()] = None,
+        operation: Annotated[list[int] | None, Form()] = None,
         only: Annotated[str, Form()] = "",
         prefer_gnudb: Annotated[bool, Form()] = False,
         id3_version: Annotated[str, Form()] = "",
@@ -1116,11 +1126,12 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             raise HTTPException(400, f"Unknown action {action}")
         if (action == "accept") != prefer_gnudb and action != "discard":
             raise HTTPException(400, "gnudb's values are accepted first, then written")
-        selection = _selection(path, artist, album, file_ids or [], only, prefer_gnudb)
+        selection = _selection(path, artist, album, file_ids or [], only, prefer_gnudb, operation)
         found = wr.survey(session, lib, selection, MAX_BATCH)
         back = selection_url(
             f"/libraries/{lib.name}/pending", path=path or None, artist=artist, album=album,
             only=only or None, prefer_gnudb="true" if prefer_gnudb else None,
+            operation=operation or None,
         )  # fmt: skip
         if not found.files:
             return _redirect(back, "Nothing to write: no ticked file has pending changes")
@@ -1134,7 +1145,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             taken = wr.accept(session, found.files, "gnudb", description)
             pending = selection_url(
                 f"/libraries/{lib.name}/pending", path=path or None, artist=artist, album=album,
-                only=only or None,
+                only=only or None, operation=operation or None,
             )  # fmt: skip
             return _redirect(
                 pending, f"Accepted {taken} of gnudb's values; write them here.", link=history
@@ -1153,6 +1164,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         path: Annotated[str, Form()] = "",
         artist: Annotated[list[str] | None, Form()] = None,
         album: Annotated[list[str] | None, Form()] = None,
+        operation: Annotated[list[int] | None, Form()] = None,
         only: Annotated[str, Form()] = "",
         id3_version: Annotated[str, Form()] = "",
         session: Session = SessionDep,
@@ -1162,7 +1174,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         long-running action's turn until it ends, so nothing else writes files meanwhile."""
         lib = _library(session, name)
         artist, album = (values[0] if values else None for values in (artist, album))
-        selection = _selection(path, artist, album, None, only, False)
+        selection = _selection(path, artist, album, None, only, False, operation)
         version = int(id3_version) if id3_version in ("3", "4") else None
         claim_exclusive()
         try:
@@ -1201,8 +1213,10 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         """The user's decisions in the catalog, newest first, each of which can be undone."""
         lib = _library(session, name)
         entries = ops.history(session, lib.id, HISTORY_PAGE + 1, max(start, 0))
+        shown = entries[:HISTORY_PAGE]
+        with_pending = wr.operations_pending(session, lib, [e.operation.id for e in shown])
         return render(
-            request, "history.html", library=lib, entries=entries[:HISTORY_PAGE],
+            request, "history.html", library=lib, entries=shown, with_pending=with_pending,
             start=max(start, 0), more=len(entries) > HISTORY_PAGE, page=HISTORY_PAGE,
         )  # fmt: skip
 

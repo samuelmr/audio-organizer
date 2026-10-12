@@ -697,12 +697,12 @@ def edit_album(
         )
         where = folders[0] + "/" if len(folders) == 1 else f"{len(folders)} folders"
         if edit.pending:
-            artist, album_name = wr.group_of(edit.pending[0])
             typer.echo(
                 f"Saved for {len(files)} tracks in {where}; {len(edit.pending)} of them are "
-                "not yet written. Review and write them with\n"
-                f"  aorg pending --artist {shlex.quote(artist)} --album {shlex.quote(album_name)}"
+                "not yet written. Review and write them with"
             )
+            for command in _pending_commands(edit):
+                typer.echo(f"  {command}")
         else:
             typer.echo(f"Saved for {len(files)} tracks in {where}; their tags already match.")
         if not edit.moves:
@@ -795,20 +795,30 @@ def edit_tracks(
                 f"Saved for {len(files)} tracks; {len(edit.pending)} of them are not yet "
                 "written. Review and write them with"
             )
-            groups = list(dict.fromkeys(wr.group_of(file) for file in edit.pending))
-            for group_artist, group_album in groups[:10]:
-                typer.echo(
-                    f"  aorg pending --artist {shlex.quote(group_artist)} "
-                    f"--album {shlex.quote(group_album)}"
-                )
-            if len(groups) > 10:
-                typer.echo(f"  and {len(groups) - 10} more albums (see `aorg pending`)")
+            for command in _pending_commands(edit):
+                typer.echo(f"  {command}")
         for move in edit.moves:
             typer.echo(f"  move {move.file.path} -> {move.target}")
         if edit.moves:
             typer.echo("Review and write the moves with `aorg pending --only path`.")
         elif edit.plan is not None:
             typer.echo("No folders to rename.")
+
+
+def _pending_commands(edit: ae.AlbumEdit) -> list[str]:
+    """The command reviewing what an edit touched: the files of its decisions. Where the
+    edit stored nothing new (its values were set already) there is no decision to name,
+    and the albums of the files still pending are listed instead."""
+    if edit.operation_ids:
+        return ["aorg pending " + " ".join(f"--operation {i}" for i in edit.operation_ids)]
+    groups = list(dict.fromkeys(wr.group_of(file) for file in edit.pending))
+    commands = [
+        f"aorg pending --artist {shlex.quote(artist)} --album {shlex.quote(album)}"
+        for artist, album in groups[:10]
+    ]
+    if len(groups) > 10:
+        commands.append(f"and {len(groups) - 10} more albums (see `aorg pending`)")
+    return commands
 
 
 def _edit_values(set_: list[str], unset: list[str]) -> dict[str, str | None]:
@@ -1956,6 +1966,12 @@ def pending_command(
     ] = None,
     album: Annotated[str | None, typer.Option(help="Only this album, ignoring case")] = None,
     path: Annotated[str | None, typer.Option(help="Only files under this path")] = None,
+    operation: Annotated[
+        list[int],
+        typer.Option(
+            help="Only the files this decision (see `aorg history`) touched; repeat for more"
+        ),
+    ] = [],  # noqa: B006
     only: Annotated[
         str | None,
         typer.Option(help="Only these fields, comma-separated; e.g. replaygain, rating"),
@@ -1994,6 +2010,11 @@ def pending_command(
 
         aorg pending --artist Texas --album "Greatest Hits"
         aorg pending --artist Texas --album "Greatest Hits" --write
+        aorg pending --operation 12
+
+    --operation chooses the files that decision touched which still have changes waiting:
+    what is shown is how they are pending now, also if the decision was undone or the files
+    edited again since. `aorg edit-tracks` prints it for the edit it made.
 
     --write writes the batch (--limit files), each file once with all its changes, as a
     changeset that `aorg changes undo` reverts (your edits stay, so the files are pending
@@ -2029,9 +2050,13 @@ def pending_command(
     selection = wr.Selection(
         path=path, artist=artist, album=album, only=fields,
         prefer=("gnudb",) if prefer_gnudb else (),
+        operation_ids=list(operation) or None,
     )  # fmt: skip
     with _session(ctx) as session:
         lib = _library(session, library)
+        for operation_id in operation:
+            if _operation(session, operation_id).library_id != lib.id:
+                raise typer.BadParameter(f"Operation {operation_id} is in another library")
         if write_gaps:
             with typer.progressbar(length=1, label="Writing") as bar:
 
@@ -2098,7 +2123,17 @@ def pending_command(
                 + " (`aorg history` can undo this)."
             )
             return
-        if artist is None and album is None and path is None and not prefer_gnudb:
+        for operation_id in operation:
+            undone = _operation(session, operation_id).reverted_by
+            if undone is not None:
+                typer.echo(
+                    f"Operation {operation_id} was undone by #{undone}: shown are the changes "
+                    "its files have pending now."
+                )
+        if (
+            artist is None and album is None and path is None and not operation
+            and not prefer_gnudb
+        ):  # fmt: skip
             groups = wr.groups(session, lib, selection)
             for group in groups[:50]:
                 typer.echo(

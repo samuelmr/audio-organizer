@@ -31,6 +31,8 @@ from .models import (
     FieldValue,
     FileDesire,
     Library,
+    Operation,
+    OperationValue,
 )
 from .models import PendingField as P
 from .provenance import resolve, unwritten
@@ -61,6 +63,11 @@ class Selection:
     artist: str | None = None  # album artist, or artist where there is none ("" for none)
     album: str | None = None  # "" for tracks without an album
     file_ids: list[int] | None = None
+    # Files an operation (History) set, changed or removed a value of, among them those
+    # that have pending changes now: what an edit of many tracks touched. Chosen by the
+    # files, not the operation's values, so a file edited again since, or whose edit was
+    # undone, is shown as it is pending now (an undone edit mostly leaves nothing).
+    operation_ids: list[int] | None = None
     only: list[str] | None = None  # field names, or their beginnings ("replaygain")
     # Sources whose values replace a tag that differs from them ("gnudb"); see unwritten
     prefer: tuple[str, ...] = ()
@@ -145,6 +152,14 @@ def _selected(library: Library, selection: Selection) -> list:
         conditions.append(func.lower(ALBUM) == selection.album.lower())
     if selection.file_ids is not None:
         conditions.append(AudioFile.id.in_(selection.file_ids))
+    if selection.operation_ids is not None:
+        conditions.append(
+            AudioFile.id.in_(
+                select(OperationValue.file_id).where(
+                    OperationValue.operation_id.in_(selection.operation_ids)
+                )
+            )
+        )
     return conditions
 
 
@@ -361,6 +376,21 @@ def groups(session: Session, library: Library, selection: Selection) -> list[Gro
     return [Group(artist, album, count) for artist, album, count in rows]
 
 
+def operations_pending(session: Session, library: Library, operation_ids: list[int]) -> set[int]:
+    """Which of the operations touched a file that has pending changes now (and is not
+    waiting for review in a changeset): those the Pending page can show something for."""
+    return {
+        op_id
+        for op_id in operation_ids
+        if session.scalar(
+            _candidates(library, Selection(operation_ids=[op_id]))
+            .where(AudioFile.id.not_in(_waiting()))
+            .limit(1)
+        )
+        is not None
+    }
+
+
 def group_of(file: AudioFile) -> tuple[str, str]:
     """The artist and album a file's pending changes are grouped under."""
     resolved = resolve(file.values)
@@ -368,23 +398,33 @@ def group_of(file: AudioFile) -> tuple[str, str]:
     return get("albumartist") or get("artist"), get("album")
 
 
-def store_edit(
+def record_edit(
     session: Session, files: list[AudioFile], values: dict[str, str | None], description: str
-) -> list[AudioFile]:
+) -> tuple[list[AudioFile], Operation | None]:
     """Store the user's values for these files (None removes one, falling back to tags
     and paths), as an operation that can be undone. Nothing is written to the files: the
-    files whose tags now differ are returned, and are pending until written."""
+    files whose tags now differ are returned, and are pending until written. The operation
+    is None when every value was stored already; `Selection.operation_ids` chooses the
+    files it touched."""
     unknown = set(values) - set(tags.FIELDS)
     if unknown:
         raise ValueError(f"Not tag fields: {', '.join(sorted(unknown))}")
+    operation = None
     if files:
-        ops.record(
+        operation = ops.record(
             session, files[0].library_id, "edit", description,
             (ops.Value(file.id, "manual", name, value)
              for file in files for name, value in values.items()),
         )  # fmt: skip
     session.commit()
-    return [file for file in files if set(unwritten(file.values)) & set(values)]
+    return [file for file in files if set(unwritten(file.values)) & set(values)], operation
+
+
+def store_edit(
+    session: Session, files: list[AudioFile], values: dict[str, str | None], description: str
+) -> list[AudioFile]:
+    """record_edit without the operation."""
+    return record_edit(session, files, values, description)[0]
 
 
 def write(
@@ -635,6 +675,8 @@ def description(
         what.append(selection.album or "no album")
     if selection.path:
         what.append(selection.path)
+    if selection.operation_ids:
+        what.append("operation " + ", ".join(f"#{i}" for i in selection.operation_ids))
     files = f"{count} file{'s' if count != 1 else ''}"
     where = f" ({' – '.join(what)})" if what else ""
     if accept:

@@ -24,6 +24,13 @@ class AlbumEdit:
     operation: Operation | None  # the decision to move the folders; None when none is new
     moves: list[lo.Move]  # the folder moves decided on
     plan: lo.Plan | None  # the moves' plan, with what could not be moved and why
+    edit_operation: Operation | None = None  # the decision storing the values
+
+    @property
+    def operation_ids(self) -> list[int]:
+        """The decisions to review together on the Pending page (`Selection.operation_ids`):
+        the edit, and the folder moves. Empty when both were decided already."""
+        return [op.id for op in (self.edit_operation, self.operation) if op is not None]
 
 
 def edit(
@@ -39,7 +46,7 @@ def edit(
     renaming the folders named after an album or artist being renamed; the files move
     when written from the Pending page, with their tags."""
     before = [(file, resolve(file.values)) for file in files]
-    pending = wr.store_edit(session, files, values, description)
+    pending, edit_operation = wr.record_edit(session, files, values, description)
     plan, operation, moves = None, None, []
     if move_files:
         renames = []
@@ -55,7 +62,7 @@ def edit(
         plan = lo.follow_renames(session, library, renames)
         moves = [move for album in plan.albums for move in album.moves]
         operation = lo.decide(session, library, plan.albums, f"Rename folders: {description}")
-    return AlbumEdit(pending, operation, moves, plan)
+    return AlbumEdit(pending, operation, moves, plan, edit_operation)
 
 
 def description(album: str | None, folder: str | None) -> str:

@@ -3,6 +3,7 @@ from sqlalchemy import select, text
 from typer.testing import CliRunner
 
 from audio_organizer import changes as ch
+from audio_organizer import operations as ops
 from audio_organizer import tags
 from audio_organizer import writing as wr
 from audio_organizer.cli import app
@@ -282,3 +283,60 @@ def test_write_gaps_looks_only_at_files_with_gaps_to_fill(library):
     )
     assert (len(ids), written, failed) == (1, 1, [])
     assert set(progress) == {1}
+
+
+def test_selection_by_operation(library):
+    """An operation chooses the files it touched that are pending now: not other pending
+    files, and not those already written. Later edits and an undo show as they are now."""
+    session, lib, root = library
+    halo, insane = _file(session, "Halo"), _file(session, "Insane")
+    _, first = wr.record_edit(session, [halo, insane], {"genre": "Rock"}, "first")
+    wr.store_edit(session, [_file(session, "So What")], {"genre": "Pop"}, "other")  # unrelated
+
+    def chosen(*ids):
+        selection = wr.Selection(operation_ids=list(ids))
+        return {p.file.path: p.fields for p in wr.survey(session, lib, selection).files}
+
+    assert chosen(first.id) == {halo.path: {"genre": "Rock"}, insane.path: {"genre": "Rock"}}
+    assert wr.operations_pending(session, lib, [first.id]) == {first.id}
+
+    # Edited again since: shown as pending now
+    wr.store_edit(session, [halo], {"genre": "Pop Rock"}, "second")
+    assert chosen(first.id)[halo.path] == {"genre": "Pop Rock"}
+
+    # Written files drop out
+    wr.write(session, wr.survey(session, lib, wr.Selection(file_ids=[insane.id])).files, "w")
+    assert list(chosen(first.id)) == [halo.path]
+
+    # Undone: its values are back; what a later edit holds is still pending
+    ops.undo(session, first)
+    session.commit()
+    assert first.reverted_by is not None
+    assert chosen(first.id) == {halo.path: {"genre": "Pop Rock"}}
+    description = wr.description(wr.Selection(operation_ids=[first.id]), 1)
+    assert description.endswith(f"(operation #{first.id})")
+
+
+def test_cli_pending_by_operation(library):
+    session, lib, root = library
+    db = str(session.get_bind().url)
+    run = lambda *args: CliRunner().invoke(app, ["--db", db, *args])  # noqa: E731
+    result = run("edit-tracks", "--artist", "Texas", "--set", "genre=Rock")
+    assert result.exit_code == 0, result.output
+    assert "  aorg pending --operation 1\n" in result.output
+    run("edit", "P!nk/Funhouse/01 So What.m4a", "--set", "genre=Pop")
+
+    result = run("pending", "--operation", "1")
+    assert "3 files have values not yet in them (genre 3)." in result.output
+    assert "Texas/Greatest Hits/11 Halo.mp3" in result.output
+    assert "P!nk" not in result.output
+    assert run("pending", "--operation", "9").exit_code != 0
+
+    result = run("pending", "--operation", "1", "--limit", "1", "--write")
+    assert "Wrote 1 files" in result.output
+    result = run("pending", "--operation", "1", "--discard")
+    assert "Dropped 2 edits" in result.output
+    assert "0 files have values" in run("pending", "--operation", "1").output
+    assert "was undone by #" not in run("pending", "--operation", "1").output
+    run("history", "undo", "1")
+    assert "was undone by #" in run("pending", "--operation", "1").output

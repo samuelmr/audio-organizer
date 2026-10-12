@@ -4,13 +4,17 @@
 {% block content %}
 {% set base = '/libraries/' ~ library.name %}
 {% set here = base ~ '/pending' %}
-{% set chosen = artist is not none or album is not none or file %}
-<h1>Pending{% if artist is not none %}: {{ artist or "(no artist)" }}{% endif %}{% if album is not none %} – {{ album or "(no album)" }}{% endif %}{% if file | length > 1 and artist is none and album is none %}: {{ file | length }} chosen tracks{% endif %}</h1>
+{% set chosen = artist is not none or album is not none or file or operations %}
+<h1>Pending{% if artist is not none %}: {{ artist or "(no artist)" }}{% endif %}{% if album is not none %} – {{ album or "(no album)" }}{% endif %}{% if operations and artist is none and album is none %}: {% for op in operations %}{{ op.description }} (#{{ op.id }}){{ ", " if not loop.last }}{% endfor %}{% elif file | length > 1 and artist is none and album is none %}: {{ file | length }} chosen tracks{% endif %}</h1>
 <p>Your edits, loudness measurements, lookups and ratings are kept in the catalog until
 they are written into the files. Choose an artist or album, check what would change, and
 write it: each file is written once, with all its changes. Writing makes a changeset that
 can be undone; your edits stay, so the files are pending again. Your edits themselves are
 undone on the <a href="{{ base }}/history">History</a> page.</p>
+{% for op in operations if op.reverted_by %}
+<p class="notice">Decision #{{ op.id }} was undone by <a href="{{ base }}/history/{{ op.reverted_by }}">#{{ op.reverted_by }}</a>. Shown is what its files have pending now, which is mostly nothing.</p>
+{% endfor %}
+{% if operations %}<p class="hint">The files {{ "these decisions" if operations | length > 1 else "this decision" }} touched, as they are pending now: also with edits made to them since.</p>{% endif %}
 <p class="hint">{{ found.total }} file{{ "s" if found.total != 1 }} {{ "have" if found.total != 1 else "has" }} values not yet in {{ "them" if found.total != 1 else "it" }}{% if chosen or path %} here{% endif %}{% if found.waiting %};
 {{ found.waiting }} more have changes waiting for review in <a href="/changes">changesets</a>{% endif %}.
 {% if found.conflicts %}<a href="{{ url(base ~ '/conflicts', path=path) }}">{{ found.conflicts }} field{{ "s" if found.conflicts != 1 }} retagged elsewhere since you edited {{ "them are" if found.conflicts != 1 else "it is" }} held back</a> until you decide.{% endif %}
@@ -35,7 +39,7 @@ run <code>aorg scan --deep</code> to measure them (it reads every file, which ta
  <thead><tr><th>Field</th><th class="num">Files</th></tr></thead>
  <tbody>
  {% for field, n in found.by_field.most_common() %}
-  <tr><td><a href="{{ selection_url(here, path=path or none, artist=artist, album=album, file=file, only=field, limit=limit, prefer_gnudb=prefer_gnudb or none) }}">{{ labels.get(field, field) }}</a></td><td class="num">{{ n }}</td></tr>
+  <tr><td><a href="{{ selection_url(here, path=path or none, artist=artist, album=album, file=file, operation=operation or none, only=field, limit=limit, prefer_gnudb=prefer_gnudb or none) }}">{{ labels.get(field, field) }}</a></td><td class="num">{{ n }}</td></tr>
  {% endfor %}
  </tbody>
 </table>
@@ -49,6 +53,7 @@ run <code>aorg scan --deep</code> to measure them (it reads every file, which ta
  {% if artist is not none %}<input type="hidden" name="artist" value="{{ artist }}">{% endif %}
  {% if album is not none %}<input type="hidden" name="album" value="{{ album }}">{% endif %}
  <input type="hidden" name="only" value="{{ only }}">
+ {% for id in operation %}<input type="hidden" name="operation" value="{{ id }}">{% endfor %}
  <p><button onclick="return confirm('Write all measurements and ratings into files that lack them?')">Write all measurements and ratings</button>
   <span class="hint">into every file{% if chosen or path or only %} here{% endif %} that has no such tag yet (a track gain of 0.00 dB counts as none). Existing tags, your edits and lookups are left for review. It runs in the background, a changeset per 500 files; each can be undone, and it can be stopped between them.</span></p>
 </form>
@@ -58,6 +63,7 @@ run <code>aorg scan --deep</code> to measure them (it reads every file, which ta
  {% if artist is not none %}<input type="hidden" name="artist" value="{{ artist }}">{% endif %}
  {% if album is not none %}<input type="hidden" name="album" value="{{ album }}">{% endif %}
  {% for id in file %}<input type="hidden" name="file" value="{{ id }}">{% endfor %}
+ {% for id in operation %}<input type="hidden" name="operation" value="{{ id }}">{% endfor %}
  <input type="search" name="path" value="{{ path }}" placeholder="Only files under a path" aria-label="Path">
  <input name="only" value="{{ only }}" placeholder="Only fields, e.g. replaygain, rating" aria-label="Only these fields">
  <label title="gnudb's values rank below the tags; this shows where they differ, to accept them"><input type="checkbox" name="prefer_gnudb" value="true" {% if prefer_gnudb %}checked{% endif %}> Tags that differ from gnudb's values</label>
@@ -89,6 +95,7 @@ run <code>aorg scan --deep</code> to measure them (it reads every file, which ta
  {% if artist is not none %}<input type="hidden" name="artist" value="{{ artist }}">{% endif %}
  {% if album is not none %}<input type="hidden" name="album" value="{{ album }}">{% endif %}
  <input type="hidden" name="only" value="{{ only }}">
+ {% for id in operation %}<input type="hidden" name="operation" value="{{ id }}">{% endfor %}
  {% if prefer_gnudb %}
  <input type="hidden" name="prefer_gnudb" value="true">
  <p>Accepting gnudb's values makes them your edits (which <a href="{{ base }}/history">History</a> can undo); they are then written like any other.</p>

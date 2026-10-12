@@ -107,7 +107,7 @@ def test_cli_edit_album(Session, library):
     )  # fmt: skip
     assert result.exit_code == 0, result.output
     assert "Saved for 3 tracks in 2 folders; 3 of them are not yet written" in result.output
-    assert "aorg pending --artist Foreigner --album 'Best of Foreigner'" in result.output
+    assert "aorg pending --operation 1" in result.output
 
     result = CliRunner().invoke(
         app, ["--db", db, "edit-album", "--folder", str(library / ALBUM), "--set", "date=1992"]
@@ -355,10 +355,17 @@ def test_web_edit_chosen_tracks(Session, library):
         "/libraries/music/edit-tracks", data={"file": [urgent, halo], "genre": "Rock and Pop"}
     )
     assert response.url.path == "/libraries/music/pending"
-    assert sorted(map(int, response.url.params.get_list("file"))) == sorted([urgent, halo])
+    with Session() as session:
+        operation_id = session.scalar(select(Operation.id).order_by(Operation.id.desc()))
+    assert response.url.params.get_list("operation") == [str(operation_id)]
+    assert "file" not in response.url.params  # not up to 200 ids
     assert "Saved; 2 files are not yet written" in response.text
     assert "2 chosen tracks" in response.text
     assert response.text.count('name="file_ids"') == 2
+    assert f'name="operation" value="{operation_id}"' in response.text  # kept by the forms
+    history = web.get("/libraries/music/history").text
+    assert f"/libraries/music/pending?operation={operation_id}" in history
+    assert web.get("/libraries/music/pending", params={"operation": 999}).status_code == 404
     with Session() as session:
         for file_id in (urgent, halo):
             assert resolve(session.get(AudioFile, file_id).values)["genre"].value == "Rock and Pop"
@@ -427,8 +434,8 @@ def test_cli_edit_tracks(Session, library):
     )
     assert result.exit_code == 0, result.output
     assert "Saved for 4 tracks; 4 of them are not yet written" in result.output
-    assert "aorg pending --artist Foreigner --album 'Best of Foriegner'" in result.output
-    assert "--album 'Greatest Hits'" in result.output
+    assert "aorg pending --operation 1\n" in result.output  # one command, not one per album
+    assert "--album" not in result.output
     with Session() as session:
         operation = session.scalar(select(Operation).order_by(Operation.id.desc()))
         assert operation.description == "Manual edit of 4 chosen tracks"
