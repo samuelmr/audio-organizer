@@ -53,7 +53,7 @@
  <button formmethod="get" formaction="/playlists/{{ playlist.id }}/locate">Look for them</button>
  <button class="danger" onclick="return confirm('Remove the {{ missing | length }} entries whose track is not found? They cannot be brought back.')">Remove them from the playlist</button>
 </form>
-<p><small>Look for them proposes files by their paths, by the audio of the file an entry had, and by file name and folders, for you to choose from; nothing changes until you do. Removing drops the entries from audio-organizer's database. Files already written change when you write them again.</small></p>
+<p><small>Look for them proposes files by their paths, by where the files at those paths went (moved or trashed as duplicates), by the audio of the file an entry had, and by file name and folders, for you to choose from; nothing changes until you do. Removing drops the entries from audio-organizer's database. Files already written change when you write them again.</small></p>
 {% endif %}
 
 <h2>Settings</h2>

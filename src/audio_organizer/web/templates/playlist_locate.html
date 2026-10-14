@@ -6,8 +6,8 @@
 <h1>Look for the missing tracks of <a href="{{ back }}">{{ playlist.name }}</a></h1>
 
 {% if located %}
-<p>Files that may be the tracks of entries not found. Those found by their path or audio
-are selected; one found only by its file name may be another recording, so check it.
+<p>Files that may be the tracks of entries not found. Those found by their path, by where
+their file went or by its audio are selected; one found only by its file name may be another recording, so check it.
 The chosen entries then refer to these files; nothing else changes.</p>
 <form method="post" action="{{ back }}/locate" class="stacked">
  <table>

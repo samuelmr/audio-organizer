@@ -700,8 +700,13 @@ Static playlists:
 
 Imported entries may be absolute paths, or relative to the library or to the `.m3u`
 file. When a path does not match exactly, a loose match that ignores a leading "The",
-punctuation and accents is accepted if only one file fits. Entries that are playlists
-themselves, such as an album's playlist, are replaced by their tracks.
+punctuation and accents is accepted if only one file fits. A path where a file used to
+be finds the file that stands for it now: the file aorg moved away from there, the copy
+kept when aorg trashed a duplicate from there, or, for a file that has gone, the one
+other file with the same audio. So a playlist written before folders were renamed (say
+"Aguilera, Christina/" to "Christina Aguilera/") or duplicates were cleaned up still finds
+its tracks. Entries that are playlists themselves, such as an album's playlist, are
+replaced by their tracks.
 
 Tracks stay in static playlists when files are moved or renamed. When a duplicate copy is
 trashed, its entries switch to the copy that is kept, so a playlist that had both now
@@ -719,8 +724,8 @@ offers the same when it has repeats.
 
 Entries that refer to no file (they matched none when imported, or their file has gone)
 are left out of the playlist but kept. `aorg playlists missing` lists them and looks for
-their files: by path as an import would, by the audio of the file an entry had, and by
-file name and the folders above it, which finds the tracks of a playlist made on another
+their files: by path as an import would (including where files went), by the audio of
+the file an entry had, and by file name and the folders above it, which finds the tracks of a playlist made on another
 computer or before the files were reorganised, and of re-encoded files. Only a file that
 fits better than any other is proposed; one that fits by its name alone may be another
 recording, so it is used only with `--guesses`:

@@ -23,12 +23,13 @@ import shlex
 import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import AudioFile, Library, Playlist, PlaylistEntry
+from .changes import TRASH_DIR
+from .models import AudioFile, Change, Library, Playlist, PlaylistEntry
 from .pathparse import normalize_name
 from .playlist_formats import render
 from .tags import FIELDS
@@ -358,12 +359,18 @@ class PathIndex:
     A path matches exactly (ignoring case and Unicode composition) or, failing that,
     loosely: every folder and file name compared with normalize_name, which ignores a
     leading "The", punctuation and accents ("The KLF/The White Room/…" finds
-    "KLF/The White Room/…"). A loose match is only accepted when one file fits."""
+    "KLF/The White Room/…"). A loose match is only accepted when one file fits.
+
+    Failing both, a path where a file used to be leads to the file that now stands for
+    it (see path_history), so that a playlist written before folders were renamed or
+    duplicates trashed still finds its tracks."""
 
     def __init__(self, session: Session, library: Library) -> None:
+        self.session, self.library = session, library
         self.root = Path(library.root)
         self.exact: dict[str, int] = {}
         self.loose: dict[str, int | None] = {}  # None: several files fit
+        self._history: dict[str, int | None] | None = None  # read when first needed
         for file_id, path in session.execute(
             select(AudioFile.id, AudioFile.path).where(present(library.id))
         ):
@@ -374,9 +381,12 @@ class PathIndex:
     def find(self, entry: str, base: Path) -> int | None:
         """The file an entry refers to: an absolute path inside the library, a path
         relative to the library root, or one relative to the playlist's folder (base)."""
-        relpaths = [
-            r for r in (self._relative(c) for c in _candidates(entry, self.root, base)) if r
-        ]
+        file_id = self.find_here(entry, base)
+        return file_id if file_id is not None else self.find_moved(entry, base)
+
+    def find_here(self, entry: str, base: Path) -> int | None:
+        """The file that is at the entry's path now, exactly or loosely."""
+        relpaths = self._relpaths(entry, base)
         for relpath in relpaths:
             if (file_id := self.exact.get(_fold(relpath))) is not None:
                 return file_id
@@ -384,6 +394,18 @@ class PathIndex:
             if (file_id := self.loose.get(_loose_key(relpath))) is not None:
                 return file_id
         return None
+
+    def find_moved(self, entry: str, base: Path) -> int | None:
+        """The file that stands for one that used to be at the entry's path."""
+        if self._history is None:
+            self._history = path_history(self.session, self.library, set(self.exact.values()))
+        for relpath in self._relpaths(entry, base):
+            if (file_id := self._history.get(_fold(relpath))) is not None:
+                return file_id
+        return None
+
+    def _relpaths(self, entry: str, base: Path) -> list[str]:
+        return [r for r in (self._relative(c) for c in _candidates(entry, self.root, base)) if r]
 
     def _relative(self, path: Path) -> str | None:
         try:
@@ -400,6 +422,77 @@ def _candidates(entry: str, root: Path, base: Path) -> list[Path]:
 
 def _loose_key(relpath: str) -> str:
     return "/".join(normalize_name(part) for part in Path(relpath).parts)
+
+
+def path_history(
+    session: Session, library: Library, present_ids: set[int]
+) -> dict[str, int | None]:
+    """Where the library's files went: for each path (folded) that a file once had, the
+    readable file that now stands for it, or None when it leads to more than one.
+
+    A path leads to the file that was moved away from it by an applied change, to the copy
+    kept in place of a file trashed from it, and from a file that is gone (deleted outside
+    aorg, or a move that a scan did not see whole) to the one readable file with the same
+    audio. These steps are followed one after another: a moved file trashed later leads to
+    its replacement."""
+    replaced: dict[int, int] = {}  # trashed file -> the copy kept in its place
+    claims: list[tuple[str, int]] = []  # (old path, the file that was there)
+    for kind, file_id, payload, undo in session.execute(
+        select(Change.kind, Change.file_id, Change.payload, Change.undo)
+        .join(AudioFile, Change.file_id == AudioFile.id)
+        .where(
+            AudioFile.library_id == library.id,
+            Change.status == "applied",
+            Change.kind.in_(("move", "trash")),
+        )
+        .order_by(Change.id)
+    ):
+        undo = undo or {}
+        if kind == "trash":
+            if payload.get("replacement") is not None:
+                replaced[file_id] = payload["replacement"]
+            # Older trash changes recorded only the path in the trash
+            old = undo.get("from") or _untrashed(undo.get("trash") or "")
+        else:
+            old = undo.get("from")
+        if old:
+            claims.append((old, file_id))
+    hashes: dict[int, str] = {}
+    for file_id, path, audio_hash in session.execute(
+        select(AudioFile.id, AudioFile.path, AudioFile.audio_hash).where(
+            AudioFile.library_id == library.id, AudioFile.missing
+        )
+    ):
+        claims.append((_untrashed(path) or path, file_id))
+        if audio_hash:
+            hashes[file_id] = audio_hash
+    same_audio = _present_by_hash(session, library, set(hashes.values()))
+
+    def current(file_id: int) -> int | None:
+        start, seen = file_id, set()
+        while file_id not in present_ids and file_id in replaced and file_id not in seen:
+            seen.add(file_id)
+            file_id = replaced[file_id]
+        if file_id in present_ids:
+            return file_id
+        return same_audio.get(hashes.get(start, ""))
+
+    history: dict[str, int | None] = {}
+    for path, file_id in claims:
+        found = current(file_id)
+        if found is None:
+            continue
+        key = _fold(path)
+        history[key] = found if history.get(key, found) == found else None
+    return history
+
+
+def _untrashed(path: str) -> str | None:
+    """The path a file had before it was trashed to TRASH_DIR/<changeset id>/<path>."""
+    parts = PurePosixPath(path).parts
+    if len(parts) > 2 and parts[0] == TRASH_DIR:
+        return PurePosixPath(*parts[2:]).as_posix()
+    return None
 
 
 def read_m3u(path: Path) -> list[str]:
@@ -555,6 +648,8 @@ def locate_missing(
       (exactly, or loosely when only one file fits); a relative path counts from the
       library root or the playlist folder;
     - the one file with the same audio as the file the entry had, e.g. a copy elsewhere;
+    - the file that stands for one that used to be at the path (see path_history): where
+      aorg moved it, the copy kept when it was trashed, or the one other copy of its audio;
     - a file with the same name (ignoring case, punctuation, accents and the extension,
       so that a re-encoded file fits too) whose folders best match the end of the entry's
       path: what a playlist made on another computer, or before a reorganisation, needs.
@@ -581,12 +676,15 @@ def locate_missing(
     for entry in entries:
         old_path, old_hash = old.get(entry.file_id, (None, None))
         paths = [entry.path] + ([old_path] if old_path and old_path != entry.path else [])
-        file_id = next((found for p in paths if (found := index.find(p, base)) is not None), None)
+        file_id = _first(index.find_here(p, base) for p in paths)
         if file_id is not None:
             proposals.append((entry, file_id, "path", True))
             continue
         if old_hash and (file_id := same_audio.get(old_hash)) is not None:
             proposals.append((entry, file_id, "same audio", True))
+            continue
+        if (file_id := _first(index.find_moved(p, base) for p in paths)) is not None:
+            proposals.append((entry, file_id, "where its file went", True))
             continue
         names = names or _NameIndex(session, library)
         for p in paths:
@@ -598,6 +696,10 @@ def locate_missing(
         Located(entry, file_id, found_paths[file_id], how, sure)
         for entry, file_id, how, sure in proposals
     ]
+
+
+def _first(ids: Iterable[int | None]) -> int | None:
+    return next((i for i in ids if i is not None), None)
 
 
 def _present_by_hash(session: Session, library: Library, hashes: set[str]) -> dict[str, int]:
