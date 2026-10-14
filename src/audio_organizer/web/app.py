@@ -422,6 +422,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         return render(
             request, "track.html", file=file, resolved=resolved, groups=FIELD_GROUPS,
             extra=extra, manual=manual, copies=copies, snapshot=snapshot,
+            static_playlists=_static_playlists(session, file.library),
             unwritten=wr.unwritten(file.values, held=[c.field for c in file.conflicts]),
             conflicts=file.conflicts, on_disk=on_disk, measure_error=measure_error,
             has_cover=on_disk and covers.embedded(path) is not None,
@@ -1674,6 +1675,9 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             found_total=found_total, find_error=find_error,
             in_playlist={e.file_id for e in playlist.entries},
             here=_url(f"/playlists/{playlist.id}", group=group, q=q, rule=rule),
+            other_playlists=[
+                p for p in _static_playlists(session, playlist.library) if p.id != playlist.id
+            ],
             repeated=len(repeats[0].dropped) if repeats else 0,
             missing=[] if playlist.is_smart else pl.missing_entries(session, playlist),
             places=_file_places(session, playlist, generated, tried, check),
@@ -1829,10 +1833,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         back = _local(back, f"/playlists/{playlist.id}")
         if playlist.is_smart:
             return _redirect(back, f"{playlist.name} is a smart playlist; change its rule instead")
-        if album is not None:
-            files = album_files(session, playlist.library_id, album, albumartist, None)
-        else:
-            files = chosen_files(session, playlist.library_id, file)
+        files = _files_to_add(session, playlist.library_id, file, album, albumartist)
         if not files:
             return _redirect(back, "Choose some tracks to add")
         added = pl.add_tracks(playlist, files)
@@ -1841,6 +1842,39 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         if added < len(files):
             message += f" ({len(files) - added} already in it)"
         return _redirect(back, message, (f"/playlists/{playlist.id}", "Open the playlist"))
+
+    @app.post("/libraries/{name}/playlists/add-new")
+    def add_to_new_playlist(
+        name: str,
+        playlist_name: str = Form(""),
+        file: Annotated[list[int], Form()] = [],  # noqa: B006
+        album: str | None = Form(None),
+        albumartist: str | None = Form(None),
+        back: str = Form(""),
+        session: Session = SessionDep,
+    ):
+        """Create a static playlist, sorted manual, from the chosen tracks or an album: the
+        "new playlist" field of the Add to playlist menu."""
+        lib = _library(session, name)
+        back = _local(back, f"/libraries/{lib.name}")
+        playlist_name = playlist_name.strip()
+        if not playlist_name:
+            return _redirect(back, "Name the new playlist")
+        if pl.name_taken(session, lib, playlist_name, smart=False):
+            return _redirect(back, f"There is already a static playlist named {playlist_name!r}")
+        files = _files_to_add(session, lib.id, file, album, albumartist)
+        if not files:
+            return _redirect(back, "Choose some tracks to add")
+        playlist = Playlist(library=lib, name=playlist_name, sort="manual")
+        pl.add_tracks(playlist, files)
+        session.add(playlist)
+        session.commit()
+        return _redirect(
+            back,
+            f"Created {playlist.name} with {len(playlist.entries)} "
+            f"{'track' if len(playlist.entries) == 1 else 'tracks'}",
+            (f"/playlists/{playlist.id}", "Open the playlist"),
+        )
 
     @app.post("/playlists/{playlist_id}/remove")
     def remove_from_playlist(
@@ -2434,6 +2468,15 @@ def _local(path: str, default: str) -> str:
     if path.startswith("/") and not path.startswith(("//", "/\\")):
         return path
     return default
+
+
+def _files_to_add(
+    session: Session, library_id: int, file: list[int], album: str | None, albumartist: str | None
+) -> list[AudioFile]:
+    """The files an "Add to playlist" form names: a whole album, or the chosen files."""
+    if album is not None:
+        return album_files(session, library_id, album, albumartist, None)
+    return chosen_files(session, library_id, file)
 
 
 def _static_playlists(session: Session, library: Library) -> list[Playlist]:

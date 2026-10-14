@@ -22,7 +22,7 @@ across folders are listed together.</p>
    <td>{{ row.year or "" }}</td>
    {% set links = folders[(row.album, row.albumartist)] %}
    <td class="path">{% if links | length == 1 %}<a href="{{ links[0][1] }}" title="Open in the file manager">{{ links[0][0] }}/</a>{% elif links %}<details><summary>{{ links | length }} folders</summary>{% for folder, uri in links %}<a href="{{ uri }}">{{ folder }}/</a><br>{% endfor %}</details>{% endif %}</td>
-   <td>{{ add_to_playlist(static_playlists, here, album=row.album, albumartist=row.albumartist or "", label=row.album) }}</td>
+   <td>{{ add_to_playlist(library.name, static_playlists, here, album=row.album, albumartist=row.albumartist or "", label=row.album) }}</td>
   </tr>
  {% else %}
   <tr><td colspan="6">No albums found.</td></tr>

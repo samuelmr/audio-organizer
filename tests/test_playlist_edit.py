@@ -126,6 +126,56 @@ def test_add_tracks_from_a_listing(web, Session):
     assert web.post(f"/playlists/{web.playlist_id}/add").status_code == 200  # nothing chosen
 
 
+def test_the_menu_is_also_on_the_track_page_and_the_playlist_pages_rows(web):
+    page = web.get(f"/tracks/{web.halo}").text
+    assert f'formaction="/playlists/{web.playlist_id}/add"' in page
+    assert 'formaction="/libraries/music/playlists/add-new"' in page
+    # A smart playlist's rows offer the static playlist; a static one's offer the others
+    assert (
+        f'formaction="/playlists/{web.playlist_id}/add"'
+        in web.get(f"/playlists/{web.smart_id}").text
+    )
+    web.post(f"/playlists/{web.playlist_id}/add", data={"file": [web.halo]})
+    own = web.get(f"/playlists/{web.playlist_id}").text
+    assert f'formaction="/playlists/{web.playlist_id}/add"' not in own
+    assert "add-new" in own
+
+
+def test_create_a_playlist_from_the_menu(web, Session):
+    url = "/libraries/music/playlists/add-new"
+    response = web.post(
+        url, data={"playlist_name": " Fresh ", "file": [web.halo, web.insane], "back": "/tracks/1"}
+    )
+    assert response.url.path == "/tracks/1"
+    assert "Created Fresh with 2 tracks" in response.text
+    with Session() as session:
+        playlist = session.scalar(select(Playlist).where(Playlist.name == "Fresh"))
+        assert not playlist.is_smart and playlist.sort == "manual"
+        assert _paths(playlist) == [HALO, INSANE]
+
+    assert (
+        "already a static playlist"
+        in web.post(url, data={"playlist_name": "Fresh", "file": [web.halo]}).text
+    )
+    assert "Name the new playlist" in web.post(url, data={"file": [web.halo]}).text
+    assert "Choose some tracks" in web.post(url, data={"playlist_name": "Empty"}).text
+    with Session() as session:
+        assert session.scalar(select(Playlist).where(Playlist.name == "Empty")) is None
+
+
+def test_create_a_playlist_from_an_album(web, Session):
+    with Session() as session:
+        meta = session.get(EffectiveMetadata, web.halo)
+        album, albumartist = meta.album, meta.albumartist or ""
+    web.post(
+        "/libraries/music/playlists/add-new",
+        data={"playlist_name": "Album", "album": album, "albumartist": albumartist},
+    )
+    with Session() as session:
+        playlist = session.scalar(select(Playlist).where(Playlist.name == "Album"))
+        assert HALO in _paths(playlist)
+
+
 def test_add_an_album(web, Session):
     with Session() as session:
         meta = session.get(EffectiveMetadata, web.halo)

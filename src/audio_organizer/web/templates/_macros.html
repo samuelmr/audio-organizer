@@ -19,14 +19,16 @@
 {# An "Add to playlist" icon that opens a list of the static playlists; choosing one posts
    the track (file_id), or the album (album and albumartist), to it. A details element,
    so it works without JavaScript. #}
-{% macro add_to_playlist(playlists, back, file_id=none, album=none, albumartist=none, label="") -%}
+{% macro add_to_playlist(library, playlists, back, file_id=none, album=none, albumartist=none, label="") -%}
 <details class="add-to-playlist">
  <summary aria-label="Add {{ label }} to a playlist" title="Add to playlist"><svg aria-hidden="true"><use href="#icon-playlist-add"/></svg></summary>
  <form method="post" class="menu">
   <input type="hidden" name="back" value="{{ back }}">
   {% if file_id is not none %}<input type="hidden" name="file" value="{{ file_id }}">{% endif %}
   {% if album is not none %}<input type="hidden" name="album" value="{{ album }}"><input type="hidden" name="albumartist" value="{{ albumartist or '' }}">{% endif %}
-  {% for p in playlists %}<button formaction="/playlists/{{ p.id }}/add">{{ p.name }}</button>{% else %}<small>No static playlists yet: create one on the Playlists page.</small>{% endfor %}
+  {# First in the markup, so that Enter in the name field creates the playlist; shown last #}
+  <span class="new-playlist"><input name="playlist_name" placeholder="New playlist" aria-label="Name of a new playlist"><button formaction="/libraries/{{ library }}/playlists/add-new" title="Create the playlist with these tracks">Create</button></span>
+  {% for p in playlists %}<button formaction="/playlists/{{ p.id }}/add">{{ p.name }}</button>{% endfor %}
  </form>
 </details>
 {%- endmacro %}

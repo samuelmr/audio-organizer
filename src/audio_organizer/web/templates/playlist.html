@@ -2,7 +2,7 @@
 {% set library = playlist.library %}
 {% block title %}{{ playlist.name }} – audio-organizer{% endblock %}
 {% block content %}
-{% from "_macros.html" import folders %}
+{% from "_macros.html" import folders, add_to_playlist %}
 <h1>{{ playlist.name }}</h1>
 
 {% if generated | length > 1 %}
@@ -25,7 +25,7 @@
 <h2>{{ shown.name }}: {{ shown.tracks | length }} tracks{% if shown.unresolved %}, {{ shown.unresolved }} not found{% endif %}</h2>
 {{ folders(folder_links) }}
 <table class="tracks"{% if not playlist.is_smart and playlist.sort == "manual" %} data-reorder="/playlists/{{ playlist.id }}/move"{% endif %}>
- <thead><tr><th class="num">#</th><th>Artist</th><th>Title</th><th>Album</th><th class="num">Time</th>{% if not playlist.is_smart %}{% if playlist.sort == "manual" %}<th></th>{% endif %}<th></th>{% endif %}</tr></thead>
+ <thead><tr><th class="num">#</th><th>Artist</th><th>Title</th><th>Album</th><th class="num">Time</th><th></th>{% if not playlist.is_smart %}{% if playlist.sort == "manual" %}<th></th>{% endif %}<th></th>{% endif %}</tr></thead>
  <tbody>
  {% for t in shown.tracks %}
   <tr id="track-{{ t.file_id }}" data-file="{{ t.file_id }}">
@@ -34,6 +34,7 @@
    <td><a href="/tracks/{{ t.file_id }}">{{ t.get("title") or t.path.rsplit("/", 1)[-1] }}</a></td>
    <td>{{ t.get("album") or "" }}</td>
    <td class="num">{{ t.duration | duration }}</td>
+   <td>{{ add_to_playlist(library.name, other_playlists, here ~ "#track-" ~ t.file_id, file_id=t.file_id, label=t.get("title") or t.path) }}</td>
    {% if not playlist.is_smart %}
    {% if playlist.sort == "manual" %}
    <td class="move"><form method="post" action="/playlists/{{ playlist.id }}/move"><input type="hidden" name="file" value="{{ t.file_id }}"><input type="hidden" name="back" value="{{ here }}#track-{{ t.file_id }}">

@@ -11,7 +11,7 @@
  <div>
 {% if album is not none %}
  <h1>{{ album }}</h1>
- <p class="subtitle">Album{% if albumartist %} by <a href="{{ url(base, artist=albumartist) }}">{{ albumartist }}</a>{% endif %} · <a href="{{ base }}">All tracks</a> · Add all to playlist {{ add_to_playlist(static_playlists, here, album=album, albumartist=albumartist or "", label=album) }}</p>
+ <p class="subtitle">Album{% if albumartist %} by <a href="{{ url(base, artist=albumartist) }}">{{ albumartist }}</a>{% endif %} · <a href="{{ base }}">All tracks</a> · Add all to playlist {{ add_to_playlist(library.name, static_playlists, here, album=album, albumartist=albumartist or "", label=album) }}</p>
 {% elif artist is not none %}
  <h1>{{ artist }}</h1>
  <p class="subtitle">Artist · <a href="{{ base }}">All tracks</a></p>
@@ -118,7 +118,7 @@
     <tr class="group"><th colspan="10">
      {{ thumb(file.id) }}{% if meta.album %}<a href="{{ url(base, album=meta.album, albumartist=meta.albumartist) }}">{{ meta.album }}</a>{% else %}No album{% endif %}
      {% if meta.albumartist %}<span class="by">{{ meta.albumartist }}</span>{% endif %}
-     {% if meta.album %}{{ add_to_playlist(static_playlists, here, album=meta.album, albumartist=meta.albumartist or "", label=meta.album) }}{% endif %}
+     {% if meta.album %}{{ add_to_playlist(library.name, static_playlists, here, album=meta.album, albumartist=meta.albumartist or "", label=meta.album) }}{% endif %}
     </th></tr>
    {% endif %}
   {% endif %}
@@ -132,7 +132,7 @@
    <td>{{ meta.genre or "" }}</td>
    <td class="num">{{ file.duration | duration }}</td>
    <td>{% if meta.disputed %}<span class="flag" title="Its sources disagree">≠</span>{% endif %}</td>
-   <td>{{ add_to_playlist(static_playlists, here, file_id=file.id, label=meta.title or file.path) }}</td>
+   <td>{{ add_to_playlist(library.name, static_playlists, here, file_id=file.id, label=meta.title or file.path) }}</td>
   </tr>
  {% else %}
   <tr><td colspan="10">No tracks found.</td></tr>
