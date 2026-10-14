@@ -154,4 +154,79 @@
       input.addEventListener("change", render);
     });
   });
+
+  // A table with data-reorder="url" (a manually ordered playlist): its rows (data-file)
+  // are dragged by their handle to a new place, which is posted to the url as the file
+  // and the file it goes before ("end" for the last place). The move buttons stay for
+  // keyboards and touch screens; if the server refuses, the page reloads as it is saved.
+  document.querySelectorAll("table[data-reorder]").forEach((table) => {
+    const body = table.tBodies[0];
+    const rows = () => [...body.querySelectorAll("tr[data-file]")];
+    let dragged = null;
+
+    // Numbers and the buttons that cannot move a row further follow the new order
+    const refresh = () => {
+      const all = rows();
+      all.forEach((row, i) => {
+        row.querySelector("td.num").textContent = i + 1;
+        const off = (values, disabled) => values.forEach((v) => {
+          const button = row.querySelector(`button[name=to][value=${v}]`);
+          if (button) button.disabled = disabled;
+        });
+        off(["top", "up"], i === 0);
+        off(["down", "bottom"], i === all.length - 1);
+      });
+    };
+    const clearMarks = () => rows().forEach((r) => r.classList.remove("drop-above", "drop-below"));
+
+    rows().forEach((row) => {
+      const handle = document.createElement("span");
+      handle.className = "drag-handle";
+      handle.textContent = "⠿";
+      handle.title = "Drag to move";
+      handle.setAttribute("aria-hidden", "true");
+      row.querySelector("td.num").prepend(handle);
+      // Only the handle starts a drag, so that text and links can still be selected
+      handle.addEventListener("pointerdown", () => { row.draggable = true; });
+      row.addEventListener("dragstart", (event) => {
+        dragged = row;
+        row.classList.add("dragging");
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", row.dataset.file);
+      });
+      row.addEventListener("dragend", () => {
+        row.draggable = false;
+        row.classList.remove("dragging");
+        clearMarks();
+        dragged = null;
+      });
+      row.addEventListener("dragover", (event) => {
+        if (!dragged || dragged === row) return;
+        event.preventDefault();
+        const box = row.getBoundingClientRect();
+        const below = event.clientY > box.top + box.height / 2;
+        clearMarks();
+        row.classList.add(below ? "drop-below" : "drop-above");
+      });
+      row.addEventListener("drop", (event) => {
+        if (!dragged || dragged === row) return;
+        event.preventDefault();
+        const box = row.getBoundingClientRect();
+        const below = event.clientY > box.top + box.height / 2;
+        const next = below ? row.nextElementSibling : row;
+        const moved = dragged;
+        clearMarks();
+        if (next === moved || (next && next.dataset.file === undefined)) return;
+        body.insertBefore(moved, next);
+        refresh();
+        const form = new URLSearchParams({
+          file: moved.dataset.file,
+          before: next ? next.dataset.file : "end",
+        });
+        fetch(table.dataset.reorder, { method: "POST", body: form })
+          .then((response) => { if (!response.ok) location.reload(); })
+          .catch(() => location.reload());
+      });
+    });
+  });
 })();

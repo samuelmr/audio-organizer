@@ -377,3 +377,9 @@ details.add-to-playlist .menu {
 }
 button.icon { padding: 0.15rem 0.35rem; line-height: 1; }
 button.icon svg { width: 0.9em; height: 0.9em; fill: currentColor; vertical-align: middle; }
+
+/* Dragging a playlist row to a new place */
+.drag-handle { cursor: grab; color: var(--muted); margin-right: 0.35em; user-select: none; }
+tr.dragging { opacity: 0.4; }
+tr.drop-above > td { box-shadow: inset 0 2px 0 var(--accent); }
+tr.drop-below > td { box-shadow: inset 0 -2px 0 var(--accent); }

@@ -573,14 +573,9 @@ def move_track(session: Session, playlist: Playlist, file_id: int, move: str) ->
     others. Only a playlist sorted "manual" has an order of its own; returns whether the
     track moved (False at the end of the list, or for a track that is not in it). The
     caller commits."""
-    if playlist.is_smart or playlist.sort != "manual":
-        raise RuleError(f"{playlist.name} is not a static playlist with a manual order")
     if move not in MOVES:
         raise ValueError(f"Unknown move {move!r}; one of {', '.join(MOVES)}")
-    entries = sorted(playlist.entries, key=lambda e: e.position)
-    hidden = {e.id for e in missing_entries(session, playlist)}
-    shown = [i for i, e in enumerate(entries) if e.id not in hidden]
-    mine = next((n for n, i in enumerate(shown) if entries[i].file_id == file_id), None)
+    entries, shown, mine = _ordered(session, playlist, file_id)
     if mine is None:
         return False
     target = {"up": mine - 1, "down": mine + 1, "top": 0, "bottom": len(shown) - 1}[move]
@@ -590,10 +585,54 @@ def move_track(session: Session, playlist: Playlist, file_id: int, move: str) ->
     # Take the place of the shown entry at the target: moving down, that entry has shifted
     # up by one with the pop, so the same index puts this one after it
     entries.insert(shown[target], entry)
-    for position, e in enumerate(entries):
-        e.position = position
-    playlist.entries = entries
+    _renumber(playlist, entries)
     return True
+
+
+def move_track_before(
+    session: Session, playlist: Playlist, file_id: int, before: int | None
+) -> bool:
+    """Move a track of a manually ordered static playlist to just before another track
+    (the file id of one the playlist shows), or to the end when before is None: what
+    dropping a dragged row does. False when nothing moves: the tracks are not in the
+    playlist, are the same, or the track is already there. The caller commits."""
+    entries, shown, mine = _ordered(session, playlist, file_id)
+    if mine is None:
+        return False
+    if before is None:
+        target = len(shown)
+    else:
+        target = next((n for n, i in enumerate(shown) if entries[i].file_id == before), None)
+        if target is None or target == mine:
+            return False
+    if target in (mine, mine + 1):
+        return False
+    entry = entries.pop(shown[mine])
+    # Dropping above its place the target's index is unchanged, below it has shifted by one
+    at = len(entries) if target == len(shown) else shown[target] - (target > mine)
+    entries.insert(at, entry)
+    _renumber(playlist, entries)
+    return True
+
+
+def _ordered(
+    session: Session, playlist: Playlist, file_id: int
+) -> tuple[list[PlaylistEntry], list[int], int | None]:
+    """A manually ordered playlist's entries by position, the indexes of those it shows
+    (the others have no track found), and where in the shown ones this file's entry is."""
+    if playlist.is_smart or playlist.sort != "manual":
+        raise RuleError(f"{playlist.name} is not a static playlist with a manual order")
+    entries = sorted(playlist.entries, key=lambda e: e.position)
+    hidden = {e.id for e in missing_entries(session, playlist)}
+    shown = [i for i, e in enumerate(entries) if e.id not in hidden]
+    mine = next((n for n, i in enumerate(shown) if entries[i].file_id == file_id), None)
+    return entries, shown, mine
+
+
+def _renumber(playlist: Playlist, entries: list[PlaylistEntry]) -> None:
+    for position, entry in enumerate(entries):
+        entry.position = position
+    playlist.entries = entries
 
 
 def find_tracks(

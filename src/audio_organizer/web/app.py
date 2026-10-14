@@ -1862,13 +1862,27 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
     def move_in_playlist(
         playlist_id: int,
         file: int = Form(...),
-        to: str = Form(...),
+        to: str = Form(""),
+        before: str | None = Form(None),
         back: str = Form(""),
         session: Session = SessionDep,
     ):
-        """Move a track of a manually ordered static playlist up or down, or to an end."""
+        """Move a track of a manually ordered static playlist up or down, or to an end
+        (the buttons: to). Dragging a row (before) moves it above the track with that file
+        id, or to the end for "end", and answers 204 for the script that sent it."""
         playlist = _playlist(session, playlist_id)
         back = _local(back, f"/playlists/{playlist.id}")
+        if before is not None:
+            if before != "end" and not before.isdigit():
+                raise HTTPException(400, f"Unknown place {before!r}")
+            try:
+                pl.move_track_before(
+                    session, playlist, file, None if before == "end" else int(before)
+                )
+            except pl.RuleError as e:
+                raise HTTPException(409, str(e)) from None
+            session.commit()
+            return Response(status_code=204)
         if to not in pl.MOVES:
             raise HTTPException(400, f"Unknown move {to!r}")
         try:

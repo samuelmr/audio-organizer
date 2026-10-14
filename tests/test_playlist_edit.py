@@ -226,3 +226,70 @@ def test_reorder_on_the_playlist_page(web, Session):
     page = web.get(url).text
     assert f'action="{url}/move"' not in page and "set Sort to manual" in page
     assert "manually" in web.post(f"{url}/move", data={"file": web.insane, "to": "down"}).text
+
+
+@pytest.fixture
+def three(Session, copy_audio, tmp_path):
+    """A manual playlist of three tracks, in path order, with a missing entry among them."""
+    root = tmp_path / "three"
+    names = ["a/1.mp3", "a/2.mp3", "a/3.mp3"]
+    for name, sample in zip(names, ["mp3", "mp3b", "m4a"], strict=True):
+        copy_audio(sample, root / name)
+    session = Session()
+    lib = Library(name="three", root=str(root))
+    session.add(lib)
+    session.commit()
+    scan(session, lib)
+    playlist = _static(session, lib)
+    files = [_file(session, name) for name in names]
+    pl.add_tracks(playlist, files[:2])
+    playlist.entries.append(pl.PlaylistEntry(position=2, path="gone.mp3", file_id=None))
+    pl.add_tracks(playlist, files[2:])
+    session.commit()
+    yield session, playlist, [f.id for f in files], names
+    session.close()
+
+
+@pytest.mark.parametrize(
+    ("moved", "before", "expected"),
+    [
+        (0, 2, ["a/2.mp3", "gone.mp3", "a/1.mp3", "a/3.mp3"]),  # down, above the last one
+        (2, 0, ["a/3.mp3", "a/1.mp3", "a/2.mp3", "gone.mp3"]),  # up to the top
+        (0, None, ["a/2.mp3", "gone.mp3", "a/3.mp3", "a/1.mp3"]),  # to the end
+        (1, None, ["a/1.mp3", "gone.mp3", "a/3.mp3", "a/2.mp3"]),
+        (1, 1, None),  # onto itself
+        (0, 1, None),  # already just above it
+        (2, None, None),  # already last
+    ],
+)
+def test_move_track_before(three, moved, before, expected):
+    session, playlist, ids, names = three
+    where = None if before is None else ids[before]
+    changed = pl.move_track_before(session, playlist, ids[moved], where)
+    session.commit()
+    assert changed == (expected is not None)
+    ordered = [e.path for e in sorted(playlist.entries, key=lambda e: e.position)]
+    assert ordered == (expected or [names[0], names[1], "gone.mp3", names[2]])
+    assert [e.position for e in sorted(playlist.entries, key=lambda e: e.position)] == [0, 1, 2, 3]
+
+
+def test_move_track_before_needs_a_manual_order(three):
+    session, playlist, ids, _ = three
+    playlist.sort = "title"
+    with pytest.raises(pl.RuleError):
+        pl.move_track_before(session, playlist, ids[0], None)
+
+
+def test_drag_and_drop_posts_to_the_move_route(web, Session):
+    url = f"/playlists/{web.playlist_id}"
+    web.post(f"{url}/add", data={"file": [web.halo, web.insane]})
+    assert f'data-reorder="{url}/move"' in web.get(url).text
+    response = web.post(f"{url}/move", data={"file": web.insane, "before": web.halo})
+    assert response.status_code == 204
+    assert _entries(Session, web.playlist_id) == [INSANE, HALO]
+    assert web.post(f"{url}/move", data={"file": web.insane, "before": "end"}).status_code == 204
+    assert _entries(Session, web.playlist_id) == [HALO, INSANE]
+    assert web.post(f"{url}/move", data={"file": web.insane, "before": "x"}).status_code == 400
+    web.post(f"{url}/edit", data={"playlist_name": "Mix", "sort": "title"})
+    assert "data-reorder" not in web.get(url).text
+    assert web.post(f"{url}/move", data={"file": web.insane, "before": "end"}).status_code == 409

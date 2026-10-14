@@ -24,11 +24,11 @@
 {% if shown %}
 <h2>{{ shown.name }}: {{ shown.tracks | length }} tracks{% if shown.unresolved %}, {{ shown.unresolved }} not found{% endif %}</h2>
 {{ folders(folder_links) }}
-<table class="tracks">
+<table class="tracks"{% if not playlist.is_smart and playlist.sort == "manual" %} data-reorder="/playlists/{{ playlist.id }}/move"{% endif %}>
  <thead><tr><th class="num">#</th><th>Artist</th><th>Title</th><th>Album</th><th class="num">Time</th>{% if not playlist.is_smart %}{% if playlist.sort == "manual" %}<th></th>{% endif %}<th></th>{% endif %}</tr></thead>
  <tbody>
  {% for t in shown.tracks %}
-  <tr id="track-{{ t.file_id }}">
+  <tr id="track-{{ t.file_id }}" data-file="{{ t.file_id }}">
    <td class="num">{{ loop.index }}</td>
    <td>{{ t.get("artist") or "" }}</td>
    <td><a href="/tracks/{{ t.file_id }}">{{ t.get("title") or t.path.rsplit("/", 1)[-1] }}</a></td>
