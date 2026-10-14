@@ -1858,6 +1858,26 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         session.commit()
         return _redirect(back, f"Removed {removed} {'entry' if removed == 1 else 'entries'}")
 
+    @app.post("/playlists/{playlist_id}/move")
+    def move_in_playlist(
+        playlist_id: int,
+        file: int = Form(...),
+        to: str = Form(...),
+        back: str = Form(""),
+        session: Session = SessionDep,
+    ):
+        """Move a track of a manually ordered static playlist up or down, or to an end."""
+        playlist = _playlist(session, playlist_id)
+        back = _local(back, f"/playlists/{playlist.id}")
+        if to not in pl.MOVES:
+            raise HTTPException(400, f"Unknown move {to!r}")
+        try:
+            pl.move_track(session, playlist, file, to)
+        except pl.RuleError:
+            return _redirect(back, "Only a static playlist sorted manually has an order to change")
+        session.commit()
+        return _redirect(back)
+
     @app.get("/playlists/{playlist_id}/locate", response_class=HTMLResponse)
     def locate_missing(request: Request, playlist_id: int, session: Session = SessionDep):
         """Propose files for the entries whose track is not found, for the user to pick."""

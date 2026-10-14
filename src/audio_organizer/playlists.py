@@ -563,6 +563,39 @@ def remove_tracks(playlist: Playlist, file_ids: Iterable[int]) -> int:
     return _remove_entries(playlist, {e.id for e in playlist.entries if e.file_id in gone})
 
 
+MOVES = ("up", "down", "top", "bottom")
+
+
+def move_track(session: Session, playlist: Playlist, file_id: int, move: str) -> bool:
+    """Move a track of a static playlist one place up or down, or to the top or bottom, in
+    the order the playlist shows it: entries whose track is not found are not shown, so
+    "one place" is counted past them, and they stay where they are relative to the
+    others. Only a playlist sorted "manual" has an order of its own; returns whether the
+    track moved (False at the end of the list, or for a track that is not in it). The
+    caller commits."""
+    if playlist.is_smart or playlist.sort != "manual":
+        raise RuleError(f"{playlist.name} is not a static playlist with a manual order")
+    if move not in MOVES:
+        raise ValueError(f"Unknown move {move!r}; one of {', '.join(MOVES)}")
+    entries = sorted(playlist.entries, key=lambda e: e.position)
+    hidden = {e.id for e in missing_entries(session, playlist)}
+    shown = [i for i, e in enumerate(entries) if e.id not in hidden]
+    mine = next((n for n, i in enumerate(shown) if entries[i].file_id == file_id), None)
+    if mine is None:
+        return False
+    target = {"up": mine - 1, "down": mine + 1, "top": 0, "bottom": len(shown) - 1}[move]
+    if not 0 <= target < len(shown) or target == mine:
+        return False
+    entry = entries.pop(shown[mine])
+    # Take the place of the shown entry at the target: moving down, that entry has shifted
+    # up by one with the pop, so the same index puts this one after it
+    entries.insert(shown[target], entry)
+    for position, e in enumerate(entries):
+        e.position = position
+    playlist.entries = entries
+    return True
+
+
 def find_tracks(
     session: Session, library: Library, *, q: str = "", rule: str = "", limit: int = 200
 ) -> tuple[list[Track], int]:

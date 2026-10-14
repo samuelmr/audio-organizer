@@ -1412,6 +1412,29 @@ def playlists_remove(
     typer.echo(f"Removed {removed} entries from {name}")
 
 
+@playlists_app.command("move")
+def playlists_move(
+    ctx: typer.Context,
+    name: str,
+    path: str,
+    to: Annotated[str, typer.Argument(help="up, down, top or bottom")],
+    library: LibraryOption = None,
+) -> None:
+    """Move a track of a static playlist (sorted manually) up or down, or to an end."""
+    if to not in pl.MOVES:
+        raise typer.BadParameter(f"{to!r} is not one of {', '.join(pl.MOVES)}")
+    with _session(ctx) as session:
+        playlist = _static(session, name, library)
+        if playlist.sort != "manual":
+            raise typer.BadParameter(
+                f"{name} is sorted by {playlist.sort}; `aorg playlists edit --sort manual` "
+                "gives it an order of its own"
+            )
+        moved = pl.move_track(session, playlist, _find_file(session, path).id, to)
+        session.commit()
+    typer.echo(f"Moved {path} {to}" if moved else f"{path} stays where it is")
+
+
 @playlists_app.command("dedupe")
 def playlists_dedupe(
     ctx: typer.Context,

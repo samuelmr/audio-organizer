@@ -25,22 +25,33 @@
 <h2>{{ shown.name }}: {{ shown.tracks | length }} tracks{% if shown.unresolved %}, {{ shown.unresolved }} not found{% endif %}</h2>
 {{ folders(folder_links) }}
 <table class="tracks">
- <thead><tr><th class="num">#</th><th>Artist</th><th>Title</th><th>Album</th><th class="num">Time</th>{% if not playlist.is_smart %}<th></th>{% endif %}</tr></thead>
+ <thead><tr><th class="num">#</th><th>Artist</th><th>Title</th><th>Album</th><th class="num">Time</th>{% if not playlist.is_smart %}{% if playlist.sort == "manual" %}<th></th>{% endif %}<th></th>{% endif %}</tr></thead>
  <tbody>
  {% for t in shown.tracks %}
-  <tr>
+  <tr id="track-{{ t.file_id }}">
    <td class="num">{{ loop.index }}</td>
    <td>{{ t.get("artist") or "" }}</td>
    <td><a href="/tracks/{{ t.file_id }}">{{ t.get("title") or t.path.rsplit("/", 1)[-1] }}</a></td>
    <td>{{ t.get("album") or "" }}</td>
    <td class="num">{{ t.duration | duration }}</td>
    {% if not playlist.is_smart %}
+   {% if playlist.sort == "manual" %}
+   <td class="move"><form method="post" action="/playlists/{{ playlist.id }}/move"><input type="hidden" name="file" value="{{ t.file_id }}"><input type="hidden" name="back" value="{{ here }}#track-{{ t.file_id }}">
+    <button class="icon" name="to" value="top" aria-label="Move {{ t.get('title') or t.path }} to the top" title="Move to the top" {% if loop.first %}disabled{% endif %}>⤒</button>
+    <button class="icon" name="to" value="up" aria-label="Move {{ t.get('title') or t.path }} up" title="Move up" {% if loop.first %}disabled{% endif %}>↑</button>
+    <button class="icon" name="to" value="down" aria-label="Move {{ t.get('title') or t.path }} down" title="Move down" {% if loop.last %}disabled{% endif %}>↓</button>
+    <button class="icon" name="to" value="bottom" aria-label="Move {{ t.get('title') or t.path }} to the bottom" title="Move to the bottom" {% if loop.last %}disabled{% endif %}>⤓</button>
+   </form></td>
+   {% endif %}
    <td><form method="post" action="/playlists/{{ playlist.id }}/remove"><input type="hidden" name="file" value="{{ t.file_id }}"><input type="hidden" name="back" value="{{ here }}"><button class="icon" aria-label="Remove {{ t.get('title') or t.path }} from the playlist" title="Remove from playlist"><svg aria-hidden="true"><use href="#icon-remove"/></svg></button></form></td>
    {% endif %}
   </tr>
  {% endfor %}
  </tbody>
 </table>
+{% if not playlist.is_smart and playlist.sort != "manual" %}
+<p><small>The tracks are sorted by {{ playlist.sort }}. To put them in an order of your own, set Sort to manual under Settings.</small></p>
+{% endif %}
 {% else %}
 <p>No tracks match.</p>
 {% endif %}

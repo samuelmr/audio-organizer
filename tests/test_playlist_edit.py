@@ -170,3 +170,59 @@ def test_remove_from_the_playlist_page(web, Session):
     # A smart playlist has no remove buttons nor an add form
     smart_page = web.get(f"/playlists/{web.smart_id}").text
     assert "/remove" not in smart_page and "Add tracks" not in smart_page
+
+
+def test_move_track_in_a_manual_playlist(library):
+    session, lib = library
+    playlist = _static(session, lib)
+    halo, insane = _file(session, HALO), _file(session, INSANE)
+    pl.add_tracks(playlist, [halo, insane])
+    session.commit()
+    assert not pl.move_track(session, playlist, halo.id, "up")  # already first
+    assert pl.move_track(session, playlist, halo.id, "down")
+    session.commit()
+    assert _paths(playlist) == [INSANE, HALO]
+    assert [e.position for e in playlist.entries] == [0, 1]
+    assert pl.move_track(session, playlist, halo.id, "top")
+    assert _paths(playlist) == [HALO, INSANE]
+    assert pl.move_track(session, playlist, halo.id, "bottom")
+    assert _paths(playlist) == [INSANE, HALO]
+    assert not pl.move_track(session, playlist, 0, "up")  # not in the playlist
+
+
+def test_move_track_passes_entries_that_are_not_found(library):
+    session, lib = library
+    playlist = _static(session, lib)
+    halo, insane = _file(session, HALO), _file(session, INSANE)
+    pl.add_tracks(playlist, [halo])
+    playlist.entries.append(pl.PlaylistEntry(position=1, path="gone.mp3", file_id=None))
+    pl.add_tracks(playlist, [insane])
+    session.commit()
+    assert pl.move_track(session, playlist, halo.id, "down")  # past the missing entry
+    session.commit()
+    assert _paths(playlist) == ["gone.mp3", INSANE, HALO]
+
+
+def test_move_track_needs_a_manual_order(library):
+    session, lib = library
+    playlist = _static(session, lib)
+    playlist.sort = "title"
+    with pytest.raises(pl.RuleError):
+        pl.move_track(session, playlist, 1, "up")
+    smart = Playlist(library=lib, name="S", rule="x=y", sort="manual")
+    with pytest.raises(pl.RuleError):
+        pl.move_track(session, smart, 1, "up")
+
+
+def test_reorder_on_the_playlist_page(web, Session):
+    url = f"/playlists/{web.playlist_id}"
+    web.post(f"{url}/add", data={"file": [web.halo, web.insane]})
+    assert f'action="{url}/move"' in web.get(url).text
+    web.post(f"{url}/move", data={"file": web.insane, "to": "up"})
+    assert _entries(Session, web.playlist_id) == [INSANE, HALO]
+    assert web.post(f"{url}/move", data={"file": web.insane, "to": "sideways"}).status_code == 400
+
+    web.post(f"{url}/edit", data={"playlist_name": "Mix", "sort": "title"})
+    page = web.get(url).text
+    assert f'action="{url}/move"' not in page and "set Sort to manual" in page
+    assert "manually" in web.post(f"{url}/move", data={"file": web.insane, "to": "down"}).text
