@@ -358,3 +358,22 @@ details[open] > summary::before { transform: rotate(90deg); }
 @media (max-width: 40rem) {
   .tracks th:nth-child(n+5), .tracks td:nth-child(n+5) { display: none; }
 }
+
+/* "Add to playlist": an icon that opens a menu of playlists */
+details.add-to-playlist { position: relative; display: inline-block; vertical-align: middle; }
+details.add-to-playlist > summary {
+  list-style: none; cursor: pointer; display: inline-flex; width: 1.6em; height: 1.6em;
+  align-items: center; justify-content: center; border-radius: 50%; color: var(--muted);
+}
+details.add-to-playlist > summary::before { display: none; }
+details.add-to-playlist > summary svg { width: 1.1em; height: 1.1em; fill: currentColor; }
+details.add-to-playlist > summary:hover, details.add-to-playlist[open] > summary {
+  background: var(--line); color: var(--fg);
+}
+details.add-to-playlist .menu {
+  position: absolute; right: 0; z-index: 5; min-width: 12rem; max-height: 16rem; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 0.25rem; padding: 0.5rem; text-align: left;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+}
+button.icon { padding: 0.15rem 0.35rem; line-height: 1; }
+button.icon svg { width: 0.9em; height: 0.9em; fill: currentColor; vertical-align: middle; }

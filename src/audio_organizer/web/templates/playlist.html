@@ -25,7 +25,7 @@
 <h2>{{ shown.name }}: {{ shown.tracks | length }} tracks{% if shown.unresolved %}, {{ shown.unresolved }} not found{% endif %}</h2>
 {{ folders(folder_links) }}
 <table class="tracks">
- <thead><tr><th class="num">#</th><th>Artist</th><th>Title</th><th>Album</th><th class="num">Time</th></tr></thead>
+ <thead><tr><th class="num">#</th><th>Artist</th><th>Title</th><th>Album</th><th class="num">Time</th>{% if not playlist.is_smart %}<th></th>{% endif %}</tr></thead>
  <tbody>
  {% for t in shown.tracks %}
   <tr>
@@ -34,12 +34,55 @@
    <td><a href="/tracks/{{ t.file_id }}">{{ t.get("title") or t.path.rsplit("/", 1)[-1] }}</a></td>
    <td>{{ t.get("album") or "" }}</td>
    <td class="num">{{ t.duration | duration }}</td>
+   {% if not playlist.is_smart %}
+   <td><form method="post" action="/playlists/{{ playlist.id }}/remove"><input type="hidden" name="file" value="{{ t.file_id }}"><input type="hidden" name="back" value="{{ here }}"><button class="icon" aria-label="Remove {{ t.get('title') or t.path }} from the playlist" title="Remove from playlist"><svg aria-hidden="true"><use href="#icon-remove"/></svg></button></form></td>
+   {% endif %}
   </tr>
  {% endfor %}
  </tbody>
 </table>
 {% else %}
 <p>No tracks match.</p>
+{% endif %}
+
+{% if not playlist.is_smart %}
+<h2 id="add-tracks">Add tracks</h2>
+<form method="get" action="/playlists/{{ playlist.id }}#add-tracks" class="stacked">
+ {% if group %}<input type="hidden" name="group" value="{{ group }}">{% endif %}
+ <label>Words <input type="search" name="q" value="{{ q }}" placeholder="Artist, album, title or path"></label>
+ <label>Rule <input name="rule" value="{{ rule }}" placeholder="genre=Rock year>=1990 year<2000 mood=Mellow"></label>
+ <p><small>Words must all be in the artist, album, title or path. The rule takes the same conditions as a smart playlist's (artist, album, genre, mood, year, rating, …; <code>field=value</code>, <code>~</code> contains, <code>&gt;=</code> and <code>&lt;</code> for numbers, <code>|</code> between alternatives).</small></p>
+ <div class="actions"><button class="primary">Search</button></div>
+</form>
+{% if find_error %}<p class="error" role="alert">{{ find_error }}</p>{% endif %}
+{% if q.strip() or rule.strip() %}
+{% if found %}
+<form method="post" action="/playlists/{{ playlist.id }}/add">
+ <input type="hidden" name="back" value="{{ here }}#add-tracks">
+ <p class="count">{{ found_total }} {{ "track" if found_total == 1 else "tracks" }} found{% if found_total > found | length %}; the first {{ found | length }} are shown, narrow the search to see the rest{% endif %}.</p>
+ <table class="tracks">
+  <thead><tr><th><input type="checkbox" data-select-all="file" aria-label="Select or deselect all the tracks shown" hidden></th><th>Artist</th><th>Title</th><th>Album</th><th>Year</th><th>Genre</th><th class="num">Time</th></tr></thead>
+  <tbody>
+  {% for t in found %}
+   <tr data-select-row>
+    <td>{% if t.file_id in in_playlist %}<span class="muted" title="Already in the playlist">✓</span>{% else %}<input type="checkbox" name="file" value="{{ t.file_id }}" aria-label="Select {{ t.get('title') or t.path }}">{% endif %}</td>
+    <td>{{ t.get("artist") or "" }}</td>
+    <td><a href="/tracks/{{ t.file_id }}">{{ t.get("title") or t.path.rsplit("/", 1)[-1] }}</a></td>
+    <td>{{ t.get("album") or "" }}</td>
+    <td>{{ t.get("year") or "" }}</td>
+    <td>{{ t.get("genre") or "" }}</td>
+    <td class="num">{{ t.duration | duration }}</td>
+   </tr>
+  {% endfor %}
+  </tbody>
+ </table>
+ <div class="actions"><button class="primary">Add the selected tracks</button></div>
+ <p><small>Tracks go to the end of the playlist; ones already in it are marked ✓. Files already written change when you write them again.</small></p>
+</form>
+{% elif not find_error %}
+<p>No tracks match.</p>
+{% endif %}
+{% endif %}
 {% endif %}
 
 {% if missing %}

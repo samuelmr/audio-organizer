@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ library.name }} – audio-organizer{% endblock %}
 {% block content %}
-{% from "_macros.html" import thumb, folders %}
+{% from "_macros.html" import thumb, folders, add_to_playlist %}
 {% set base = '/libraries/' ~ library.name %}
 {# An album's or folder's page shows its cover beside the heading, unless the folder holds
    several albums, which then get a heading each in the list #}
@@ -11,7 +11,7 @@
  <div>
 {% if album is not none %}
  <h1>{{ album }}</h1>
- <p class="subtitle">Album{% if albumartist %} by <a href="{{ url(base, artist=albumartist) }}">{{ albumartist }}</a>{% endif %} · <a href="{{ base }}">All tracks</a></p>
+ <p class="subtitle">Album{% if albumartist %} by <a href="{{ url(base, artist=albumartist) }}">{{ albumartist }}</a>{% endif %} · <a href="{{ base }}">All tracks</a> · Add all to playlist {{ add_to_playlist(static_playlists, here, album=album, albumartist=albumartist or "", label=album) }}</p>
 {% elif artist is not none %}
  <h1>{{ artist }}</h1>
  <p class="subtitle">Artist · <a href="{{ base }}">All tracks</a></p>
@@ -106,7 +106,7 @@
 
 <table class="tracks">
  <thead>
-  <tr><th><input type="checkbox" data-select-all="file" aria-label="Select or deselect the tracks on this page" hidden></th><th class="num">#</th><th>Title</th><th>Artist</th><th>Album</th><th>Year</th><th>Genre</th><th class="num">Time</th><th></th></tr>
+  <tr><th><input type="checkbox" data-select-all="file" aria-label="Select or deselect the tracks on this page" hidden></th><th class="num">#</th><th>Title</th><th>Artist</th><th>Album</th><th>Year</th><th>Genre</th><th class="num">Time</th><th></th><th></th></tr>
  </thead>
  <tbody>
  {% set group = namespace(key=none) %}
@@ -115,9 +115,10 @@
    {% set key = ((meta.album or "") | lower, (meta.albumartist or "") | lower) %}
    {% if key != group.key %}
     {% set group.key = key %}
-    <tr class="group"><th colspan="9">
+    <tr class="group"><th colspan="10">
      {{ thumb(file.id) }}{% if meta.album %}<a href="{{ url(base, album=meta.album, albumartist=meta.albumartist) }}">{{ meta.album }}</a>{% else %}No album{% endif %}
      {% if meta.albumartist %}<span class="by">{{ meta.albumartist }}</span>{% endif %}
+     {% if meta.album %}{{ add_to_playlist(static_playlists, here, album=meta.album, albumartist=meta.albumartist or "", label=meta.album) }}{% endif %}
     </th></tr>
    {% endif %}
   {% endif %}
@@ -131,9 +132,10 @@
    <td>{{ meta.genre or "" }}</td>
    <td class="num">{{ file.duration | duration }}</td>
    <td>{% if meta.disputed %}<span class="flag" title="Its sources disagree">≠</span>{% endif %}</td>
+   <td>{{ add_to_playlist(static_playlists, here, file_id=file.id, label=meta.title or file.path) }}</td>
   </tr>
  {% else %}
-  <tr><td colspan="9">No tracks found.</td></tr>
+  <tr><td colspan="10">No tracks found.</td></tr>
  {% endfor %}
  </tbody>
 </table>

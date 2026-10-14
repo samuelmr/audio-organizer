@@ -330,6 +330,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             edit_all=edit_all, album_groups=album_groups, ticked=ticked,
             ticked_elsewhere=[i for i in ticked if i not in {f.id for f, _ in rows}],
             here=_url(f"/libraries/{lib.name}", sort=sort, page=page, **params),
+            static_playlists=_static_playlists(session, lib),
             page=page, pages=pages, sorts=list(SORTS), filters=list(FILTERS), params=params,
             **params,
         )  # fmt: skip
@@ -387,7 +388,8 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         }
         return render(
             request, "albums.html", library=lib, rows=rows, total=total, q=q, page=page,
-            pages=pages, folders=folders,
+            pages=pages, folders=folders, static_playlists=_static_playlists(session, lib),
+            here=_url(f"/libraries/{lib.name}/albums", q=q, page=page),
         )  # fmt: skip
 
     @app.get("/tracks/{file_id}", response_class=HTMLResponse)
@@ -1649,6 +1651,8 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         folder: str | None = None,
         formats: Annotated[list[str], Query()] = [],  # noqa: B006
         check: str = "",
+        q: str = "",
+        rule: str = "",
         session: Session = SessionDep,
     ):
         playlist = _playlist(session, playlist_id)
@@ -1658,9 +1662,18 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             shown = next((g for g in generated if g.name == group), shown)
         tried = {place: (folder, formats)} if place and folder is not None else {}
         repeats = pl.find_repeats(session, [playlist])
+        found, found_total, find_error = [], 0, None
+        if not playlist.is_smart and (q.strip() or rule.strip()):
+            try:
+                found, found_total = pl.find_tracks(session, playlist.library, q=q, rule=rule)
+            except pl.RuleError as e:
+                find_error = str(e)
         return render(
             request, "playlist.html", playlist=playlist, generated=generated, shown=shown,
-            sorts=pl.SORTS, error=None, group=group,
+            sorts=pl.SORTS, error=None, group=group, q=q, rule=rule, found=found,
+            found_total=found_total, find_error=find_error,
+            in_playlist={e.file_id for e in playlist.entries},
+            here=_url(f"/playlists/{playlist.id}", group=group, q=q, rule=rule),
             repeated=len(repeats[0].dropped) if repeats else 0,
             missing=[] if playlist.is_smart else pl.missing_entries(session, playlist),
             places=_file_places(session, playlist, generated, tried, check),
@@ -1801,6 +1814,49 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         removed = pl.collapse(session, pl.find_repeats(session, [playlist]))
         session.commit()
         return _redirect(f"/playlists/{playlist.id}", f"Removed {removed} repeated entries")
+
+    @app.post("/playlists/{playlist_id}/add")
+    def add_to_playlist(
+        playlist_id: int,
+        file: Annotated[list[int], Form()] = [],  # noqa: B006
+        album: str | None = Form(None),
+        albumartist: str | None = Form(None),
+        back: str = Form(""),
+        session: Session = SessionDep,
+    ):
+        """Add tracks to a static playlist: the chosen files, or a whole album."""
+        playlist = _playlist(session, playlist_id)
+        back = _local(back, f"/playlists/{playlist.id}")
+        if playlist.is_smart:
+            return _redirect(back, f"{playlist.name} is a smart playlist; change its rule instead")
+        if album is not None:
+            files = album_files(session, playlist.library_id, album, albumartist, None)
+        else:
+            files = chosen_files(session, playlist.library_id, file)
+        if not files:
+            return _redirect(back, "Choose some tracks to add")
+        added = pl.add_tracks(playlist, files)
+        session.commit()
+        message = f"Added {added} {'track' if added == 1 else 'tracks'} to {playlist.name}"
+        if added < len(files):
+            message += f" ({len(files) - added} already in it)"
+        return _redirect(back, message, (f"/playlists/{playlist.id}", "Open the playlist"))
+
+    @app.post("/playlists/{playlist_id}/remove")
+    def remove_from_playlist(
+        playlist_id: int,
+        file: Annotated[list[int], Form()] = [],  # noqa: B006
+        back: str = Form(""),
+        session: Session = SessionDep,
+    ):
+        """Remove tracks from a static playlist (a smart one is changed by its rule)."""
+        playlist = _playlist(session, playlist_id)
+        back = _local(back, f"/playlists/{playlist.id}")
+        if playlist.is_smart:
+            return _redirect(back, f"{playlist.name} is a smart playlist; change its rule instead")
+        removed = pl.remove_tracks(playlist, file)
+        session.commit()
+        return _redirect(back, f"Removed {removed} {'entry' if removed == 1 else 'entries'}")
 
     @app.get("/playlists/{playlist_id}/locate", response_class=HTMLResponse)
     def locate_missing(request: Request, playlist_id: int, session: Session = SessionDep):
@@ -2336,6 +2392,19 @@ def _redirect(
             extra.update(msg_href=link[0], msg_link=link[1])
         path += ("&" if "?" in path else "?") + urlencode(extra)
     return RedirectResponse(path, status_code=303)
+
+
+def _local(path: str, default: str) -> str:
+    """A path on this site to return to, or the default: a crafted form must not send the
+    reader elsewhere."""
+    if path.startswith("/") and not path.startswith(("//", "/\\")):
+        return path
+    return default
+
+
+def _static_playlists(session: Session, library: Library) -> list[Playlist]:
+    """The playlists tracks can be added to, for the "Add to playlist" menus."""
+    return [p for p in pl.library_playlists(session, library) if not p.is_smart]
 
 
 def _url(base: str, /, **params) -> str:

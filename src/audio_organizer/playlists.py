@@ -537,6 +537,56 @@ def set_entries(playlist: Playlist, entries: list[tuple[str, int | None]]) -> No
     ]
 
 
+def add_tracks(playlist: Playlist, files: Iterable[AudioFile]) -> int:
+    """Append files to the end of a static playlist, leaving out those it already has (a
+    track twice would only be proposed for removal again by dedupe); returns how many were
+    added. Existing entries keep their rows. The caller commits."""
+    if playlist.is_smart:
+        raise RuleError(f"{playlist.name} is a smart playlist; change its rule instead")
+    have = {e.file_id for e in playlist.entries if e.file_id is not None}
+    position = max((e.position for e in playlist.entries), default=-1) + 1
+    added = 0
+    for file in files:
+        if file.id in have:
+            continue
+        have.add(file.id)
+        playlist.entries.append(PlaylistEntry(position=position, path=file.path, file_id=file.id))
+        position += 1
+        added += 1
+    return added
+
+
+def remove_tracks(playlist: Playlist, file_ids: Iterable[int]) -> int:
+    """Remove the entries of these files from a static playlist and number the rest again;
+    returns how many entries went. The caller commits."""
+    gone = set(file_ids)
+    return _remove_entries(playlist, {e.id for e in playlist.entries if e.file_id in gone})
+
+
+def find_tracks(
+    session: Session, library: Library, *, q: str = "", rule: str = "", limit: int = 200
+) -> tuple[list[Track], int]:
+    """The library's tracks for choosing some to add to a playlist: those with every word
+    of q in their artist, album, title or path, and satisfying the rule (the syntax of a
+    smart playlist's rule). Returns the first `limit` in path order and how many matched.
+    RuleError for a bad rule."""
+    conditions = parse_rule(rule) if rule.strip() else []
+    words = [_fold(w) for w in q.split()]
+    found: list[Track] = []
+    total = 0
+    for track in iter_tracks(session, library.id):
+        if not all(c.matches(track) for c in conditions):
+            continue
+        if words:
+            text = _fold(" ".join(track.get(f) or "" for f in ("artist", "album", "title", "path")))
+            if not all(w in text for w in words):
+                continue
+        total += 1
+        if len(found) < limit:
+            found.append(track)
+    return found, total
+
+
 @dataclass
 class Repeats:
     """The entries of a static playlist that name a track again."""

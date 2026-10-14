@@ -1394,10 +1394,9 @@ def playlists_add(
     with _session(ctx) as session:
         playlist = _static(session, name, library)
         files = [_find_file(session, path) for path in paths]
-        pairs = [(e.path, e.file_id) for e in playlist.entries] + [(f.path, f.id) for f in files]
-        pl.set_entries(playlist, pairs)
+        added = pl.add_tracks(playlist, files)
         session.commit()
-    typer.echo(f"Added {len(files)} tracks to {name}")
+    typer.echo(f"Added {added} tracks to {name}")
 
 
 @playlists_app.command("remove")
@@ -1408,9 +1407,7 @@ def playlists_remove(
     with _session(ctx) as session:
         playlist = _static(session, name, library)
         ids = {_find_file(session, path).id for path in paths}
-        kept = [(e.path, e.file_id) for e in playlist.entries if e.file_id not in ids]
-        removed = len(playlist.entries) - len(kept)
-        pl.set_entries(playlist, kept)
+        removed = pl.remove_tracks(playlist, ids)
         session.commit()
     typer.echo(f"Removed {removed} entries from {name}")
 

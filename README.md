@@ -703,6 +703,12 @@ Static playlists:
     aorg playlists add "Party" "Texas/Greatest Hits/11 Halo.mp3"
     aorg playlists remove "Party" "Texas/Greatest Hits/11 Halo.mp3"
 
+In the web UI, the track and album lists have an "Add to playlist" icon on each track and
+album, which opens a list of the static playlists; a static playlist's page has an "Add
+tracks" form that searches the library by words and by a rule (the conditions of a smart
+playlist, such as `genre=Rock year<2000 mood=Mellow`) to choose tracks from, and a remove
+button on each track. A track already in a playlist is not added again.
+
 Imported entries may be absolute paths, or relative to the library or to the `.m3u`
 file. When a path does not match exactly, a loose match that ignores a leading "The",
 punctuation and accents is accepted if only one file fits. A path where a file used to

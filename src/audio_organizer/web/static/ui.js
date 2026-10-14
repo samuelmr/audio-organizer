@@ -4,9 +4,16 @@
   // and inputs, selects its radio button or toggles its checkbox.
   document.addEventListener("click", (event) => {
     const row = event.target.closest("tr[data-select-row]");
-    if (!row || event.target.closest("a, button, input, label, select, textarea")) return;
+    if (!row || event.target.closest("a, button, input, label, select, textarea, summary, details")) return;
     const input = row.querySelector("input[type=radio], input[type=checkbox]");
     if (input) input.click();
+  });
+
+  // An "Add to playlist" menu closes when the page is clicked elsewhere
+  document.addEventListener("click", (event) => {
+    document.querySelectorAll("details.add-to-playlist[open]").forEach((menu) => {
+      if (!menu.contains(event.target)) menu.removeAttribute("open");
+    });
   });
 
   // Covers that are missing leave their empty square instead of a broken image
