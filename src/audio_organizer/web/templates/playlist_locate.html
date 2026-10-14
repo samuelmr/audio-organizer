@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Look for missing tracks – {{ playlist.name }} – audio-organizer{% endblock %}
+{% block content %}
+{% from "_macros.html" import play %}
+{% set back = '/playlists/' ~ playlist.id %}
+<h1>Look for the missing tracks of <a href="{{ back }}">{{ playlist.name }}</a></h1>
+
+{% if located %}
+<p>Files that may be the tracks of entries not found. Those found by their path or audio
+are selected; one found only by its file name may be another recording, so check it.
+The chosen entries then refer to these files; nothing else changes.</p>
+<form method="post" action="{{ back }}/locate" class="stacked">
+ <table>
+  <thead><tr><th><input type="checkbox" data-select-all="found" aria-label="Select or deselect all files" hidden></th><th class="num">#</th><th>Entry</th><th>File found</th><th>Found by</th></tr></thead>
+  <tbody>
+  {% for item in located %}
+   <tr data-select-row>
+    <td><input type="checkbox" name="found" id="found-{{ item.entry.id }}" value="{{ item.entry.id }}:{{ item.file_id }}" {% if item.sure %}checked{% endif %}></td>
+    <td class="num">{{ item.entry.position + 1 }}</td>
+    <td class="path"><label for="found-{{ item.entry.id }}">{{ item.entry.path }}</label></td>
+    <td class="path">{{ play(item.file_id, item.path) }} <a href="/tracks/{{ item.file_id }}">{{ item.path }}</a></td>
+    <td>{{ item.how }}</td>
+   </tr>
+  {% endfor %}
+  </tbody>
+ </table>
+ <div class="actions">
+  <button class="primary">Use the selected files</button>
+  <a href="{{ back }}">Cancel</a>
+ </div>
+</form>
+{% else %}
+<p>No files were found for the entries whose track is missing.</p>
+{% endif %}
+
+{% if not_found %}
+<h2>Still not found: {{ not_found | length }}</h2>
+<p>No file fits these entries, or several fit equally well. Add the tracks to the library
+and scan it, or remove the entries on <a href="{{ back }}#missing">the playlist's page</a>.</p>
+<ul class="paths">
+ {% for e in not_found %}<li>{{ e.position + 1 }}. <code>{{ e.path }}</code></li>{% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

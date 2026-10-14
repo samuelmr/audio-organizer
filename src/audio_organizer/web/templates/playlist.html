@@ -42,6 +42,20 @@
 <p>No tracks match.</p>
 {% endif %}
 
+{% if missing %}
+<h2 id="missing">Not found: {{ missing | length }} {{ "entry" if missing | length == 1 else "entries" }}</h2>
+<p>These entries refer to no file in the library: they matched none when the playlist was imported, or their file has gone or cannot be read.</p>
+<ul class="paths">
+ {% for e in missing[:50] %}<li>{{ e.position + 1 }}. <code>{{ e.path }}</code></li>{% endfor %}
+ {% if missing | length > 50 %}<li>… and {{ missing | length - 50 }} more</li>{% endif %}
+</ul>
+<form method="post" action="/playlists/{{ playlist.id }}/drop-missing" class="actions">
+ <button formmethod="get" formaction="/playlists/{{ playlist.id }}/locate">Look for them</button>
+ <button class="danger" onclick="return confirm('Remove the {{ missing | length }} entries whose track is not found? They cannot be brought back.')">Remove them from the playlist</button>
+</form>
+<p><small>Look for them proposes files by their paths, by the audio of the file an entry had, and by file name and folders, for you to choose from; nothing changes until you do. Removing drops the entries from audio-organizer's database. Files already written change when you write them again.</small></p>
+{% endif %}
+
 <h2>Settings</h2>
 {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
 <form method="post" action="/playlists/{{ playlist.id }}/edit" class="stacked">

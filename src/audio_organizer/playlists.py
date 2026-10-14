@@ -500,13 +500,198 @@ def collapse(session: Session, repeats: Iterable[Repeats]) -> int:
     Returns how many entries were removed. The caller commits."""
     removed = 0
     for found in repeats:
-        gone = {entry.id for entry, _ in found.dropped}
-        kept = [e for e in sorted(found.playlist.entries, key=lambda e: e.position)
-                if e.id not in gone]  # fmt: skip
-        for position, entry in enumerate(kept):
-            entry.position = position
-        found.playlist.entries = kept
-        removed += len(gone)
+        removed += _remove_entries(found.playlist, {entry.id for entry, _ in found.dropped})
+    session.flush()
+    return removed
+
+
+def _remove_entries(playlist: Playlist, gone: set[int]) -> int:
+    """Remove entries by id and number the rest again, keeping their order and rows."""
+    kept = [e for e in sorted(playlist.entries, key=lambda e: e.position) if e.id not in gone]
+    for position, entry in enumerate(kept):
+        entry.position = position
+    removed = len(playlist.entries) - len(kept)
+    playlist.entries = kept
+    return removed
+
+
+# ---- entries whose track is not found ---------------------------------------------------
+
+
+def missing_entries(session: Session, playlist: Playlist) -> list[PlaylistEntry]:
+    """The entries of a static playlist that the generated playlist leaves out: those that
+    matched no file when imported, and those whose file has gone or cannot be read."""
+    ids = sorted({e.file_id for e in playlist.entries if e.file_id is not None})
+    found: set[int] = set()
+    for start in range(0, len(ids), 500):
+        found.update(
+            session.scalars(
+                select(AudioFile.id).where(
+                    AudioFile.id.in_(ids[start : start + 500]), present(playlist.library_id)
+                )
+            )
+        )
+    return [e for e in sorted(playlist.entries, key=lambda e: e.position)
+            if e.file_id not in found]  # fmt: skip
+
+
+@dataclass
+class Located:
+    """A file proposed for an entry whose track was not found, and how it was found."""
+
+    entry: PlaylistEntry
+    file_id: int
+    path: str
+    how: str
+    sure: bool  # False: only the file name fits, so it may be another recording
+
+
+def locate_missing(
+    session: Session, library: Library, entries: Iterable[PlaylistEntry]
+) -> list[Located]:
+    """Look for the files of entries whose track is not found. In this order:
+
+    - the entry's path, or the path its file had, matched as an import matches it
+      (exactly, or loosely when only one file fits); a relative path counts from the
+      library root or the playlist folder;
+    - the one file with the same audio as the file the entry had, e.g. a copy elsewhere;
+    - a file with the same name (ignoring case, punctuation, accents and the extension,
+      so that a re-encoded file fits too) whose folders best match the end of the entry's
+      path: what a playlist made on another computer, or before a reorganisation, needs.
+      The best match must be the only one; when only the file name fits it is not sure.
+
+    Entries for which nothing is found are left out."""
+    entries = list(entries)
+    if not entries:
+        return []
+    index = PathIndex(session, library)
+    base = Path(library.root, library.playlist_folder)
+    old_ids = sorted({e.file_id for e in entries if e.file_id is not None})
+    old: dict[int, tuple[str, str | None]] = {}
+    for start in range(0, len(old_ids), 500):
+        rows = session.execute(
+            select(AudioFile.id, AudioFile.path, AudioFile.audio_hash).where(
+                AudioFile.id.in_(old_ids[start : start + 500])
+            )
+        )
+        old.update((file_id, (path, audio_hash)) for file_id, path, audio_hash in rows)
+    same_audio = _present_by_hash(session, library, {h for _, h in old.values() if h})
+    names: _NameIndex | None = None  # built when needed, as it reads every path again
+    proposals: list[tuple[PlaylistEntry, int, str, bool]] = []
+    for entry in entries:
+        old_path, old_hash = old.get(entry.file_id, (None, None))
+        paths = [entry.path] + ([old_path] if old_path and old_path != entry.path else [])
+        file_id = next((found for p in paths if (found := index.find(p, base)) is not None), None)
+        if file_id is not None:
+            proposals.append((entry, file_id, "path", True))
+            continue
+        if old_hash and (file_id := same_audio.get(old_hash)) is not None:
+            proposals.append((entry, file_id, "same audio", True))
+            continue
+        names = names or _NameIndex(session, library)
+        for p in paths:
+            if (match := names.find(p)) is not None:
+                proposals.append((entry, *match))
+                break
+    found_paths = _paths(session, {file_id for _, file_id, _, _ in proposals})
+    return [
+        Located(entry, file_id, found_paths[file_id], how, sure)
+        for entry, file_id, how, sure in proposals
+    ]
+
+
+def _present_by_hash(session: Session, library: Library, hashes: set[str]) -> dict[str, int]:
+    """For each audio hash, the readable file that has it, when there is only one."""
+    found: dict[str, int | None] = {}
+    wanted = sorted(hashes)
+    for start in range(0, len(wanted), 500):
+        for file_id, audio_hash in session.execute(
+            select(AudioFile.id, AudioFile.audio_hash).where(
+                AudioFile.audio_hash.in_(wanted[start : start + 500]), present(library.id)
+            )
+        ):
+            found[audio_hash] = None if audio_hash in found else file_id
+    return {h: file_id for h, file_id in found.items() if file_id is not None}
+
+
+def _paths(session: Session, ids: set[int]) -> dict[int, str]:
+    wanted = sorted(ids)
+    paths: dict[int, str] = {}
+    for start in range(0, len(wanted), 500):
+        rows = session.execute(
+            select(AudioFile.id, AudioFile.path).where(
+                AudioFile.id.in_(wanted[start : start + 500])
+            )
+        )
+        paths.update((file_id, path) for file_id, path in rows)
+    return paths
+
+
+class _NameIndex:
+    """The library's readable files by loose file name without extension, with the loose
+    names of their folders, for finding a file by the end of a path."""
+
+    def __init__(self, session: Session, library: Library) -> None:
+        self.files: dict[str, list[tuple[int, tuple[str, ...], str]]] = {}
+        for file_id, path in session.execute(
+            select(AudioFile.id, AudioFile.path).where(present(library.id))
+        ):
+            folders, stem, suffix = _name_parts(path)
+            self.files.setdefault(stem, []).append((file_id, folders, suffix))
+
+    def find(self, entry: str) -> tuple[int, str, bool] | None:
+        """(file id, how it was found, whether it is sure) of the only best match. Files
+        score by how many of the folders above them match, then by the same extension."""
+        folders, stem, suffix = _name_parts(entry)
+        scored = []
+        for file_id, their_folders, their_suffix in self.files.get(stem, ()):
+            same = 0
+            for mine, theirs in zip(reversed(folders), reversed(their_folders), strict=False):
+                if mine != theirs:
+                    break
+                same += 1
+            scored.append(((same, suffix == their_suffix), file_id))
+        if not scored:
+            return None
+        scored.sort(reverse=True)
+        if len(scored) > 1 and scored[1][0] == scored[0][0]:
+            return None
+        (same, _), file_id = scored[0]
+        if not same:
+            return file_id, "file name", False
+        return (
+            file_id,
+            "file name and folder" if same == 1 else f"file name and {same} folders",
+            True,
+        )
+
+
+def _name_parts(path: str) -> tuple[tuple[str, ...], str, str]:
+    """(loose folder names, loose file name without extension, extension) of a path,
+    which may be a Windows one."""
+    parts = [p for p in path.replace("\\", "/").split("/") if p not in ("", ".", "..")]
+    name = parts.pop() if parts else ""
+    stem, dot, suffix = name.rpartition(".")
+    if not dot:
+        stem, suffix = name, ""
+    return tuple(normalize_name(p) for p in parts), normalize_name(stem), suffix.casefold()
+
+
+def relink(session: Session, located: Iterable[Located]) -> int:
+    """Point entries at the files found for them; returns how many. The entry's path
+    becomes the file's, as if the track had been added now. The caller commits."""
+    changed = 0
+    for item in located:
+        item.entry.file_id, item.entry.path = item.file_id, item.path
+        changed += 1
+    session.flush()
+    return changed
+
+
+def drop_missing(session: Session, playlist: Playlist) -> int:
+    """Remove the entries whose track is not found and number the rest again; returns how
+    many were removed. The caller commits."""
+    removed = _remove_entries(playlist, {e.id for e in missing_entries(session, playlist)})
     session.flush()
     return removed
 

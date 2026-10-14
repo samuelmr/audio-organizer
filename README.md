@@ -715,7 +715,23 @@ names) and removes them, keeping the first entry of each track and the order of 
 Other recordings of a song (a live take, another edition) are left alone, and so are smart
 playlists, which hold one copy of each song anyway. Only the catalog changes; a playlist
 file already written changes when you write it again. A playlist's page in the web UI
-offers the same when it has repeats. To write playlists
+offers the same when it has repeats.
+
+Entries that refer to no file (they matched none when imported, or their file has gone)
+are left out of the playlist but kept. `aorg playlists missing` lists them and looks for
+their files: by path as an import would, by the audio of the file an entry had, and by
+file name and the folders above it, which finds the tracks of a playlist made on another
+computer or before the files were reorganised, and of re-encoded files. Only a file that
+fits better than any other is proposed; one that fits by its name alone may be another
+recording, so it is used only with `--guesses`:
+
+    aorg playlists missing                          # list them and the files found
+    aorg playlists missing --name "Party" --apply   # use the files found by path or audio
+    aorg playlists missing --apply --guesses        # also those found by name alone
+    aorg playlists missing --remove                 # drop the entries still not found
+
+A static playlist's page in the web UI lists its missing entries, with buttons to look
+for them (choosing which proposed files to use) and to remove them. To write playlists
 into a folder, with tracks referred to by relative paths:
 
     aorg playlists export ~/Music/Playlists --format m3u,json,html

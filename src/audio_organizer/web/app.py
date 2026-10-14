@@ -1662,6 +1662,7 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
             request, "playlist.html", playlist=playlist, generated=generated, shown=shown,
             sorts=pl.SORTS, error=None, group=group,
             repeated=len(repeats[0].dropped) if repeats else 0,
+            missing=[] if playlist.is_smart else pl.missing_entries(session, playlist),
             places=_file_places(session, playlist, generated, tried, check),
             all_formats=list(FORMAT_LABELS),
             folder_links=_folder_links(playlist.library, [t.path for t in shown.tracks])
@@ -1800,6 +1801,48 @@ def create_app(session_factory: sessionmaker[Session]) -> FastAPI:
         removed = pl.collapse(session, pl.find_repeats(session, [playlist]))
         session.commit()
         return _redirect(f"/playlists/{playlist.id}", f"Removed {removed} repeated entries")
+
+    @app.get("/playlists/{playlist_id}/locate", response_class=HTMLResponse)
+    def locate_missing(request: Request, playlist_id: int, session: Session = SessionDep):
+        """Propose files for the entries whose track is not found, for the user to pick."""
+        playlist = _playlist(session, playlist_id)
+        missing = pl.missing_entries(session, playlist)
+        located = pl.locate_missing(session, playlist.library, missing)
+        found = {item.entry.id for item in located}
+        return render(
+            request, "playlist_locate.html", playlist=playlist, library=playlist.library,
+            located=located, not_found=[e for e in missing if e.id not in found],
+        )  # fmt: skip
+
+    @app.post("/playlists/{playlist_id}/locate")
+    def relink_missing(
+        playlist_id: int,
+        found: Annotated[list[str], Form()] = [],  # noqa: B006
+        session: Session = SessionDep,
+    ):
+        """Point the chosen entries at the files proposed for them ("<entry id>:<file id>").
+        The proposals are made again, so only what the page offered can be chosen."""
+        playlist = _playlist(session, playlist_id)
+        chosen = set(found)
+        located = [
+            item
+            for item in pl.locate_missing(
+                session, playlist.library, pl.missing_entries(session, playlist)
+            )
+            if f"{item.entry.id}:{item.file_id}" in chosen
+        ]
+        changed = pl.relink(session, located)
+        session.commit()
+        return _redirect(f"/playlists/{playlist.id}", f"Found the tracks of {changed} entries")
+
+    @app.post("/playlists/{playlist_id}/drop-missing")
+    def drop_missing(playlist_id: int, session: Session = SessionDep):
+        playlist = _playlist(session, playlist_id)
+        removed = pl.drop_missing(session, playlist)
+        session.commit()
+        return _redirect(
+            f"/playlists/{playlist.id}", f"Removed {removed} entries whose track was not found"
+        )
 
     @app.post("/playlists/{playlist_id}/delete")
     def delete_playlist(playlist_id: int, session: Session = SessionDep):

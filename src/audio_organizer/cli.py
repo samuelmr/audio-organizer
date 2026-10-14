@@ -1451,6 +1451,60 @@ def playlists_dedupe(
         typer.echo(f"Removed {total} entries.")
 
 
+@playlists_app.command("missing")
+def playlists_missing(
+    ctx: typer.Context,
+    name: Annotated[
+        str | None, typer.Option(help="Only this static playlist (all of them by default)")
+    ] = None,
+    apply: Annotated[
+        bool,
+        typer.Option("--apply", help="Use the files found by path or audio (otherwise list them)"),
+    ] = False,
+    guesses: Annotated[
+        bool, typer.Option("--guesses", help="With --apply, also use files found by name only")
+    ] = False,
+    remove: Annotated[
+        bool, typer.Option("--remove", help="Remove the entries still not found")
+    ] = False,
+    library: LibraryOption = None,
+) -> None:
+    """Look for the tracks of static playlist entries that refer to no file.
+
+    Entries are matched by their path, by the audio of the file they had, and by file name
+    and the folders above it (for a playlist made on another computer or before files
+    were reorganised). A file found by its name alone may be another recording; it is
+    used only with --guesses. Without --apply and --remove nothing changes.
+    """
+    with _session(ctx) as session:
+        lib = _library(session, library)
+        if name is not None:
+            playlists = [_static(session, name, library)]
+        else:
+            playlists = [p for p in pl.library_playlists(session, lib) if not p.is_smart]
+        relinked = removed = 0
+        for playlist in playlists:
+            missing = pl.missing_entries(session, playlist)
+            if not missing:
+                continue
+            located = pl.locate_missing(session, lib, missing)
+            found = {item.entry.id: item for item in located}
+            typer.echo(f"{playlist.name}: {len(missing)} not found, {len(located)} located")
+            for entry in missing:
+                item = found.get(entry.id)
+                where = f" -> {item.path} ({item.how})" if item else ""
+                typer.echo(f"  {entry.position + 1}. {entry.path}{where}")
+            if apply:
+                relinked += pl.relink(session, [i for i in located if i.sure or guesses])
+            if remove:
+                removed += pl.drop_missing(session, playlist)
+        session.commit()
+        if apply or remove:
+            typer.echo(f"Relinked {relinked} entries, removed {removed}.")
+        else:
+            typer.echo("Run with --apply to use the files found, --remove to drop the rest.")
+
+
 @playlists_app.command("import")
 def playlists_import(
     ctx: typer.Context,
