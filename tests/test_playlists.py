@@ -260,7 +260,9 @@ def test_static_playlist_keeps_entry_of_deleted_file(catalog):
     pl.set_entries(playlist, [(file.path, file.id)])
     session.add(playlist)
     session.commit()
-    (root / file.path).unlink()
+    # A copy of its audio would take its place (test_scanner), so all of them go
+    for copy in session.scalars(select(AudioFile).where(AudioFile.audio_hash == file.audio_hash)):
+        (root / copy.path).unlink()
     scan(session, library)
     [generated] = pl.generate(session, library)
     assert generated.tracks == [] and generated.unresolved == 1

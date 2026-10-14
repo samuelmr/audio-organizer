@@ -4,7 +4,11 @@ Files whose size and modification time are unchanged since the last scan are not
 read again, so rescanning a large library on a network share is cheap. New and
 changed files are read in a thread pool. A file that disappears from one path and
 appears at another with the same audio hash is recorded as a move, keeping its
-history and manual edits.
+history and manual edits. That holds when two scans see the move in parts (a scan while
+files were being moved): a new file takes over the record of a file that went missing
+earlier, unless that file was trashed. Static playlist entries of a file that is still
+missing then switch to the one other readable copy of its audio, as trashing does, and
+entries that matched no file are matched again (playlists.match_unmatched).
 
 On a case-insensitive share, names that differ only in letter case ("Normaalien
 Maihinnousu" and "Normaalien maihinnousu") can both be listed while both lead to the same
@@ -18,16 +22,18 @@ import unicodedata
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
+from . import changes as ch
 from . import conflicts, covers, pathparse, tags
 from .audiohash import audio_hash
 from .blockfile import BlockFile
 from .models import AudioFile, Library, TagSnapshot, utcnow
 from .playlist_scan import PlaylistScan, import_from_disk
+from .playlists import follow_gone_files, match_unmatched
 from .provenance import set_values
 
 AUDIO_EXTENSIONS = {
@@ -45,6 +51,10 @@ class ScanStats:
     changed: int = 0
     moved: int = 0
     missing: int = 0
+    # Static playlist entries switched from a missing file to another copy of its audio
+    relinked: int = 0
+    # Static playlist entries that matched no file and now do
+    matched: int = 0
     # Fields retagged elsewhere that the user has an edit for (conflicts.py)
     conflicts: int = 0
     errors: list[tuple[str, str]] = field(default_factory=list)
@@ -244,7 +254,7 @@ def scan(
         session.execute(update(AudioFile).where(AudioFile.id.in_(reappeared)).values(missing=False))
 
     gone = [entry[0] for path, entry in known.items() if path not in seen and not entry[3]]
-    moved = _match_moves(session, gone, new_files, stats)
+    moved = _match_moves(session, library, gone, new_files, stats)
     stats.moved = len(moved)
     stats.new -= stats.moved
     still_gone = [file_id for file_id in gone if file_id not in moved]
@@ -252,6 +262,8 @@ def scan(
         session.execute(update(AudioFile).where(AudioFile.id.in_(still_gone)).values(missing=True))
     stats.missing = len(still_gone)
     covers.remember_folders(session, library, folders)
+    stats.relinked = follow_gone_files(session, library)
+    stats.matched = match_unmatched(session, library)
     session.commit()
     if import_playlists:
         stats.playlists = import_from_disk(session, library)
@@ -283,23 +295,38 @@ def _update(session: Session, file: AudioFile, result: _Result, *, first_time: b
 
 
 def _match_moves(
-    session: Session, gone_ids: list[int], new_files: list[AudioFile], stats: ScanStats
+    session: Session,
+    library: Library,
+    gone_ids: list[int],
+    new_files: list[AudioFile],
+    stats: ScanStats,
 ) -> set[int]:
     """Turn (vanished file, new file with the same audio hash) pairs into moves of the
-    original record, so its id, snapshots and manual edits survive. Returns the moved ids."""
+    original record, so its id, snapshots and manual edits survive. Returns the moved ids.
+
+    Files that vanished in this scan come first; then those that went missing in an
+    earlier one, for a move that two scans saw in parts. Among several, one with the new
+    file's name is taken."""
     moved: set[int] = set()
-    if not gone_ids or not new_files:
+    if not new_files:
         return moved
     by_hash: dict[str, list[AudioFile]] = {}
     for file_id in gone_ids:
         old = session.get(AudioFile, file_id)
         if old.audio_hash:
             by_hash.setdefault(old.audio_hash, []).append(old)
+    wanted = {new.audio_hash for new in new_files if new.audio_hash}
+    for old in _missing_before(session, library, wanted, set(gone_ids)):
+        by_hash.setdefault(old.audio_hash, []).append(old)
     for new in new_files:
         candidates = by_hash.get(new.audio_hash or "")
         if not candidates:
             continue
-        old = candidates.pop(0)
+        name = PurePosixPath(new.path).name.casefold()
+        same_name = (
+            i for i, c in enumerate(candidates) if PurePosixPath(c.path).name.casefold() == name
+        )
+        old = candidates.pop(next(same_name, 0))
         fields = {
             source: {fv.field: fv.value for fv in new.values if fv.source == source}
             for source in ("tag", "path")
@@ -319,3 +346,28 @@ def _match_moves(
             set_values(session, old, source, values)
         moved.add(old.id)
     return moved
+
+
+def _missing_before(
+    session: Session, library: Library, hashes: set[str], exclude: set[int]
+) -> list[AudioFile]:
+    """The files that went missing before this scan and have one of the audio hashes,
+    except those that were trashed: undoing the trash brings them back."""
+    found: list[AudioFile] = []
+    wanted = sorted(hashes)
+    for start in range(0, len(wanted), 500):
+        found.extend(
+            session.scalars(
+                select(AudioFile)
+                .where(
+                    AudioFile.library_id == library.id,
+                    AudioFile.missing,
+                    AudioFile.audio_hash.in_(wanted[start : start + 500]),
+                    ~AudioFile.path.startswith(ch.TRASH_DIR + "/"),
+                )
+                .order_by(AudioFile.id)
+            )
+        )
+    found = [f for f in found if f.id not in exclude]
+    trashed = ch.trashed(session, [f.id for f in found])
+    return [f for f in found if f.id not in trashed]

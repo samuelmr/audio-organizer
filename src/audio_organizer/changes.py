@@ -484,6 +484,22 @@ def waiting_files(session: Session, kinds: tuple[str, ...] = ("trash", "move")) 
     return set(session.scalars(in_changesets)) | set(session.scalars(decided))
 
 
+def trashed(session: Session, file_ids: list[int]) -> set[int]:
+    """Those of the files that an applied change moved to the trash."""
+    found: set[int] = set()
+    for start in range(0, len(file_ids), 500):
+        found.update(
+            session.scalars(
+                select(Change.file_id).where(
+                    Change.kind == "trash",
+                    Change.status == "applied",
+                    Change.file_id.in_(file_ids[start : start + 500]),
+                )
+            )
+        )
+    return found
+
+
 def desire_of(session: Session, change: Change) -> FileDesire | None:
     """The decided state (models.FileDesire) that this change carries out, if any. A move
     made by another feature is not the decided move unless it goes to the same path."""

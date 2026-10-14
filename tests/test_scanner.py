@@ -2,7 +2,9 @@ import os
 
 from sqlalchemy import select
 
-from audio_organizer.models import AudioFile, Library, TagSnapshot
+from audio_organizer import changes as ch
+from audio_organizer import playlists as pl
+from audio_organizer.models import AudioFile, Library, Playlist, TagSnapshot
 from audio_organizer.provenance import resolve, set_value
 from audio_organizer.scanner import case_aliases, scan
 
@@ -70,6 +72,84 @@ def test_move_keeps_identity_and_manual_edits(Session, copy_audio, tmp_path):
         assert resolved["genre"].value == "Rock"
         assert resolved["album"].candidates["path"] == "Greatest Hits"
         assert len(_files(session)) == 1
+
+
+def test_a_move_two_scans_saw_in_parts(Session, copy_audio, tmp_path):
+    """A scan ran while the folder was being moved: the old files had gone, the new ones
+    were not there yet. The next scan finds them and keeps the old record."""
+    root = tmp_path / "music"
+    old = copy_audio("mp3", root / "Aguilera, Christina/Back to Basics/01 Intro.mp3")
+    with Session() as session:
+        library = _library(session, root)
+        scan(session, library)
+        file = _files(session)["Aguilera, Christina/Back to Basics/01 Intro.mp3"]
+        file_id = file.id
+        set_value(session, file, "manual", "genre", "Pop")
+        playlist = Playlist(library=library, name="Mix", sort="manual")
+        pl.set_entries(playlist, [(file.path, file.id)])
+        session.add(playlist)
+        session.commit()
+
+        moving = old.rename(tmp_path / "in transit.mp3")
+        assert scan(session, library).missing == 1
+        new = root / "Christina Aguilera/Back to Basics/01 Intro.mp3"
+        new.parent.mkdir(parents=True)
+        moving.rename(new)
+        stats = scan(session, library)
+        assert (stats.moved, stats.new) == (1, 0)
+        session.expire_all()
+        file = session.get(AudioFile, file_id)
+        assert (file.path, file.missing) == (
+            "Christina Aguilera/Back to Basics/01 Intro.mp3",
+            False,
+        )
+        assert resolve(file.values)["genre"].value == "Pop"
+        assert [e.file_id for e in session.get(Playlist, playlist.id).entries] == [file_id]
+
+
+def test_a_trashed_file_is_not_taken_over(Session, copy_audio, tmp_path):
+    root = tmp_path / "music"
+    copy_audio("mp3", root / "a/01 x.mp3")
+    copy_audio("mp3", root / "b/01 x.mp3")  # the copy that is kept
+    with Session() as session:
+        library = _library(session, root)
+        scan(session, library)
+        files = _files(session)
+        changeset = ch.new_changeset(session, "Trash", "duplicates")
+        ch.propose_trash(changeset, files["a/01 x.mp3"], replacement=files["b/01 x.mp3"])
+        session.commit()
+        ch.set_status(changeset.changes, "approved")
+        assert all(o.ok for o in ch.apply(session, changeset))
+        session.commit()
+
+        copy_audio("mp3", root / "c/01 x.mp3")  # yet another copy
+        stats = scan(session, library)
+        assert (stats.moved, stats.new) == (0, 1)
+        assert all(o.ok for o in ch.undo(session, changeset))  # and undo still works
+
+
+def test_entries_of_a_deleted_copy_switch_to_the_other(Session, copy_audio, tmp_path):
+    """Deleting a duplicate outside aorg does to playlists what trashing it does."""
+    root = tmp_path / "music"
+    copy_audio("mp3", root / "a/01 x.mp3")
+    copy_audio("mp3", root / "b/01 x.mp3")
+    copy_audio("mp3b", root / "c/02 y.mp3")  # no other copy
+    with Session() as session:
+        library = _library(session, root)
+        scan(session, library)
+        files = _files(session)
+        playlist = Playlist(library=library, name="Mix", sort="manual")
+        pl.set_entries(playlist, [(p, files[p].id) for p in ("a/01 x.mp3", "c/02 y.mp3")])
+        session.add(playlist)
+        session.commit()
+
+        (root / "a/01 x.mp3").unlink()
+        (root / "c/02 y.mp3").unlink()
+        stats = scan(session, library)
+        assert (stats.missing, stats.relinked) == (2, 1)
+        session.expire_all()
+        entries = session.get(Playlist, playlist.id).entries
+        assert [e.file_id for e in entries] == [files["b/01 x.mp3"].id, files["c/02 y.mp3"].id]
 
 
 def test_missing_and_reappearing(Session, copy_audio, tmp_path):

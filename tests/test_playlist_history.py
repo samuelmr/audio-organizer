@@ -115,3 +115,21 @@ def test_locating_follows_the_history(library):
     session.commit()
     [found] = pl.locate_missing(session, lib, pl.missing_entries(session, playlist))
     assert (found.entry.position, found.file_id, found.how) == (1, halo.id, "where its file went")
+
+
+def test_a_scan_matches_entries_that_matched_no_file(library, copy_audio):
+    session, lib, root = library
+    halo, copy = _file(session, HALO), _file(session, HALO_COPY)
+    _apply(session, lambda c: ch.propose_trash(c, copy, replacement=halo))
+    playlist = _import_playlist(session, lib, root, "Air/Sexy Boy.mp3", "Nobody/Nothing.mp3")
+    # As if imported before the trash, when this path was not followed yet
+    pl.set_entries(playlist, [*[(e.path, e.file_id) for e in playlist.entries], (HALO_COPY, None)])
+    session.commit()
+    copy_audio("mp3b", root / "Air/Sexy Boy.mp3")  # the file comes later
+    stats = scan(session, lib)
+    assert stats.matched == 2
+    assert [e.file_id for e in playlist.entries] == [
+        _file(session, "Air/Sexy Boy.mp3").id,
+        None,
+        halo.id,
+    ]

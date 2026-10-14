@@ -302,6 +302,13 @@ def scan_command(
         f"{stats.unchanged} unchanged, {stats.missing} missing, {len(stats.errors)} errors "
         f"({time.monotonic() - started:.0f} s)"
     )
+    if stats.relinked:
+        typer.echo(
+            f"{stats.relinked} static playlist entries of missing files now refer to the "
+            "other copy of their audio"
+        )
+    if stats.matched:
+        typer.echo(f"{stats.matched} static playlist entries that matched no file now do")
     found = stats.playlists
     if found.imported:
         typer.echo(f"Imported {len(found.imported)} playlists: {', '.join(found.imported[:10])}")

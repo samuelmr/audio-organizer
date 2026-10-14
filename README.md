@@ -84,7 +84,12 @@ uploaded twice.
 
 The first scan reads every file; later scans only read new and changed ones, so run
 `aorg scan` whenever you have added or changed music. Files moved or renamed outside
-`aorg` are recognized by their audio and keep their history.
+`aorg` are recognized by their audio and keep their history and their place in static
+playlists, also when one scan saw them gone and the next one at their new place (a scan
+while the files were being moved). A file deleted outside `aorg` that has an identical
+copy is treated like a trashed duplicate: its playlist entries switch to the copy. Each
+scan also matches playlist entries that matched no file again, as an import would, since
+the files may have arrived since.
 
 **Folders whose names differ only in letter case.** A NAS can hold both "Normaalien
 Maihinnousu" and "Normaalien maihinnousu" and list both, while a Mac (or any computer
@@ -723,7 +728,8 @@ file already written changes when you write it again. A playlist's page in the w
 offers the same when it has repeats.
 
 Entries that refer to no file (they matched none when imported, or their file has gone)
-are left out of the playlist but kept. `aorg playlists missing` lists them and looks for
+are left out of the playlist but kept. Scans match them by path again; for the rest,
+`aorg playlists missing` lists them and looks for
 their files: by path as an import would (including where files went), by the audio of
 the file an entry had, and by file name and the folders above it, which finds the tracks of a playlist made on another
 computer or before the files were reorganised, and of re-encoded files. Only a file that

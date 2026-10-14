@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from typer.testing import CliRunner
 
+from audio_organizer import changes as ch
 from audio_organizer import playlists as pl
 from audio_organizer.cli import app
 from audio_organizer.models import AudioFile, Library, Playlist
@@ -61,17 +62,23 @@ def test_locate_by_path_audio_and_name(library, copy_audio):
         session,
         lib,
         [
-            (HALO, _id(session, HALO)),  # its file goes; a copy has the same audio
+            (HALO, _id(session, HALO)),  # trashed alone; a copy has the same audio
             (SEXY_BOY, None),  # imported before the file was there
             ("D:\\Old\\Texas\\Greatest Hits\\11 halo.flac", None),  # another computer
             ("C:\\Music\\Mixes\\Texas_Insane.mp3", None),  # only the name fits
             ("Nobody/Nothing.mp3", None),
         ],
     )
-    (root / HALO).unlink()
+    changeset = ch.new_changeset(session, "Trash", "duplicates")
+    ch.propose_trash(changeset, session.get(AudioFile, _id(session, HALO)))
+    session.commit()
+    ch.set_status(changeset.changes, "approved")
+    assert all(o.ok for o in ch.apply(session, changeset))
     copy_audio("mp3b", root / SEXY_BOY)
     copy_audio("m4a", root / "Texas/Best Of/11 Halo.m4a")  # same name, another folder
-    scan(session, lib)
+    assert scan(session, lib).matched == 1  # SEXY_BOY; the others need choosing
+    playlist.entries[1].file_id = None  # as if no scan had run since the file came
+    session.commit()
 
     located = pl.locate_missing(session, lib, pl.missing_entries(session, playlist))
     assert [(i.entry.position, i.path, i.how, i.sure) for i in located] == [

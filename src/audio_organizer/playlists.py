@@ -28,7 +28,7 @@ from pathlib import Path, PurePosixPath
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .changes import TRASH_DIR
+from .changes import TRASH_DIR, trashed
 from .models import AudioFile, Change, Library, Playlist, PlaylistEntry
 from .pathparse import normalize_name
 from .playlist_formats import render
@@ -777,6 +777,59 @@ def _name_parts(path: str) -> tuple[tuple[str, ...], str, str]:
     if not dot:
         stem, suffix = name, ""
     return tuple(normalize_name(p) for p in parts), normalize_name(stem), suffix.casefold()
+
+
+def follow_gone_files(session: Session, library: Library) -> int:
+    """Switch static playlist entries from files that have gone to the one readable file
+    with the same audio, as trashing a duplicate does; returns how many entries changed.
+    A trashed file's entries stay: it went on purpose, and undo brings it back. The entry
+    keeps its path, which path_history leads to the same file. The caller commits."""
+    rows = session.execute(
+        select(PlaylistEntry, AudioFile.audio_hash)
+        .join(AudioFile, PlaylistEntry.file_id == AudioFile.id)
+        .where(
+            AudioFile.library_id == library.id,
+            AudioFile.missing,
+            AudioFile.audio_hash.is_not(None),
+            ~AudioFile.path.startswith(TRASH_DIR + "/"),
+        )
+    ).all()
+    if not rows:
+        return 0
+    gone = trashed(session, sorted({entry.file_id for entry, _ in rows}))
+    rows = [(entry, audio_hash) for entry, audio_hash in rows if entry.file_id not in gone]
+    same_audio = _present_by_hash(session, library, {audio_hash for _, audio_hash in rows})
+    changed = 0
+    for entry, audio_hash in rows:
+        if (file_id := same_audio.get(audio_hash)) is not None:
+            entry.file_id = file_id
+            changed += 1
+    session.flush()
+    return changed
+
+
+def match_unmatched(session: Session, library: Library) -> int:
+    """Match static playlist entries that refer to no file again, as an import would (by
+    path, loosely when only one file fits, or where the file at the path went), since the
+    files may have come since; returns how many now refer to a file. The caller commits."""
+    entries = list(
+        session.scalars(
+            select(PlaylistEntry)
+            .join(Playlist)
+            .where(Playlist.library_id == library.id, PlaylistEntry.file_id.is_(None))
+        )
+    )
+    if not entries:
+        return 0
+    index = PathIndex(session, library)
+    base = Path(library.root, library.playlist_folder)
+    matched = 0
+    for entry in entries:
+        if (file_id := index.find(entry.path, base)) is not None:
+            entry.file_id = file_id
+            matched += 1
+    session.flush()
+    return matched
 
 
 def relink(session: Session, located: Iterable[Located]) -> int:
